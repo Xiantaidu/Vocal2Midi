@@ -1,0 +1,17 @@
+.idea
+*.pyc
+__pycache__
+*.sh
+*.ckpt
+*.pth
+*.onnx
+/data/*
+!/data/.gitkeep
+/experiments/*
+!/experiments/.gitkeep
+.venv
+venv
+/artifacts/
+/python/
+.vscode
+.ipynb_checkpoints/

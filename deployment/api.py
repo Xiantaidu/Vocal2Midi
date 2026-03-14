@@ -1,0 +1,34 @@
+import json
+import pathlib
+
+from deployment.exporter import Exporter
+from inference.me_infer import SegmentationEstimationInferenceModel
+from lib import logging
+
+
+def deploy_model(
+        model: SegmentationEstimationInferenceModel,
+        lang_map: dict[str, int] | None,
+        save_dir: pathlib.Path,
+        dynamo: bool = False,
+        opset_version: int = None,
+):
+    exporter = Exporter(
+        model=model,
+        save_dir=save_dir,
+        dynamo=dynamo,
+        opset_version=opset_version,
+    )
+    exporter.export()
+    config = {
+        "samplerate": model.inference_config.features.audio_sample_rate,
+        "timestep": model.timestep,
+        "languages": lang_map,
+        "loop": model.model_config.mode == "d3pm",
+        "embedding_dim": model.model_config.embedding_dim,
+    }
+    config_path = save_dir / "config.json"
+    with open(config_path, "w", encoding="utf8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=4)
+        logging.info(f"Saved config to \'{config_path.as_posix()}\'.")
+    logging.success(f"Deployment completed.")

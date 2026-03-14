@@ -1,0 +1,12 @@
+.idea
+*.pyc
+__pycache__/
+*.sh
+local_tools/
+/venv/
+
+.vscode
+.ipynb_checkpoints/
+
+assets/*
+!assets/.gitkeep

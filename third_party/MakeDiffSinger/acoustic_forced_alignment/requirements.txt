@@ -1,0 +1,11 @@
+biopython==1.78
+click
+librosa<0.10.0
+matplotlib
+praatio<6.0.0
+praat-parselmouth
+pyyaml
+soundfile
+sox
+sqlalchemy==1.4.46
+textgrid
