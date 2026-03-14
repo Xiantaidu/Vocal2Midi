@@ -1,0 +1,12 @@
+# raw_data_dir文件夹下包含transcriptions.csv（diffsinger格式）和wavs文件夹
+datasets:
+  - raw_data_dir: data/full_label/male1_byBaiShuo/raw
+    label_type: full
+    language: zh
+    test_prefixes:
+      - B3_o_n_o_o_a_o_i_o
+  - raw_data_dir: data/full_label/female1_byBaiShuo/raw
+    label_type: evaluate
+    language: zh
+    test_prefixes:
+      - B3_o_n_o_o_a_o_i_o

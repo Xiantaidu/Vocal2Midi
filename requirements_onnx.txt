@@ -1,0 +1,7 @@
+onnxruntime-directml>=1.15.0
+librosa>=0.10.0
+mido>=1.2.10
+numpy>=1.23.0,<2.0.0
+soundfile>=0.12.1
+gradio>=4.0.0
+click>=8.0.0

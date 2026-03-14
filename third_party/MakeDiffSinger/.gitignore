@@ -1,0 +1,8 @@
+.idea
+.vscode
+*.pyc
+__pycache__/
+local_tools/
+/venv/
+
+.ipynb_checkpoints/
