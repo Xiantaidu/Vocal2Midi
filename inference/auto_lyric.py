@@ -63,8 +63,10 @@ def extract_vowel_boundaries(result_word, original_chars: list[str]):
     char_idx = 0
     last_end = 0.0
     
+    ignore_tokens = {"SP", "AP", "EP", "br", "sil", "pau"}
+    
     for i, word in enumerate(result_word):
-        if word.text in ["SP", "AP"]:
+        if word.text in ignore_tokens:
             if word.end > last_end:
                 word_durs.append(word.end - last_end)
                 word_vuvs.append(0)
@@ -87,11 +89,11 @@ def extract_vowel_boundaries(result_word, original_chars: list[str]):
         next_vowel_start = word.end
         if i + 1 < len(result_word):
             next_w = result_word[i+1]
-            if next_w.text not in ["SP", "AP"]:
+            if next_w.text not in ignore_tokens:
                 next_vowel_start = next_w.phonemes[-1].start if len(next_w.phonemes) > 0 else next_w.start
                 
         note_end = next_vowel_start
-        if i + 1 < len(result_word) and result_word[i+1].text in ["SP", "AP"]:
+        if i + 1 < len(result_word) and result_word[i+1].text in ignore_tokens:
             note_end = word.end
             
         dur = note_end - vowel_start
@@ -298,15 +300,23 @@ def auto_lyric_pipeline(
                                 lyric_idx += 1
                         
                         if n_seq != "rest":
-                            assigned_lyric = pending_lyric
-                            pending_lyric = "" # Consume the lyric on the first valid note
-                            
-                            all_notes.append(NoteInfo(
-                                onset=current_onset,
-                                offset=current_onset + n_dur,
-                                pitch=pitch,
-                                lyric=assigned_lyric
-                            ))
+                            # 如果属于同等音高的延音符（n_slur == 1且音高一致，并处于连续时刻），则进行合并
+                            if n_slur == 1 and len(all_notes) > 0 and \
+                               abs(all_notes[-1].pitch - pitch) < 1e-5 and \
+                               abs(all_notes[-1].offset - current_onset) < 1e-5 and \
+                               pending_lyric == "":
+                                
+                                all_notes[-1].offset = current_onset + n_dur
+                            else:
+                                assigned_lyric = pending_lyric
+                                pending_lyric = "" # Consume the lyric on the first valid note
+                                
+                                all_notes.append(NoteInfo(
+                                    onset=current_onset,
+                                    offset=current_onset + n_dur,
+                                    pitch=pitch,
+                                    lyric=assigned_lyric
+                                ))
                             
                         current_onset += n_dur
 
