@@ -28,6 +28,53 @@ class NoteInfo:
     lyric: str = ""
 
 
+def quantize_notes(notes: list[NoteInfo], tempo: float, quantization_step: int):
+    """
+    Quantize notes to musical ticks grid.
+    tempo: BPM
+    quantization_step: ticks per step (e.g., 120 for 1/16 note, where 1 beat = 480 ticks)
+    """
+    if quantization_step <= 0 or not notes:
+        return
+
+    notes.sort(key=lambda n: n.onset)
+    
+    orig_onsets = [n.onset for n in notes]
+    orig_offsets = [n.offset for n in notes]
+    
+    q_onsets = []
+    for onset in orig_onsets:
+        ticks = round(onset * tempo * 8)
+        q_ticks = round(ticks / quantization_step) * quantization_step
+        q_onsets.append(q_ticks)
+        
+    # Ensure onsets are strictly increasing
+    for i in range(1, len(q_onsets)):
+        if q_onsets[i] <= q_onsets[i-1]:
+            q_onsets[i] = q_onsets[i-1] + quantization_step
+            
+    q_offsets = []
+    for i in range(len(notes)):
+        ticks = round(orig_offsets[i] * tempo * 8)
+        q_ticks = round(ticks / quantization_step) * quantization_step
+        
+        if i < len(notes) - 1:
+            if abs(orig_offsets[i] - orig_onsets[i+1]) < 1e-3:
+                q_ticks = q_onsets[i+1]
+                
+        if q_ticks <= q_onsets[i]:
+            q_ticks = q_onsets[i] + quantization_step
+            
+        if i < len(notes) - 1:
+            if q_ticks > q_onsets[i+1]:
+                q_ticks = q_onsets[i+1]
+                
+        q_offsets.append(q_ticks)
+        
+    for i in range(len(notes)):
+        notes[i].onset = q_onsets[i] / (tempo * 8)
+        notes[i].offset = q_offsets[i] / (tempo * 8)
+
 def pad_1d_arrays(arrays: list[np.ndarray], pad_value=0.0) -> np.ndarray:
     """Pad a list of 1D numpy arrays to the maximum length and stack them."""
     if not arrays:
@@ -228,6 +275,10 @@ def _save_midi(notes: list[NoteInfo], filepath: pathlib.Path, tempo: int = 120):
         abs_onset_ticks = round(note.onset * tempo * 8)
         abs_offset_ticks = round(note.offset * tempo * 8)
         
+        # Prevent overlapping notes causing negative delta_onset_ticks in mido
+        if abs_onset_ticks < last_abs_ticks:
+            abs_onset_ticks = last_abs_ticks
+            
         if abs_offset_ticks <= abs_onset_ticks:
             abs_offset_ticks = abs_onset_ticks + 1
             
@@ -367,6 +418,7 @@ def infer_from_files(
     pitch_format: str,
     round_pitch: bool,
     tempo: float,
+    quantization_step: int = 0,
     batch_size: int = 4,
     max_chunk_duration_s: float = 15.0,
 ):
@@ -417,6 +469,10 @@ def infer_from_files(
                         all_notes.append(NoteInfo(onset=onset, offset=offset, pitch=score))
 
         all_notes.sort(key=lambda x: x.onset)
+        
+        if quantization_step > 0:
+            quantize_notes(all_notes, tempo, quantization_step)
+            
         print(f"  Extracted {len(all_notes)} notes")
 
         output_key = pathlib.Path(key).stem
