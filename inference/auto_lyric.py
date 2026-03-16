@@ -130,6 +130,7 @@ def auto_lyric_pipeline(
     est_threshold: float,
     ts: list
 ):
+    output_key = pathlib.Path(output_filename).stem
     print(f"\n[Auto Lyric] Processing audio: {audio_path}")
     waveform, sr = librosa.load(audio_path, sr=game_model.samplerate, mono=True)
     
@@ -169,6 +170,7 @@ def auto_lyric_pipeline(
         for chunk_idx, chunk in enumerate(chunks):
             chunk_wav = chunk["waveform"]
             stem = f"chunk_{chunk_idx}"
+            chunk_len_s = len(chunk_wav) / sr
             
             chunk_wav_path = temp_dir_path / f"{stem}.wav"
             import soundfile as sf
@@ -180,6 +182,12 @@ def auto_lyric_pipeline(
             text = res[0].get('text', '') if isinstance(res[0], dict) else str(res[0])
             
             if not text.strip():
+                continue
+                
+            # Anti-hallucination check: Max 15 chars per second
+            raw_chars = zh_g2p.split_string_no_regex(text)
+            if len(raw_chars) > chunk_len_s * 15:
+                print(f"  [Warning] {stem}: ASR hallucination detected ({len(raw_chars)} chars in {chunk_len_s:.1f}s). Ignoring chunk.")
                 continue
                 
             if matcher is not None:
@@ -332,6 +340,27 @@ def auto_lyric_pipeline(
                                     
                         current_onset += n_dur
 
+        # Export chunks while temporary files still exist
+        if "chunks" in output_formats:
+            temp_tg_dir = temp_dir_path / "temp_tg"
+            hfa_model.export(temp_tg_dir, output_format=['textgrid'])
+            
+            import shutil
+            tg_subfolder = temp_tg_dir / "TextGrid"
+            
+            for chunk_idx, chunk in enumerate(chunks):
+                stem = f"chunk_{chunk_idx}"
+                new_stem = f"{output_key}_{chunk_idx:03d}"
+                
+                chunk_wav_path = temp_dir_path / f"{stem}.wav"
+                if chunk_wav_path.exists():
+                    shutil.copy2(chunk_wav_path, output_dir / f"{new_stem}.wav")
+                    
+                if tg_subfolder.exists():
+                    tg_path = tg_subfolder / f"{stem}.TextGrid"
+                    if tg_path.exists():
+                        shutil.copy2(tg_path, output_dir / f"{new_stem}.TextGrid")
+
     all_notes.sort(key=lambda x: x.onset)
     
     # Optional quantization for MIDI and Text outputs
@@ -340,7 +369,6 @@ def auto_lyric_pipeline(
         
     print(f"Extracted {len(all_notes)} notes with lyrics.")
 
-    output_key = pathlib.Path(output_filename).stem
     if "mid" in output_formats:
         _save_midi(all_notes, output_dir / f"{output_key}.mid", int(tempo))
     if "txt" in output_formats:
