@@ -9,7 +9,7 @@ import sys
 from funasr import AutoModel
 
 from inference.slicer2 import Slicer
-from inference.onnx_api import pad_1d_arrays, NoteInfo, _save_midi, _save_text
+from inference.onnx_api import pad_1d_arrays, NoteInfo, quantize_notes, _save_midi, _save_text
 from inference.utils import align_notes_to_words
 
 # Add third_party paths
@@ -127,7 +127,8 @@ def auto_lyric_pipeline(
     round_pitch: bool,
     seg_threshold: float,
     seg_radius: float,
-    est_threshold: float
+    est_threshold: float,
+    ts: list
 ):
     print(f"\n[Auto Lyric] Processing audio: {audio_path}")
     waveform, sr = librosa.load(audio_path, sr=game_model.samplerate, mono=True)
@@ -260,7 +261,7 @@ def auto_lyric_pipeline(
                     boundary_radius=round(seg_radius / game_model.timestep),
                     score_threshold=est_threshold,
                     language=0,
-                    ts=[] # Don't adjust boundaries, trust HFA vowel starts
+                    ts=None # Allows GAME to refine boundaries within seg_radius
                 )
                 
                 for chunk_res, info in zip(results, b_info):
@@ -300,14 +301,7 @@ def auto_lyric_pipeline(
                                 lyric_idx += 1
                         
                         if n_seq != "rest":
-                            # 如果属于同等音高的延音符（n_slur == 1且音高一致，并处于连续时刻），则进行合并
-                            if n_slur == 1 and len(all_notes) > 0 and \
-                               abs(all_notes[-1].pitch - pitch) < 1e-5 and \
-                               abs(all_notes[-1].offset - current_onset) < 1e-5 and \
-                               pending_lyric == "":
-                                
-                                all_notes[-1].offset = current_onset + n_dur
-                            else:
+                            if pending_lyric != "":
                                 assigned_lyric = pending_lyric
                                 pending_lyric = "" # Consume the lyric on the first valid note
                                 
@@ -317,17 +311,34 @@ def auto_lyric_pipeline(
                                     pitch=pitch,
                                     lyric=assigned_lyric
                                 ))
-                            
+                            else:
+                                is_contiguous = len(all_notes) > 0 and abs(all_notes[-1].offset - current_onset) < 1e-3
+                                
+                                if is_contiguous:
+                                    if abs(all_notes[-1].pitch - pitch) < 1e-3:
+                                        # Same pitch, contiguous -> Merge!
+                                        all_notes[-1].offset = current_onset + n_dur
+                                    else:
+                                        # Different pitch, contiguous -> Slur!
+                                        all_notes.append(NoteInfo(
+                                            onset=current_onset,
+                                            offset=current_onset + n_dur,
+                                            pitch=pitch,
+                                            lyric="-"
+                                        ))
+                                else:
+                                    # Not contiguous and no lyric -> Ghost note. Drop it!
+                                    pass
+                                    
                         current_onset += n_dur
 
     all_notes.sort(key=lambda x: x.onset)
-    print(f"Extracted {len(all_notes)} notes with lyrics.")
     
-    # Optional quantization for MIDI
+    # Optional quantization for MIDI and Text outputs
     if quantization_step > 0:
-        pass # The callback logic for PyTorch handled this, for ONNX it's not natively supported in _save_midi
-             # but standard MIDI tempo quantization is handled implicitly in _save_midi based on tempo.
-             # Strict duration quantization can be added later if needed.
+        quantize_notes(all_notes, tempo, quantization_step)
+        
+    print(f"Extracted {len(all_notes)} notes with lyrics.")
 
     output_key = pathlib.Path(output_filename).stem
     if "mid" in output_formats:

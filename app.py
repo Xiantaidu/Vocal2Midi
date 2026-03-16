@@ -211,6 +211,7 @@ def extract_midi(
                 pitch_format=pitch_format,
                 round_pitch=round_pitch,
                 tempo=tempo,
+                quantization_step=quantization_step,
                 batch_size=int(batch_size),
             )
 
@@ -248,6 +249,8 @@ def auto_lyric(
     batch_size,
     seg_threshold,
     seg_radius,
+    t0,
+    nsteps,
     est_threshold,
     output_mid,
     output_txt,
@@ -287,6 +290,8 @@ def auto_lyric(
         elif "1/16 音符" in quantize_option: quantization_step = 120
         elif "1/32 音符" in quantize_option: quantization_step = 60
         elif "1/64 音符" in quantize_option: quantization_step = 30
+        
+        ts = _t0_nstep_to_ts(t0, int(nsteps))
 
         for temp_file in audio_files:
             original_path = pathlib.Path(temp_file.name)
@@ -311,7 +316,8 @@ def auto_lyric(
                 round_pitch=round_pitch,
                 seg_threshold=seg_threshold,
                 seg_radius=seg_radius,
-                est_threshold=est_threshold
+                est_threshold=est_threshold,
+                ts=ts
             )
 
         generated_files = list(output_dir.glob("*"))
@@ -582,7 +588,7 @@ with gr.Blocks(title="GAME: 生成式自适应 MIDI 提取器") as demo:
                 fn=auto_lyric,
                 inputs=[
                     al_audio_input, model_path_input, al_hfa_model_input, engine_radio, onnx_device_radio, language_input, al_lyrics_input,
-                    batch_size_slider, seg_threshold_slider, seg_radius_slider, est_threshold_slider,
+                    batch_size_slider, seg_threshold_slider, seg_radius_slider, t0_slider, nsteps_slider, est_threshold_slider,
                     al_out_mid_cb, al_out_txt_cb, al_out_csv_cb, al_tempo_number, al_quantize_dropdown, al_pitch_format_radio, al_round_pitch_cb
                 ],
                 outputs=[al_output_file, al_msg]
