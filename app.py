@@ -255,6 +255,7 @@ def auto_lyric(
     output_mid,
     output_txt,
     output_csv,
+    output_chunks,
     tempo,
     quantize_option,
     pitch_format,
@@ -275,6 +276,7 @@ def auto_lyric(
         if output_mid: output_formats.append("mid")
         if output_txt: output_formats.append("txt")
         if output_csv: output_formats.append("csv")
+        if output_chunks: output_formats.append("chunks")
         
         if not output_formats:
             return None, "请至少选择一种输出格式。"
@@ -558,7 +560,7 @@ with gr.Blocks(title="GAME: 生成式自适应 MIDI 提取器") as demo:
             with gr.Row():
                 with gr.Column(scale=1):
                     al_audio_input = gr.File(label="上传音频文件 (wav, flac 等)", file_count="multiple", type="filepath")
-                    al_hfa_model_input = gr.Textbox(label="HubertFA ONNX 模型路径", placeholder="/path/to/hubertfa_model.onnx", value="third_party/HubertFA/model.onnx")
+                    al_hfa_model_input = gr.Textbox(label="HubertFA ONNX 模型路径", placeholder="/path/to/hubertfa_model.onnx", value=R"E:\Vocal2Midi\experiments\1218_hfa_model_new_dict\model.onnx")
                     al_lyrics_input = gr.Textbox(label="参考歌词 (可选)", placeholder="如果有确切的歌词，请在此输入（纯文本），将使用 LyricFA 纠正 ASR 结果。", lines=4)
                     
                     with gr.Accordion("输出设置 (Output Options)", open=True):
@@ -566,6 +568,7 @@ with gr.Blocks(title="GAME: 生成式自适应 MIDI 提取器") as demo:
                             al_out_mid_cb = gr.Checkbox(label="带歌词的 MIDI (.mid)", value=True)
                             al_out_txt_cb = gr.Checkbox(label="Text (.txt)", value=False)
                             al_out_csv_cb = gr.Checkbox(label="CSV (.csv)", value=False)
+                            al_out_chunks_cb = gr.Checkbox(label="切片与 TextGrid (.wav, .TextGrid)", value=False)
                         
                         al_tempo_number = gr.Number(label="曲速 (Tempo BPM)", value=120)
                         al_quantize_dropdown = gr.Dropdown(
@@ -589,7 +592,7 @@ with gr.Blocks(title="GAME: 生成式自适应 MIDI 提取器") as demo:
                 inputs=[
                     al_audio_input, model_path_input, al_hfa_model_input, engine_radio, onnx_device_radio, language_input, al_lyrics_input,
                     batch_size_slider, seg_threshold_slider, seg_radius_slider, t0_slider, nsteps_slider, est_threshold_slider,
-                    al_out_mid_cb, al_out_txt_cb, al_out_csv_cb, al_tempo_number, al_quantize_dropdown, al_pitch_format_radio, al_round_pitch_cb
+                    al_out_mid_cb, al_out_txt_cb, al_out_csv_cb, al_out_chunks_cb, al_tempo_number, al_quantize_dropdown, al_pitch_format_radio, al_round_pitch_cb
                 ],
                 outputs=[al_output_file, al_msg]
             )
@@ -629,7 +632,7 @@ with gr.Blocks(title="GAME: 生成式自适应 MIDI 提取器") as demo:
 
     def on_engine_change(engine):
         if engine == "ONNX":
-            return gr.update(value="experiments/GAME-1.0-medium-onnx")
+            return gr.update(value="experiments/GAME-1.0.3-medium-onnx")
         else:
             return gr.update(value="experiments/model.pt")
             
