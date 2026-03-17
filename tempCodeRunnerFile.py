@@ -1,1 +1,1 @@
-csv
+input = gr.Textbox(label="参考歌词 (可选)", placeholder="如果有确切的歌词，请在此输入（纯文本），将使用 LyricFA 纠正 ASR 结
