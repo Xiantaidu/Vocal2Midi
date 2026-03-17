@@ -160,6 +160,7 @@ def auto_lyric_pipeline(
         lyric_phonetic_list = processor.get_phonetic_list(lyric_text_list)
 
     all_notes = []
+    chunk_logs = []
     
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir_path = pathlib.Path(temp_dir)
@@ -188,7 +189,11 @@ def auto_lyric_pipeline(
             raw_chars = zh_g2p.split_string_no_regex(text)
             if len(raw_chars) > chunk_len_s * 15:
                 print(f"  [Warning] {stem}: ASR hallucination detected ({len(raw_chars)} chars in {chunk_len_s:.1f}s). Ignoring chunk.")
+                chunk_logs.append(f"[{stem}]\nASR Output: {text}\nStatus: Ignored (Hallucination detected, {len(raw_chars)} chars in {chunk_len_s:.1f}s)\n")
                 continue
+                
+            match_status = "No original lyrics provided"
+            matched_result_text = text
                 
             if matcher is not None:
                 asr_text_list, asr_phonetic_list = matcher.process_asr_content(text)
@@ -201,19 +206,27 @@ def auto_lyric_pipeline(
                     if matched_phonetic:
                         pinyin_str = matched_phonetic
                         chars = matched_text.split()
+                        match_status = "Matched with original lyrics"
+                        matched_result_text = "".join(chars)
                     else:
                         print(f"  [Warning] {stem}: No match found in original lyrics. Falling back to ASR output.")
                         pinyin_str = zh_g2p.convert(text, include_tone=False, convert_number=True)
                         chars = zh_g2p.split_string_no_regex(text)
+                        match_status = "Fallback to ASR (No match found)"
+                        matched_result_text = "".join(chars)
                 else:
                     continue
             else:
                 pinyin_str = zh_g2p.convert(text, include_tone=False, convert_number=True)
                 chars = zh_g2p.split_string_no_regex(text)
+                match_status = "Direct ASR (No original lyrics)"
+                matched_result_text = "".join(chars)
             
             chunk_lab_path = temp_dir_path / f"{stem}.lab"
             chunk_lab_path.write_text(pinyin_str, encoding="utf-8")
             chars_dict[stem] = chars
+            
+            chunk_logs.append(f"[{stem}]\nASR Output: {text}\nMatch Status: {match_status}\nFinal Assigned Lyrics: {matched_result_text}\nFA Pinyin (.lab): {pinyin_str}\n")
 
         # 2. HubertFA Forced Alignment
         print("[Auto Lyric] Running HubertFA forced alignment...")
@@ -269,7 +282,7 @@ def auto_lyric_pipeline(
                     boundary_radius=round(seg_radius / game_model.timestep),
                     score_threshold=est_threshold,
                     language=0,
-                    ts=None # Allows GAME to refine boundaries within seg_radius
+                    ts=None
                 )
                 
                 for chunk_res, info in zip(results, b_info):
@@ -340,29 +353,33 @@ def auto_lyric_pipeline(
                                     
                         current_onset += n_dur
 
-        # Export chunks while temporary files still exist
-        if "chunks" in output_formats:
-            temp_tg_dir = temp_dir_path / "temp_tg"
-            hfa_model.export(temp_tg_dir, output_format=['textgrid'])
+        # Export TextGrids (always) and chunks (conditionally)
+        temp_tg_dir = temp_dir_path / "temp_tg"
+        hfa_model.export(temp_tg_dir, output_format=['textgrid'])
+        
+        import shutil
+        tg_subfolder = temp_tg_dir / "TextGrid"
+        
+        for chunk_idx, chunk in enumerate(chunks):
+            stem = f"chunk_{chunk_idx}"
+            new_stem = f"{output_key}_{chunk_idx:03d}"
             
-            import shutil
-            tg_subfolder = temp_tg_dir / "TextGrid"
-            
-            for chunk_idx, chunk in enumerate(chunks):
-                stem = f"chunk_{chunk_idx}"
-                new_stem = f"{output_key}_{chunk_idx:03d}"
-                
+            if "chunks" in output_formats:
                 chunk_wav_path = temp_dir_path / f"{stem}.wav"
                 if chunk_wav_path.exists():
                     shutil.copy2(chunk_wav_path, output_dir / f"{new_stem}.wav")
-                    
-                if tg_subfolder.exists():
-                    tg_path = tg_subfolder / f"{stem}.TextGrid"
-                    if tg_path.exists():
-                        shutil.copy2(tg_path, output_dir / f"{new_stem}.TextGrid")
+                
+            if tg_subfolder.exists():
+                tg_path = tg_subfolder / f"{stem}.TextGrid"
+                if tg_path.exists():
+                    shutil.copy2(tg_path, output_dir / f"{new_stem}.TextGrid")
 
     all_notes.sort(key=lambda x: x.onset)
     
+    # Export log file
+    log_path = output_dir / f"{output_key}_asr_match_log.txt"
+    log_path.write_text("\n".join(chunk_logs), encoding="utf-8")
+
     # Optional quantization for MIDI and Text outputs
     if quantization_step > 0:
         quantize_notes(all_notes, tempo, quantization_step)
