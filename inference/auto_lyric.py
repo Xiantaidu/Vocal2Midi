@@ -34,6 +34,8 @@ def get_funasr_model():
         _funasr_model = AutoModel(
             model='iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch',
             model_revision="v2.0.4",
+            vad_model="fsmn-vad",
+            punc_model="ct-punc",
             disable_update=True,
             disable_pbar=True
         )
@@ -136,10 +138,10 @@ def auto_lyric_pipeline(
     
     slicer = Slicer(
         sr=sr,
-        threshold=-30.,  # Changed to -30.0 for more aggressive vocal slicing
-        min_length=1000,
-        min_interval=200,
-        max_sil_kept=100,
+        threshold=-20.,  # Changed to -40.0 for more aggressive vocal slicing
+        min_length=2000,
+        min_interval=300,
+        max_sil_kept=200,
     )
     chunks = slicer.slice(waveform)
     print(f"Sliced into {len(chunks)} chunks.")
