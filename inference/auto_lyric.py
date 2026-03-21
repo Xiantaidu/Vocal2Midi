@@ -6,6 +6,11 @@ import numpy as np
 import warnings
 import sys
 
+# Allow running this script directly from anywhere
+ROOT_DIR = pathlib.Path(__file__).parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 from funasr import AutoModel
 
 from inference.slicer2 import Slicer
@@ -25,14 +30,18 @@ _funasr_model = None
 _hfa_model = None
 _zh_g2p = None
 
-def get_funasr_model():
+def get_funasr_model(model_path=None):
     global _funasr_model
     if _funasr_model is None:
         print("Loading FunASR model...")
         import logging
         logging.getLogger("funasr").setLevel(logging.ERROR)
+        
+        if not model_path or not str(model_path).strip():
+            model_path = 'iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch'
+            
         _funasr_model = AutoModel(
-            model='iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch',
+            model=model_path,
             model_revision="v2.0.4",
             vad_model="fsmn-vad",
             punc_model="ct-punc",
@@ -427,6 +436,7 @@ def auto_lyric_pipeline(
     output_filename: str,
     game_model,
     hfa_onnx_path: str,
+    asr_model_path: str,
     language: str,
     original_lyrics: str,
     output_dir: pathlib.Path,
@@ -451,7 +461,7 @@ def auto_lyric_pipeline(
     print(f"Sliced into {len(chunks)} chunks.")
     
     # 2. 初始化各模型
-    asr_model = get_funasr_model()
+    asr_model = get_funasr_model(asr_model_path)
     hfa_model = get_hfa_model(hfa_onnx_path)
     zh_g2p = get_zh_g2p()
     
@@ -506,3 +516,68 @@ def auto_lyric_pipeline(
         _save_text(all_notes, output_dir / f"{output_key}.txt", "txt", pitch_format, round_pitch)
     if "csv" in output_formats:
         _save_text(all_notes, output_dir / f"{output_key}.csv", "csv", pitch_format, round_pitch)
+
+if __name__ == "__main__":
+    import click
+
+    @click.command()
+    @click.argument("audio_path", type=click.Path(exists=True))
+    @click.option("--game-model", "-gm", required=True, type=click.Path(exists=True), help="Path to GAME ONNX model directory")
+    @click.option("--hfa-model", "-hm", required=True, type=click.Path(exists=True), help="Path to HubertFA ONNX model file")
+    @click.option("--asr-model", "-am", type=str, default="", help="Path to local FunASR model or ModelScope ID")
+    @click.option("--output-dir", "-o", type=click.Path(), default=".", help="Directory to save the outputs")
+    @click.option("--lyrics", "-l", type=str, default="", help="Original reference lyrics for alignment")
+    @click.option("--language", type=str, default="zh", help="Language code (default: zh)")
+    @click.option("--tempo", type=float, default=120.0, help="Tempo BPM (default: 120)")
+    @click.option("--quantize", type=int, default=60, help="Quantization step (default: 60 for 1/32 note. 0 = none)")
+    @click.option("--formats", "-f", type=str, default="mid", help="Comma-separated output formats (mid,txt,csv,chunks)")
+    @click.option("--pitch-format", type=click.Choice(["name", "number"]), default="name", help="Pitch format for txt/csv")
+    @click.option("--round-pitch", is_flag=True, help="Round pitch values to integers")
+    @click.option("--seg-threshold", type=float, default=0.2, help="Segmentation threshold")
+    @click.option("--seg-radius", type=float, default=0.02, help="Segmentation radius (seconds)")
+    @click.option("--est-threshold", type=float, default=0.2, help="Note presence threshold")
+    @click.option("--t0", type=float, default=0.0, help="D3PM starting t0")
+    @click.option("--nsteps", type=int, default=8, help="D3PM sampling steps")
+    @click.option("--batch-size", "-b", type=int, default=4, help="Batch size for GAME inference")
+    @click.option("--device", type=click.Choice(["cpu", "dml"]), default="dml", help="ONNX execution provider")
+    def main(audio_path, game_model, hfa_model, asr_model, output_dir, lyrics, language, tempo, quantize,
+             formats, pitch_format, round_pitch, seg_threshold, seg_radius, est_threshold,
+             t0, nsteps, batch_size, device):
+        """
+        Auto Lyric Alignment Pipeline: Extracts notes from singing voice and automatically aligns them with lyrics using ASR.
+        """
+        out_dir = pathlib.Path(output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        from inference.onnx_api import load_onnx_model
+        print(f"Loading GAME model from {game_model}...")
+        game_model_session = load_onnx_model(pathlib.Path(game_model), device=device)
+
+        step = (1 - t0) / nsteps
+        ts = [t0 + i * step for i in range(nsteps)]
+        
+        output_formats = [fmt.strip() for fmt in formats.split(",")]
+
+        auto_lyric_pipeline(
+            audio_path=audio_path,
+            output_filename=pathlib.Path(audio_path).name,
+            game_model=game_model_session,
+            hfa_onnx_path=hfa_model,
+            asr_model_path=asr_model,
+            language=language,
+            original_lyrics=lyrics,
+            output_dir=out_dir,
+            output_formats=output_formats,
+            tempo=tempo,
+            quantization_step=quantize,
+            pitch_format=pitch_format,
+            round_pitch=round_pitch,
+            seg_threshold=seg_threshold,
+            seg_radius=seg_radius,
+            est_threshold=est_threshold,
+            ts=ts,
+            batch_size=batch_size
+        )
+        print("Done!")
+
+    main()
