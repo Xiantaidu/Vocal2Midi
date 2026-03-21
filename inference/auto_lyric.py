@@ -12,13 +12,13 @@ from inference.slicer2 import Slicer
 from inference.onnx_api import pad_1d_arrays, NoteInfo, quantize_notes, _save_midi, _save_text
 from inference.utils import align_notes_to_words
 
-# Add third_party paths
-THIRD_PARTY_DIR = pathlib.Path(__file__).parent.parent / "third_party"
+# Add vendor paths
+VENDOR_DIR = pathlib.Path(__file__).parent / "vendor"
 # Only insert HubertFA to sys.path because it uses absolute imports like `from tools...`
-sys.path.insert(0, str(THIRD_PARTY_DIR / "HubertFA"))
+sys.path.insert(0, str(VENDOR_DIR / "HubertFA"))
 
-from third_party.LyricFA.tools.ZhG2p import ZhG2p
-from third_party.LyricFA.tools.lyric_matcher import LyricMatcher
+from inference.vendor.LyricFA.tools.ZhG2p import ZhG2p
+from inference.vendor.LyricFA.tools.lyric_matcher import LyricMatcher
 from onnx_infer import InferenceOnnx
 
 _funasr_model = None
