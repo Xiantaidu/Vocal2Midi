@@ -242,6 +242,7 @@ def auto_lyric(
     audio_files,
     game_model_path_str,
     hfa_model_path_str,
+    asr_model_path_str,
     engine,
     onnx_device,
     language,
@@ -308,6 +309,7 @@ def auto_lyric(
                 output_filename=filename,
                 game_model=model,
                 hfa_onnx_path=hfa_model_path_str,
+                asr_model_path=asr_model_path_str,
                 language=language,
                 original_lyrics=original_lyrics,
                 output_dir=output_dir,
@@ -561,7 +563,8 @@ with gr.Blocks(title="GAME: 生成式自适应 MIDI 提取器") as demo:
             with gr.Row():
                 with gr.Column(scale=1):
                     al_audio_input = gr.File(label="上传音频文件 (wav, flac 等)", file_count="multiple", type="filepath")
-                    al_hfa_model_input = gr.Textbox(label="HubertFA ONNX 模型路径", placeholder="/path/to/hubertfa_model.onnx", value=R"E:\Vocal2Midi\experiments\1218_hfa_model_new_dict\model.onnx")
+                    al_hfa_model_input = gr.Textbox(label="HubertFA ONNX 模型路径", placeholder="/path/to/hubertfa_model.onnx", value="experiments/1218_hfa_model_new_dict/model.onnx")
+                    al_asr_model_input = gr.Textbox(label="ASR 模型路径 (FunASR)", placeholder="留空则自动从 ModelScope 下载", value="experiments/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch")
                     al_lyrics_input = gr.Textbox(label="参考歌词 (可选)", placeholder="如果有确切的歌词，请在此输入（纯文本），将使用 LyricFA 纠正 ASR 结果。", lines=4)
                     
                     with gr.Accordion("输出设置 (Output Options)", open=True):
@@ -591,7 +594,7 @@ with gr.Blocks(title="GAME: 生成式自适应 MIDI 提取器") as demo:
             al_event = al_btn.click(
                 fn=auto_lyric,
                 inputs=[
-                    al_audio_input, model_path_input, al_hfa_model_input, engine_radio, onnx_device_radio, language_input, al_lyrics_input,
+                    al_audio_input, model_path_input, al_hfa_model_input, al_asr_model_input, engine_radio, onnx_device_radio, language_input, al_lyrics_input,
                     batch_size_slider, seg_threshold_slider, seg_radius_slider, t0_slider, nsteps_slider, est_threshold_slider,
                     al_out_mid_cb, al_out_txt_cb, al_out_csv_cb, al_out_chunks_cb, al_tempo_number, al_quantize_dropdown, al_pitch_format_radio, al_round_pitch_cb
                 ],
