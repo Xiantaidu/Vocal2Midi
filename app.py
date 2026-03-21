@@ -319,7 +319,8 @@ def auto_lyric(
                 seg_threshold=seg_threshold,
                 seg_radius=seg_radius,
                 est_threshold=est_threshold,
-                ts=ts
+                ts=ts,
+                batch_size=int(batch_size)
             )
 
         generated_files = list(output_dir.glob("*"))
