@@ -26,39 +26,43 @@ from inference.vendor.LyricFA.tools.ZhG2p import ZhG2p
 from inference.vendor.LyricFA.tools.lyric_matcher import LyricMatcher
 from onnx_infer import InferenceOnnx
 
-_funasr_model = None
-_hfa_model = None
 _zh_g2p = None
 
+def free_memory():
+    import gc
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except:
+        pass
+
 def get_funasr_model(model_path=None):
-    global _funasr_model
-    if _funasr_model is None:
-        print("Loading FunASR model...")
-        import logging
-        logging.getLogger("funasr").setLevel(logging.ERROR)
+    print("Loading FunASR model...")
+    import logging
+    logging.getLogger("funasr").setLevel(logging.ERROR)
+    
+    if not model_path or not str(model_path).strip():
+        model_path = 'iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch'
         
-        if not model_path or not str(model_path).strip():
-            model_path = 'iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch'
-            
-        _funasr_model = AutoModel(
-            model=model_path,
-            model_revision="v2.0.4",
-            vad_model="fsmn-vad",
-            punc_model="ct-punc",
-            disable_update=True,
-            disable_pbar=True
-        )
-    return _funasr_model
+    model = AutoModel(
+        model=model_path,
+        model_revision="v2.0.4",
+        vad_model="fsmn-vad",
+        punc_model="ct-punc",
+        disable_update=True,
+        disable_pbar=True
+    )
+    return model
 
 def get_hfa_model(onnx_path: str):
-    global _hfa_model
-    if _hfa_model is None:
-        print("Loading HubertFA ONNX model...")
-        _hfa_model = InferenceOnnx(onnx_path=pathlib.Path(onnx_path))
-        _hfa_model.load_config()
-        _hfa_model.init_decoder()
-        _hfa_model.load_model()
-    return _hfa_model
+    print("Loading HubertFA ONNX model...")
+    model = InferenceOnnx(onnx_path=pathlib.Path(onnx_path))
+    model.load_config()
+    model.init_decoder()
+    model.load_model()
+    return model
 
 def get_zh_g2p():
     global _zh_g2p
@@ -128,9 +132,9 @@ def smart_slice(waveform, sr):
     slicer = Slicer(
         sr=sr,
         threshold=-30.,  
-        min_length=5000,
+        min_length=3000,
         min_interval=200,
-        max_sil_kept=200,
+        max_sil_kept=150,
     )
     chunks = slicer.slice(waveform)
     
@@ -148,7 +152,7 @@ def smart_slice(waveform, sr):
         slicer_agg = Slicer(
             sr=sr,
             threshold=-20.,
-            min_length=4000,
+            min_length=2000,
             min_interval=200,
             max_sil_kept=150
         )
@@ -431,12 +435,237 @@ def export_artifacts(chunks, temp_dir_path, hfa_model, output_key, output_dir, o
                 shutil.copy2(tg_path, output_dir / f"{new_stem}.TextGrid")
 
 
+def prepare_dynamic_asr_and_labels(chunks, sr, original_lyrics, model_dir, device_pref, temp_dir_path, zh_g2p, matcher):
+    import os
+    import torch
+    import numpy as np
+    import soundfile as sf
+    from inference.funasr_nano.dynamic_lyric_inference import find_best_match, run_llm_inference, get_prompt, _run_vad_segments_1p1, _split_segment_with_overlap
+    from inference.funasr_nano.voice_activity_detector import SileroVAD
+    from inference.funasr_nano.utils import EncoderAdaptorOnnxModel, EmbeddingOnnxIOB, UnifiedKvDeltaLLMOnnxIOB, compute_feat, build_source_ids, select_device, device_from_str
+    from transformers import AutoTokenizer
+    
+    encoder_model = os.path.join(model_dir, "encoder_adaptor.onnx")
+    embedding_model = os.path.join(model_dir, "embedding.onnx")
+    llm_model = os.path.join(model_dir, "llm.int8.1024.onnx")
+    if not os.path.exists(llm_model):
+        llm_model = os.path.join(model_dir, "llm.fp32.onnx")
+    tokenizer_path = os.path.join(model_dir, "Qwen3-0.6B")
+    vad_model_path = os.path.join(model_dir, "silero_vad.onnx")
+    
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=True)
+    eos_token_id = getattr(tokenizer, "eos_token_id", None)
+    im_end_ids = tokenizer.encode("<|im_end|>", add_special_tokens=False)
+    im_end_token_id = im_end_ids[0] if len(im_end_ids) > 0 else None
+    
+    enc_dev = select_device(device_pref)
+    emb_dev = select_device(device_pref)
+    llm_dev = select_device(device_pref, model_path=llm_model)
+    device = device_from_str("cuda" if llm_dev == "cuda" else "cpu")
+    if device.type == "cuda" and not torch.cuda.is_available():
+        device = torch.device("cpu")
+        
+    encoder = EncoderAdaptorOnnxModel(encoder_model, device=enc_dev)
+    embedding = EmbeddingOnnxIOB(embedding_model, device=emb_dev)
+    llm = UnifiedKvDeltaLLMOnnxIOB(llm_model, device=llm_dev)
+
+    vad_model = SileroVAD(
+        model_path=vad_model_path,
+        threshold=0.5,
+        min_silence_duration=0.5,
+        min_speech_duration=0.25,
+        window_size=512,
+        max_speech_duration=20,
+        sample_rate=16000,
+        num_threads=1,
+    )
+    
+    def run_chunk_with_hotwords(wf_16k, hotwords):
+        prompt_text = get_prompt(hotwords, language=None, itn=True)
+        system_prompt = "You are a helpful assistant."
+        user_prompt = f"{prompt_text}<|startofspeech|>!!<|endofspeech|>"
+        
+        feats = compute_feat(wf_16k, 16000, encoder.window_size, encoder.window_shift)[None, ...]
+        enc_out = encoder(feats)
+        enc_out = np.where(np.isfinite(enc_out), enc_out, 0.0)
+        
+        audio_token_len = int(enc_out.shape[1])
+        source_ids_1d, fbank_beg_idx, fake_len = build_source_ids(tokenizer, system_prompt, user_prompt, audio_token_len)
+        
+        input_ids = torch.tensor(source_ids_1d.reshape(1, -1), device=device, dtype=torch.int64)
+        text_embeds = embedding.forward_ids(input_ids).to(dtype=llm.input_torch_dtype)
+        
+        enc_t = torch.tensor(enc_out, device=device, dtype=llm.input_torch_dtype)
+        fl = min(fake_len, enc_t.shape[1])
+        text_embeds[0, fbank_beg_idx:fbank_beg_idx+fl, :] = enc_t[0, :fl, :]
+        
+        if llm.max_total_len > 0 and text_embeds.shape[1] >= llm.max_total_len:
+            return None
+            
+        generated = run_llm_inference(
+            llm=llm,
+            embedding=embedding,
+            tokenizer=tokenizer,
+            inputs_embeds=text_embeds,
+            device=device,
+            max_new_tokens=128,
+            temperature=0.0,
+            top_p=1.0,
+            eos_token_id=eos_token_id,
+            im_end_token_id=im_end_token_id
+        )
+        if generated:
+            result_text = tokenizer.decode(generated, skip_special_tokens=True)
+            result_text = result_text.replace("▁", " ").replace("<|im_end|>", "").replace("<|endoftext|>", "")
+            return " ".join(result_text.split())
+        return ""
+
+    if original_lyrics and original_lyrics.strip():
+        lyrics_lines = [line.strip() for line in original_lyrics.split('\n') if line.strip()]
+    else:
+        lyrics_lines = []
+
+    current_lyric_idx = 0
+    is_aligned = False
+    window_size = 8
+    match_threshold = 0.3
+    
+    new_chunks = []
+    chars_dict = {}
+    chunk_logs = []
+    global_chunk_idx = 0
+    
+    print("[Auto Lyric] Running VAD and Dynamic ASR...")
+    for orig_chunk_idx, chunk in enumerate(chunks):
+        orig_offset = chunk['offset']
+        wf = chunk['waveform']
+        if sr != 16000:
+            import librosa
+            wf_16k = librosa.resample(wf, orig_sr=sr, target_sr=16000)
+        else:
+            wf_16k = wf
+            
+        segments = _run_vad_segments_1p1(
+            vad_model=vad_model,
+            samples=wf_16k,
+            sr=16000,
+            pad_sec=0.30,
+            merge_gap_sec=0.20,
+            min_seg_sec=0.20,
+            max_seg_sec=20.0,
+        )
+        if not segments:
+            segments = [(0, len(wf_16k))]
+            
+        sub_segs = []
+        for (ss, ee) in segments:
+            sub_sub = _split_segment_with_overlap(ss, ee, 16000, max_len_sec=20.0, overlap_sec=0.40)
+            sub_segs.extend(sub_sub)
+
+        for (ss2, ee2) in sub_segs:
+            ss2_orig = int(ss2 * sr / 16000)
+            ee2_orig = int(ee2 * sr / 16000)
+            sub_wf = wf[ss2_orig:ee2_orig]
+            sub_wf_16k = wf_16k[ss2:ee2]
+            sub_offset = orig_offset + (ss2_orig / sr)
+            
+            stem = f"chunk_{global_chunk_idx}"
+            chunk_len_s = len(sub_wf_16k) / 16000
+            
+            chunk_wav_path = temp_dir_path / f"{stem}.wav"
+            sf.write(chunk_wav_path, sub_wf, sr)
+            
+            new_chunks.append({
+                'offset': sub_offset,
+                'waveform': sub_wf
+            })
+            
+            raw_text = None
+            match_status = "Direct ASR (No original lyrics)"
+            matched_result_text = ""
+            pinyin_str = ""
+            chars = []
+            used_hotwords_str = "None"
+
+            if not lyrics_lines:
+                raw_text = run_chunk_with_hotwords(sub_wf_16k, [])
+                text = raw_text or ""
+                chars = zh_g2p.split_string_no_regex(text)
+                pinyin_str = zh_g2p.convert(text, include_tone=False, convert_number=True)
+                matched_result_text = "".join(chars)
+            else:
+                if not is_aligned:
+                    raw_text = run_chunk_with_hotwords(sub_wf_16k, [])
+                    used_hotwords_str = "[] (Global Search)"
+                    if raw_text is not None:
+                        best_idx, match_ratio = find_best_match(raw_text, lyrics_lines)
+                        if match_ratio >= match_threshold:
+                            current_lyric_idx = best_idx
+                            is_aligned = True
+                            match_status = f"Global Aligned L{best_idx} (ratio {match_ratio:.2f})"
+                        else:
+                            match_status = f"Global Search (ratio {match_ratio:.2f})"
+                else:
+                    window_end = min(current_lyric_idx + window_size, len(lyrics_lines))
+                    current_hotwords = lyrics_lines[current_lyric_idx:window_end]
+                    used_hotwords_str = str(current_hotwords)
+                    raw_text = run_chunk_with_hotwords(sub_wf_16k, current_hotwords)
+                    if raw_text is not None:
+                        best_idx, match_ratio = find_best_match(raw_text, current_hotwords)
+                        if match_ratio >= match_threshold:
+                            matched_global_idx = current_lyric_idx + best_idx
+                            current_lyric_idx = matched_global_idx + 1
+                            match_status = f"Local Matched L{matched_global_idx} (ratio {match_ratio:.2f})"
+                        else:
+                            match_status = f"Local Hold (ratio {match_ratio:.2f})"
+
+                text = raw_text or ""
+                if matcher is not None and text.strip():
+                    asr_text_list, asr_phonetic_list = matcher.process_asr_content(text)
+                    if asr_phonetic_list:
+                        matched_text, matched_phonetic, reason = matcher.align_lyric_with_asr(
+                            asr_phonetic=asr_phonetic_list,
+                            lyric_text=matcher.lyric_text_list,
+                            lyric_phonetic=matcher.lyric_phonetic_list
+                        )
+                        if matched_phonetic:
+                            pinyin_str = matched_phonetic
+                            chars = matched_text.split()
+                            matched_result_text = "".join(chars)
+                            match_status += " | LyricFA Matched"
+                        else:
+                            pinyin_str = zh_g2p.convert(text, include_tone=False, convert_number=True)
+                            chars = zh_g2p.split_string_no_regex(text)
+                            matched_result_text = "".join(chars)
+                            match_status += " | LyricFA Fallback"
+                    else:
+                        chars = zh_g2p.split_string_no_regex(text)
+                        pinyin_str = zh_g2p.convert(text, include_tone=False, convert_number=True)
+                        matched_result_text = "".join(chars)
+                elif text.strip():
+                    chars = zh_g2p.split_string_no_regex(text)
+                    pinyin_str = zh_g2p.convert(text, include_tone=False, convert_number=True)
+                    matched_result_text = "".join(chars)
+                    
+            chunk_lab_path = temp_dir_path / f"{stem}.lab"
+            chunk_lab_path.write_text(pinyin_str, encoding="utf-8")
+            chars_dict[stem] = chars
+            
+            chunk_logs.append(f"[{stem}]\nHotwords Used: {used_hotwords_str}\nASR Output: {text}\nMatch Status: {match_status}\nFinal Assigned Lyrics: {matched_result_text}\nFA Pinyin (.lab): {pinyin_str}\n")
+            
+            global_chunk_idx += 1
+            
+    return new_chunks, chars_dict, chunk_logs
+
 def auto_lyric_pipeline(
     audio_path: str,
     output_filename: str,
-    game_model,
+    game_model_path: str,
+    onnx_device: str,
     hfa_onnx_path: str,
     asr_model_path: str,
+    asr_method: str,
+    dynamic_asr_model_dir: str,
     language: str,
     original_lyrics: str,
     output_dir: pathlib.Path,
@@ -454,15 +683,15 @@ def auto_lyric_pipeline(
     """Auto Lyric 的主处理流水线"""
     output_key = pathlib.Path(output_filename).stem
     print(f"\n[Auto Lyric] Processing audio: {audio_path}")
-    waveform, sr = librosa.load(audio_path, sr=game_model.samplerate, mono=True)
+    # Default to 44100 which is GAME's typical samplerate
+    sr = 44100
+    waveform, sr = librosa.load(audio_path, sr=sr, mono=True)
     
     # 1. 音频智能切片（带多级fallback）
     chunks = smart_slice(waveform, sr)
     print(f"Sliced into {len(chunks)} chunks.")
     
-    # 2. 初始化各模型
-    asr_model = get_funasr_model(asr_model_path)
-    hfa_model = get_hfa_model(hfa_onnx_path)
+    # 2. 初始化G2P模型
     zh_g2p = get_zh_g2p()
     
     # 3. 处理原歌词（如果提供）
@@ -483,21 +712,44 @@ def auto_lyric_pipeline(
         temp_dir_path = pathlib.Path(temp_dir)
         
         # 4. 运行 ASR、匹配歌词并生成标签
-        chars_dict, chunk_logs = prepare_asr_and_labels(
-            chunks, sr, temp_dir_path, asr_model, zh_g2p, matcher
-        )
+        if asr_method == "Dynamic Lyric (热词增强)":
+            device_pref = "dml" if onnx_device == "dml" else "cpu"
+            chunks, chars_dict, chunk_logs = prepare_dynamic_asr_and_labels(
+                chunks, sr, original_lyrics, dynamic_asr_model_dir, device_pref, temp_dir_path, zh_g2p, matcher
+            )
+            free_memory()
+        else:
+            asr_model = get_funasr_model(asr_model_path)
+            chars_dict, chunk_logs = prepare_asr_and_labels(
+                chunks, sr, temp_dir_path, asr_model, zh_g2p, matcher
+            )
+            del asr_model
+            free_memory()
 
         # 5. 运行 HubertFA 强制对齐
+        hfa_model = get_hfa_model(hfa_onnx_path)
         pred_dict = run_hubert_fa(hfa_model, temp_dir)
         
+        # 7. 导出额外产物 (如 TextGrid) BEFORE releasing hfa_model
+        export_artifacts(chunks, temp_dir_path, hfa_model, output_key, output_dir, output_formats)
+        
+        del hfa_model
+        free_memory()
+        
         # 6. 运行 GAME 推理、提取音高并与歌词对齐
+        from inference.onnx_api import load_onnx_model
+        print(f"Loading GAME model from {game_model_path}...")
+        game_model = load_onnx_model(pathlib.Path(game_model_path), device=onnx_device)
+        
         all_notes = extract_pitches_and_align(
             chunks, sr, pred_dict, chars_dict, game_model,
             seg_threshold, seg_radius, est_threshold, batch_size
         )
-
-        # 7. 导出额外产物 (如 TextGrid)
-        export_artifacts(chunks, temp_dir_path, hfa_model, output_key, output_dir, output_formats)
+        
+        if hasattr(game_model, 'release'):
+            game_model.release()
+        del game_model
+        free_memory()
 
     # 8. 排序、量化并保存最终文件
     all_notes.sort(key=lambda x: x.onset)
@@ -530,6 +782,8 @@ if __name__ == "__main__":
     @click.option("--language", type=str, default="zh", help="Language code (default: zh)")
     @click.option("--tempo", type=float, default=120.0, help="Tempo BPM (default: 120)")
     @click.option("--quantize", type=int, default=60, help="Quantization step (default: 60 for 1/32 note. 0 = none)")
+    @click.option("--asr-method", type=str, default="FunASR (默认)", help="ASR method to use: 'FunASR (默认)' or 'Dynamic Lyric (热词增强)'")
+    @click.option("--dynamic-asr-dir", type=str, default="experiments/funasr_nano_models", help="Path to Dynamic Lyric ASR model directory")
     @click.option("--formats", "-f", type=str, default="mid", help="Comma-separated output formats (mid,txt,csv,chunks)")
     @click.option("--pitch-format", type=click.Choice(["name", "number"]), default="name", help="Pitch format for txt/csv")
     @click.option("--round-pitch", is_flag=True, help="Round pitch values to integers")
@@ -541,17 +795,13 @@ if __name__ == "__main__":
     @click.option("--batch-size", "-b", type=int, default=4, help="Batch size for GAME inference")
     @click.option("--device", type=click.Choice(["cpu", "dml"]), default="dml", help="ONNX execution provider")
     def main(audio_path, game_model, hfa_model, asr_model, output_dir, lyrics, language, tempo, quantize,
-             formats, pitch_format, round_pitch, seg_threshold, seg_radius, est_threshold,
+             asr_method, dynamic_asr_dir, formats, pitch_format, round_pitch, seg_threshold, seg_radius, est_threshold,
              t0, nsteps, batch_size, device):
         """
         Auto Lyric Alignment Pipeline: Extracts notes from singing voice and automatically aligns them with lyrics using ASR.
         """
         out_dir = pathlib.Path(output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
-
-        from inference.onnx_api import load_onnx_model
-        print(f"Loading GAME model from {game_model}...")
-        game_model_session = load_onnx_model(pathlib.Path(game_model), device=device)
 
         step = (1 - t0) / nsteps
         ts = [t0 + i * step for i in range(nsteps)]
@@ -561,9 +811,12 @@ if __name__ == "__main__":
         auto_lyric_pipeline(
             audio_path=audio_path,
             output_filename=pathlib.Path(audio_path).name,
-            game_model=game_model_session,
+            game_model_path=game_model,
+            onnx_device=device,
             hfa_onnx_path=hfa_model,
             asr_model_path=asr_model,
+            asr_method=asr_method,
+            dynamic_asr_model_dir=dynamic_asr_dir,
             language=language,
             original_lyrics=lyrics,
             output_dir=out_dir,

@@ -243,6 +243,8 @@ def auto_lyric(
     game_model_path_str,
     hfa_model_path_str,
     asr_model_path_str,
+    asr_method,
+    dynamic_asr_model_dir,
     engine,
     onnx_device,
     language,
@@ -284,9 +286,6 @@ def auto_lyric(
 
         output_dir = pathlib.Path(tempfile.mkdtemp(prefix="game_gradio_autolyric_"))
 
-        # Load GAME model
-        model = load_onnx_model(pathlib.Path(game_model_path_str), device=onnx_device)
-
         quantization_step = 0
         if "1/4 音符" in quantize_option: quantization_step = 480
         elif "1/8 音符" in quantize_option: quantization_step = 240
@@ -307,9 +306,12 @@ def auto_lyric(
             auto_lyric_pipeline(
                 audio_path=str(original_path),
                 output_filename=filename,
-                game_model=model,
+                game_model_path=game_model_path_str,
+                onnx_device=onnx_device,
                 hfa_onnx_path=hfa_model_path_str,
                 asr_model_path=asr_model_path_str,
+                asr_method=asr_method,
+                dynamic_asr_model_dir=dynamic_asr_model_dir,
                 language=language,
                 original_lyrics=original_lyrics,
                 output_dir=output_dir,
@@ -343,10 +345,6 @@ def auto_lyric(
         traceback.print_exc()
         return None, f"发生错误: {str(e)}"
     finally:
-        if model is not None:
-            if hasattr(model, 'release'):
-                model.release()
-            del model
         release_memory()
 
 
@@ -564,8 +562,20 @@ with gr.Blocks(title="GAME: 生成式自适应 MIDI 提取器") as demo:
                 with gr.Column(scale=1):
                     al_audio_input = gr.File(label="上传音频文件 (wav, flac 等)", file_count="multiple", type="filepath")
                     al_hfa_model_input = gr.Textbox(label="HubertFA ONNX 模型路径", placeholder="/path/to/hubertfa_model.onnx", value="experiments/1218_hfa_model_new_dict/model.onnx")
-                    al_asr_model_input = gr.Textbox(label="ASR 模型路径 (FunASR)", placeholder="留空则自动从 ModelScope 下载", value="experiments/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch")
-                    al_lyrics_input = gr.Textbox(label="参考歌词 (可选)", placeholder="如果有确切的歌词，请在此输入（纯文本），将使用 LyricFA 纠正 ASR 结果。", lines=4)
+                    
+                    al_asr_method_radio = gr.Radio(choices=["FunASR (默认)", "Dynamic Lyric (热词增强)"], value="FunASR (默认)", label="ASR 方法", info="默认方法使用短切片。Dynamic Lyric 适合长音频并利用参考歌词增强识别。")
+                    al_asr_model_input = gr.Textbox(label="ASR 模型路径 (仅 FunASR)", placeholder="留空则自动从 ModelScope 下载", value="experiments/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch")
+                    al_dynamic_asr_model_input = gr.Textbox(label="Dynamic ASR 模型目录 (仅 Dynamic Lyric)", placeholder="包含 encoder_adaptor.onnx 等文件的目录", value="experiments/funasr_nano_models", visible=False)
+                    
+                    def on_asr_method_change(method):
+                        if method == "FunASR (默认)":
+                            return gr.update(visible=True), gr.update(visible=False)
+                        else:
+                            return gr.update(visible=False), gr.update(visible=True)
+                            
+                    al_asr_method_radio.change(fn=on_asr_method_change, inputs=al_asr_method_radio, outputs=[al_asr_model_input, al_dynamic_asr_model_input])
+                    
+                    al_lyrics_input = gr.Textbox(label="参考歌词 (可选)", placeholder="如果有确切的歌词，请在此输入（纯文本），将使用 LyricFA 纠正 ASR 结果。对于 Dynamic Lyric 方法，此项将用于热词增强追踪。", lines=4)
                     
                     with gr.Accordion("输出设置 (Output Options)", open=True):
                         with gr.Row():
@@ -594,7 +604,8 @@ with gr.Blocks(title="GAME: 生成式自适应 MIDI 提取器") as demo:
             al_event = al_btn.click(
                 fn=auto_lyric,
                 inputs=[
-                    al_audio_input, model_path_input, al_hfa_model_input, al_asr_model_input, engine_radio, onnx_device_radio, language_input, al_lyrics_input,
+                    al_audio_input, model_path_input, al_hfa_model_input, al_asr_model_input, al_asr_method_radio, al_dynamic_asr_model_input,
+                    engine_radio, onnx_device_radio, language_input, al_lyrics_input,
                     batch_size_slider, seg_threshold_slider, seg_radius_slider, t0_slider, nsteps_slider, est_threshold_slider,
                     al_out_mid_cb, al_out_txt_cb, al_out_csv_cb, al_out_chunks_cb, al_tempo_number, al_quantize_dropdown, al_pitch_format_radio, al_round_pitch_cb
                 ],
