@@ -249,6 +249,7 @@ def auto_lyric(
     onnx_device,
     language,
     original_lyrics,
+    slicing_method,
     batch_size,
     seg_threshold,
     seg_radius,
@@ -316,6 +317,7 @@ def auto_lyric(
                 original_lyrics=original_lyrics,
                 output_dir=output_dir,
                 output_formats=output_formats,
+                slicing_method=slicing_method,
                 tempo=tempo,
                 quantization_step=quantization_step,
                 pitch_format=pitch_format,
@@ -563,20 +565,24 @@ with gr.Blocks(title="GAME: 生成式自适应 MIDI 提取器") as demo:
                     al_audio_input = gr.File(label="上传音频文件 (wav, flac 等)", file_count="multiple", type="filepath")
                     al_hfa_model_input = gr.Textbox(label="HubertFA ONNX 模型路径", placeholder="/path/to/hubertfa_model.onnx", value="experiments/1218_hfa_model_new_dict/model.onnx")
                     
-                    al_asr_method_radio = gr.Radio(choices=["FunASR (默认)", "Dynamic Lyric (热词增强)"], value="FunASR (默认)", label="ASR 方法", info="默认方法使用短切片。Dynamic Lyric 适合长音频并利用参考歌词增强识别。")
+                    al_slicing_method_radio = gr.Radio(choices=["默认切片", "启发式切片", "网格搜索切片"], value="默认切片", label="切片方法", info="默认切片速度快，启发式/网格搜索切片会遍历多种参数寻找最优切分，更稳定但稍慢。")
+
+                    al_asr_method_radio = gr.Radio(choices=["FunASR (默认)", "Dynamic Lyric (热词增强)", "Qwen3-ASR (热词增强)"], value="FunASR (默认)", label="ASR 方法", info="默认方法使用短切片。热词增强模式适合长音频并利用参考歌词增强识别。")
                     al_asr_model_input = gr.Textbox(label="ASR 模型路径 (仅 FunASR)", placeholder="留空则自动从 ModelScope 下载", value="experiments/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch")
-                    al_dynamic_asr_model_input = gr.Textbox(label="Dynamic ASR 模型目录 (仅 Dynamic Lyric)", placeholder="包含 encoder_adaptor.onnx 等文件的目录", value="experiments/funasr_nano_models", visible=False)
+                    al_dynamic_asr_model_input = gr.Textbox(label="动态/热词 ASR 模型目录", placeholder="模型目录路径", value="experiments/funasr_nano_models", visible=False)
                     
                     def on_asr_method_change(method):
                         if method == "FunASR (默认)":
                             return gr.update(visible=True), gr.update(visible=False)
-                        else:
-                            return gr.update(visible=False), gr.update(visible=True)
+                        elif method == "Dynamic Lyric (热词增强)":
+                            return gr.update(visible=False), gr.update(visible=True, value="experiments/funasr_nano_models", label="Dynamic ASR 模型目录")
+                        elif method == "Qwen3-ASR (热词增强)":
+                            return gr.update(visible=False), gr.update(visible=True, value="experiments/Qwen3-ASR-1.7B-ONNX", label="Qwen3-ASR 模型目录")
                             
                     al_asr_method_radio.change(fn=on_asr_method_change, inputs=al_asr_method_radio, outputs=[al_asr_model_input, al_dynamic_asr_model_input])
                     
                     al_lyrics_input = gr.Textbox(label="参考歌词 (可选)", placeholder="如果有确切的歌词，请在此输入（纯文本），将使用 LyricFA 纠正 ASR 结果。对于 Dynamic Lyric 方法，此项将用于热词增强追踪。", lines=4)
-                    
+
                     with gr.Accordion("输出设置 (Output Options)", open=True):
                         with gr.Row():
                             al_out_mid_cb = gr.Checkbox(label="带歌词的 MIDI (.mid)", value=True)
@@ -605,7 +611,7 @@ with gr.Blocks(title="GAME: 生成式自适应 MIDI 提取器") as demo:
                 fn=auto_lyric,
                 inputs=[
                     al_audio_input, model_path_input, al_hfa_model_input, al_asr_model_input, al_asr_method_radio, al_dynamic_asr_model_input,
-                    engine_radio, onnx_device_radio, language_input, al_lyrics_input,
+                    engine_radio, onnx_device_radio, language_input, al_lyrics_input, al_slicing_method_radio,
                     batch_size_slider, seg_threshold_slider, seg_radius_slider, t0_slider, nsteps_slider, est_threshold_slider,
                     al_out_mid_cb, al_out_txt_cb, al_out_csv_cb, al_out_chunks_cb, al_tempo_number, al_quantize_dropdown, al_pitch_format_radio, al_round_pitch_cb
                 ],

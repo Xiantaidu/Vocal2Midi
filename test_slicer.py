@@ -15,7 +15,7 @@ def main():
     # ==========================
     # 在这里修改你的测试参数
     # ==========================
-    INPUT_AUDIO = r"R:\新建文件夹31111\起风了 - 买辣椒也用券_vocals_noreverb.wav"          # 输入音频文件的路径
+    INPUT_AUDIO = r"C:\Users\Xiantaidu\AppData\Local\Temp\gradio\e600dd37ab514cd7107ed95b45a377905af577c1d6bf2a63930d3b4d44a57149\云之泣_vocals_noreverb_Vocals.wav"         # 输入音频文件的路径
     OUTPUT_DIR = r"R:\autolyric_results (1)"   # 切片结果保存的文件夹
     
     # === 一级切片参数 (基础) ===
