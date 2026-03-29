@@ -75,34 +75,29 @@ def _run_vad_segments_1p1(
     i = 0
     while i < n_total - window_size_samples + 1:
         remaining = n_total - window_size_samples - i
-        windows_in_chunk = min(chunk_size // window_shift_samples, 
-                              (remaining // window_shift_samples) + 1)
-        
-        if buffer_size > max_seg_samples:
-            vad_model.threshold = new_threshold
-            vad_model.min_silence_duration = new_min_silence_duration
-            vad_model.min_silence_samples = new_min_silence_samples
-        else:
-            vad_model.threshold = original_threshold
-            vad_model.min_silence_duration = original_min_silence_duration
-            vad_model.min_silence_samples = original_min_silence_samples
-        
+        windows_in_chunk = min(chunk_size // window_shift_samples,
+                               (remaining // window_shift_samples) + 1)
+
+        vad_model.threshold = original_threshold
+        vad_model.min_silence_duration = original_min_silence_duration
+        vad_model.min_silence_samples = original_min_silence_samples
+
         is_speech = False
         chunk_end = i
-        
+
         for w in range(windows_in_chunk):
             window_start = i + w * window_shift_samples
             if window_start + window_size_samples > n_total:
                 break
-            
+
             chunk = samples[window_start:window_start + window_size_samples]
             this_window_is_speech = vad_model.is_speech(chunk)
             is_speech = is_speech or this_window_is_speech
             chunk_end = window_start + window_shift_samples
-        
+
         buffer_tail = chunk_end
         buffer_size = buffer_tail - buffer_head
-        
+
         if is_speech:
             if speech_start is None:
                 min_speech_samples = vad_model.min_speech_samples
@@ -117,7 +112,7 @@ def _run_vad_segments_1p1(
                 buffer_head = segment_end
                 buffer_size = buffer_tail - buffer_head
                 speech_start = None
-            
+
             if speech_start is None:
                 end = buffer_tail - 2 * window_size_samples - vad_model.min_speech_samples
                 samples_to_pop = max(0, end - buffer_head)
