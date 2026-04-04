@@ -577,7 +577,7 @@ def extract_pitches_and_align(chunks, sr, pred_dict, chars_dict, game_model, seg
                 a_note_seq, a_note_dur, a_note_slur = align_notes_to_words(
                     info["word_durs"], info["word_vuvs"],
                     note_seq, note_dur,
-                    apply_word_uv=False
+                    apply_word_uv=True
                 )
                 
                 lyric_idx = 0
@@ -597,36 +597,41 @@ def extract_pitches_and_align(chunks, sr, pred_dict, chars_dict, game_model, seg
                                 pending_lyric = ""
                             lyric_idx += 1
                     
-                    if n_seq != "rest":
-                        if pending_lyric != "":
-                            assigned_lyric = pending_lyric
-                            pending_lyric = "" 
-                            
-                            all_notes.append(NoteInfo(
-                                onset=current_onset,
-                                offset=current_onset + n_dur,
-                                pitch=pitch,
-                                lyric=assigned_lyric
-                            ))
-                        else:
-                            is_contiguous = len(all_notes) > 0 and abs(all_notes[-1].offset - current_onset) < 1e-3
-                            
-                            if is_contiguous:
-                                if abs(all_notes[-1].pitch - pitch) < 1e-3:
-                                    # Merge
-                                    all_notes[-1].offset = current_onset + n_dur
-                                else:
-                                    # Slur
-                                    all_notes.append(NoteInfo(
-                                        onset=current_onset,
-                                        offset=current_onset + n_dur,
-                                        pitch=pitch,
-                                        lyric="-"
-                                    ))
+                if n_seq != "rest":
+                    pitch = librosa.note_to_midi(n_seq, round_midi=False)
+                    lyric_to_assign = ""
+
+                    if n_slur == 0:
+                        if lyric_idx < len(info["lyrics"]):
+                            word_lyric = info["lyrics"][lyric_idx]
+                            if info["word_vuvs"][lyric_idx] == 1:
+                                pending_lyric = word_lyric
                             else:
-                                pass
-                                
-                    current_onset += n_dur
+                                pending_lyric = ""
+                            lyric_idx += 1
+                    
+                    if pending_lyric:
+                        lyric_to_assign = pending_lyric
+                        pending_lyric = ""
+                    else:
+                        lyric_to_assign = "-"
+
+                    is_contiguous = len(all_notes) > 0 and abs(all_notes[-1].offset - current_onset) < 0.01
+                    
+                    # Merge if the *current* note is a slur ('-') and matches the pitch of the *previous* note
+                    can_merge = is_contiguous and abs(all_notes[-1].pitch - pitch) < 0.1 and lyric_to_assign == "-"
+
+                    if can_merge:
+                        all_notes[-1].offset += n_dur
+                    else:
+                        all_notes.append(NoteInfo(
+                            onset=current_onset,
+                            offset=current_onset + n_dur,
+                            pitch=pitch,
+                            lyric=lyric_to_assign
+                        ))
+                
+                current_onset += n_dur
                     
     return all_notes
 
