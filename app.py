@@ -302,6 +302,7 @@ def auto_lyric(
                 if not HYBRID_AVAILABLE:
                     raise RuntimeError("混合管线未能正确加载，请检查环境。")
                 
+                ts_tensor = torch.tensor(ts_list, device=device)
                 auto_lyric_hybrid_pipeline(
                     audio_path=str(original_path),
                     output_filename=filename,
@@ -309,7 +310,7 @@ def auto_lyric(
                     device=device,
                     hfa_model_dir=hfa_model_path_str,
                     asr_model_path=asr_model_path_str,
-                    ts=torch.tensor(ts_list, device=torch.device(device)),
+                    ts=ts_tensor,
                     language=language,
                     original_lyrics=original_lyrics,
                     output_dir=output_dir,
@@ -322,8 +323,9 @@ def auto_lyric(
                     seg_threshold=seg_threshold,
                     seg_radius=seg_radius,
                     est_threshold=est_threshold,
-                    batch_size=int(batch_size),
-                    asr_batch_size=int(asr_batch_size)
+                    batch_size=batch_size,
+                    asr_batch_size=asr_batch_size,
+                    debug_mode=True
                 )
             else: # ONNX (旧版)
                 auto_lyric_pipeline_onnx(
@@ -401,8 +403,8 @@ with gr.Blocks(title="GAME: 生成式自适应 MIDI 提取器") as demo:
     
     with gr.Row():
         # Using a single model path input for simplicity in the main UI
-        model_path_input = gr.Textbox(label="GAME 模型路径 (PyTorch或ONNX)", placeholder="/path/to/game_model_dir", value="E:\Vocal2Midi\experiments\GAME-1.0-medium", scale=3)
-        language_input = gr.Textbox(label="语言代码 (选填, 例如: zh)", placeholder="zh", scale=1)
+        model_path_input = gr.Textbox(label="GAME 模型路径 (PyTorch或ONNX)", placeholder="/path/to/game_model_dir", value=r"E:\Vocal2Midi\experiments\GAME-1.0-medium", scale=3)
+        language_input = gr.Dropdown(choices=["zh", "ja"], value="zh", label="语言", info="选择人声的语言", scale=1)
         
     with gr.Row():
         engine_radio = gr.Radio(choices=["PyTorch", "ONNX"], value="PyTorch", label="推理引擎 (通用)", visible=False) # Hide this as auto-lyric has its own
