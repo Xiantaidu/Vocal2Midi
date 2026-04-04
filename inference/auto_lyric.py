@@ -24,10 +24,12 @@ VENDOR_DIR = pathlib.Path(__file__).parent / "vendor"
 sys.path.insert(0, str(VENDOR_DIR / "HubertFA"))
 
 from inference.vendor.LyricFA.tools.ZhG2p import ZhG2p
+from inference.vendor.LyricFA.tools.JaG2p import JaG2p
 from inference.vendor.LyricFA.tools.lyric_matcher import LyricMatcher
 from onnx_infer import InferenceOnnx
 
 _zh_g2p = None
+_ja_g2p = None
 
 def free_memory():
     import gc
@@ -71,6 +73,12 @@ def get_zh_g2p():
         _zh_g2p = ZhG2p("mandarin")
     return _zh_g2p
 
+def get_ja_g2p():
+    global _ja_g2p
+    if _ja_g2p is None:
+        _ja_g2p = JaG2p()
+    return _ja_g2p
+
 def extract_vowel_boundaries(result_word, original_chars: list[str]):
     word_durs = []
     word_vuvs = []
@@ -80,6 +88,7 @@ def extract_vowel_boundaries(result_word, original_chars: list[str]):
     last_end = 0.0
     
     ignore_tokens = {"SP", "AP", "EP", "br", "sil", "pau"}
+    is_romaji = len(original_chars) > 0 and all(c.isascii() or c == '' for c in original_chars)
     
     for i, word in enumerate(result_word):
         if word.text in ignore_tokens:
@@ -118,11 +127,20 @@ def extract_vowel_boundaries(result_word, original_chars: list[str]):
         word_durs.append(dur)
         word_vuvs.append(1)
         
-        if char_idx < len(original_chars):
-            lyrics.append(original_chars[char_idx])
-            char_idx += 1
+        if is_romaji:
+            while char_idx < len(original_chars) and original_chars[char_idx].lower() != word.text.lower():
+                char_idx += 1
+            if char_idx < len(original_chars):
+                lyrics.append(original_chars[char_idx])
+                char_idx += 1
+            else:
+                lyrics.append(word.text)
         else:
-            lyrics.append(word.text)
+            if char_idx < len(original_chars):
+                lyrics.append(original_chars[char_idx])
+                char_idx += 1
+            else:
+                lyrics.append(word.text)
             
         last_end = note_end
 
@@ -431,7 +449,7 @@ def smart_slice(waveform, sr):
 
     return final_chunks
 
-def prepare_asr_and_labels(chunks, sr, temp_dir_path, asr_model, zh_g2p, matcher):
+def prepare_asr_and_labels(chunks, sr, temp_dir_path, asr_model, g2p_model, matcher):
     """运行 ASR 并与原歌词匹配，生成 HubertFA 所需的 .lab 文件"""
     import soundfile as sf
     chars_dict = {}
@@ -457,7 +475,7 @@ def prepare_asr_and_labels(chunks, sr, temp_dir_path, asr_model, zh_g2p, matcher
         if not text.strip():
             continue
             
-        raw_chars = zh_g2p.split_string_no_regex(text)
+        raw_chars = g2p_model.split_string_no_regex(text)
         if len(raw_chars) > chunk_len_s * 15:
             print(f"  [Warning] {stem}: ASR hallucination detected ({len(raw_chars)} chars in {chunk_len_s:.1f}s). Ignoring chunk.")
             chunk_logs.append(f"[{stem}]\nASR Output: {text}\nStatus: Ignored (Hallucination detected, {len(raw_chars)} chars in {chunk_len_s:.1f}s)\n")
@@ -481,18 +499,22 @@ def prepare_asr_and_labels(chunks, sr, temp_dir_path, asr_model, zh_g2p, matcher
                     matched_result_text = "".join(chars)
                 else:
                     print(f"  [Warning] {stem}: No match found in original lyrics. Falling back to ASR output.")
-                    pinyin_str = zh_g2p.convert(text, include_tone=False, convert_number=True)
-                    chars = zh_g2p.split_string_no_regex(text)
+                    pinyin_str = g2p_model.convert(text, include_tone=False, convert_number=True)
+                    chars = g2p_model.split_string_no_regex(text)
                     match_status = "Fallback to ASR (No match found)"
                     matched_result_text = "".join(chars)
             else:
                 continue
         else:
-            pinyin_str = zh_g2p.convert(text, include_tone=False, convert_number=True)
-            chars = zh_g2p.split_string_no_regex(text)
+            pinyin_str = g2p_model.convert(text, include_tone=False, convert_number=True)
+            chars = g2p_model.split_string_no_regex(text)
             match_status = "Direct ASR (No original lyrics)"
             matched_result_text = "".join(chars)
         
+        if getattr(g2p_model, '__class__', None).__name__ == 'JaG2p':
+            chars = pinyin_str.split()
+            matched_result_text = " ".join(chars)
+
         chunk_lab_path = temp_dir_path / f"{stem}.lab"
         chunk_lab_path.write_text(pinyin_str, encoding="utf-8")
         chars_dict[stem] = chars
@@ -501,12 +523,17 @@ def prepare_asr_and_labels(chunks, sr, temp_dir_path, asr_model, zh_g2p, matcher
     
     return chars_dict, chunk_logs
 
-def run_hubert_fa(hfa_model, temp_dir):
+def run_hubert_fa(hfa_model, temp_dir, language="zh"):
     """运行 HubertFA 强制对齐"""
     print("[Auto Lyric] Running HubertFA forced alignment...")
     hfa_model.dataset = []
     hfa_model.predictions = []
-    hfa_model.get_dataset(wav_folder=temp_dir, language="zh", g2p="dictionary", dictionary_path=None)
+    
+    # Ensure correct dictionary path is used based on language
+    dict_file = "ds-zh-pinyin-lite.txt" if language == "zh" else "japanese_dict_full.txt"
+    dict_path = hfa_model.vocab_folder / dict_file
+    
+    hfa_model.get_dataset(wav_folder=temp_dir, language=language, g2p="dictionary", dictionary_path=dict_path)
     if len(hfa_model.dataset) > 0:
         hfa_model.infer(non_lexical_phonemes="AP", pad_times=1, pad_length=5)
         
@@ -666,7 +693,7 @@ def export_artifacts(chunks, temp_dir_path, hfa_model, output_key, output_dir, o
                 print(f"[Error] Failed to copy TextGrid {tg_path}: {e}")
 
 
-def prepare_qwen3_asr_and_labels(chunks, sr, original_lyrics, model_dir, device_pref, temp_dir_path, zh_g2p, matcher):
+def prepare_qwen3_asr_and_labels(chunks, sr, original_lyrics, model_dir, device_pref, temp_dir_path, g2p_model, matcher):
     import os
     import sys
     import torch
@@ -765,19 +792,23 @@ def prepare_qwen3_asr_and_labels(chunks, sr, original_lyrics, model_dir, device_
                     matched_result_text = "".join(chars)
                     match_status += " | LyricFA Matched"
                 else:
-                    pinyin_str = zh_g2p.convert(text, include_tone=False, convert_number=True)
-                    chars = zh_g2p.split_string_no_regex(text)
+                    pinyin_str = g2p_model.convert(text, include_tone=False, convert_number=True)
+                    chars = g2p_model.split_string_no_regex(text)
                     matched_result_text = "".join(chars)
                     match_status += " | LyricFA Fallback"
             else:
-                chars = zh_g2p.split_string_no_regex(text)
-                pinyin_str = zh_g2p.convert(text, include_tone=False, convert_number=True)
+                chars = g2p_model.split_string_no_regex(text)
+                pinyin_str = g2p_model.convert(text, include_tone=False, convert_number=True)
                 matched_result_text = "".join(chars)
         elif text.strip():
-            chars = zh_g2p.split_string_no_regex(text)
-            pinyin_str = zh_g2p.convert(text, include_tone=False, convert_number=True)
+            chars = g2p_model.split_string_no_regex(text)
+            pinyin_str = g2p_model.convert(text, include_tone=False, convert_number=True)
             matched_result_text = "".join(chars)
             
+        if getattr(g2p_model, '__class__', None).__name__ == 'JaG2p':
+            chars = pinyin_str.split()
+            matched_result_text = " ".join(chars)
+
         chunk_lab_path = temp_dir_path / f"{stem}.lab"
         chunk_lab_path.write_text(pinyin_str, encoding="utf-8")
         chars_dict[stem] = chars
@@ -786,7 +817,7 @@ def prepare_qwen3_asr_and_labels(chunks, sr, original_lyrics, model_dir, device_
         
     return chunks, chars_dict, chunk_logs
 
-def prepare_dynamic_asr_and_labels(chunks, sr, original_lyrics, model_dir, device_pref, temp_dir_path, zh_g2p, matcher):
+def prepare_dynamic_asr_and_labels(chunks, sr, original_lyrics, model_dir, device_pref, temp_dir_path, g2p_model, matcher):
     import os
     import torch
     import numpy as np
@@ -907,8 +938,8 @@ def prepare_dynamic_asr_and_labels(chunks, sr, original_lyrics, model_dir, devic
             if not lyrics_lines:
                 raw_text = run_chunk_with_hotwords(sub_wf_16k, [])
                 text = raw_text or ""
-                chars = zh_g2p.split_string_no_regex(text)
-                pinyin_str = zh_g2p.convert(text, include_tone=False, convert_number=True)
+                chars = g2p_model.split_string_no_regex(text)
+                pinyin_str = g2p_model.convert(text, include_tone=False, convert_number=True)
                 matched_result_text = "".join(chars)
             else:
                 if not is_aligned:
@@ -951,19 +982,23 @@ def prepare_dynamic_asr_and_labels(chunks, sr, original_lyrics, model_dir, devic
                             matched_result_text = "".join(chars)
                             match_status += " | LyricFA Matched"
                         else:
-                            pinyin_str = zh_g2p.convert(text, include_tone=False, convert_number=True)
-                            chars = zh_g2p.split_string_no_regex(text)
+                            pinyin_str = g2p_model.convert(text, include_tone=False, convert_number=True)
+                            chars = g2p_model.split_string_no_regex(text)
                             matched_result_text = "".join(chars)
                             match_status += " | LyricFA Fallback"
                     else:
-                        chars = zh_g2p.split_string_no_regex(text)
-                        pinyin_str = zh_g2p.convert(text, include_tone=False, convert_number=True)
+                        chars = g2p_model.split_string_no_regex(text)
+                        pinyin_str = g2p_model.convert(text, include_tone=False, convert_number=True)
                         matched_result_text = "".join(chars)
                 elif text.strip():
-                    chars = zh_g2p.split_string_no_regex(text)
-                    pinyin_str = zh_g2p.convert(text, include_tone=False, convert_number=True)
+                    chars = g2p_model.split_string_no_regex(text)
+                    pinyin_str = g2p_model.convert(text, include_tone=False, convert_number=True)
                     matched_result_text = "".join(chars)
                     
+            if getattr(g2p_model, '__class__', None).__name__ == 'JaG2p':
+                chars = pinyin_str.split()
+                matched_result_text = " ".join(chars)
+
             chunk_lab_path = temp_dir_path / f"{stem}.lab"
             chunk_lab_path.write_text(pinyin_str, encoding="utf-8")
             chars_dict[stem] = chars
@@ -1013,7 +1048,7 @@ def auto_lyric_pipeline(
     print(f"Sliced into {len(chunks)} chunks.")
     
     # 2. 初始化G2P模型
-    zh_g2p = get_zh_g2p()
+    g2p_model = get_ja_g2p() if language == "ja" else get_zh_g2p()
     
     # 3. 处理原歌词（如果提供）
     matcher = None
@@ -1036,26 +1071,26 @@ def auto_lyric_pipeline(
         if asr_method == "Dynamic Lyric (热词增强)":
             device_pref = "dml" if onnx_device == "dml" else "cpu"
             chunks, chars_dict, chunk_logs = prepare_dynamic_asr_and_labels(
-                chunks, sr, original_lyrics, dynamic_asr_model_dir, device_pref, temp_dir_path, zh_g2p, matcher
+                chunks, sr, original_lyrics, dynamic_asr_model_dir, device_pref, temp_dir_path, g2p_model, matcher
             )
             free_memory()
         elif asr_method == "Qwen3-ASR (热词增强)":
             device_pref = "cpu"  # Force CPU for now
             chunks, chars_dict, chunk_logs = prepare_qwen3_asr_and_labels(
-                chunks, sr, original_lyrics, dynamic_asr_model_dir, device_pref, temp_dir_path, zh_g2p, matcher
+                chunks, sr, original_lyrics, dynamic_asr_model_dir, device_pref, temp_dir_path, g2p_model, matcher
             )
             free_memory()
         else:
             asr_model = get_funasr_model(asr_model_path)
             chars_dict, chunk_logs = prepare_asr_and_labels(
-                chunks, sr, temp_dir_path, asr_model, zh_g2p, matcher
+                chunks, sr, temp_dir_path, asr_model, g2p_model, matcher
             )
             del asr_model
             free_memory()
 
         # 5. 运行 HubertFA 强制对齐
         hfa_model = get_hfa_model(hfa_onnx_path)
-        pred_dict = run_hubert_fa(hfa_model, temp_dir)
+        pred_dict = run_hubert_fa(hfa_model, temp_dir, language=language)
         
         # 7. 导出额外产物 (如 TextGrid) BEFORE releasing hfa_model
         export_artifacts(chunks, temp_dir_path, hfa_model, output_key, output_dir, output_formats)

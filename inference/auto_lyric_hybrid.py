@@ -24,9 +24,11 @@ sys.path.insert(0, str(VENDOR_DIR / "HubertFA"))
 sys.path.insert(0, r'R:\GAME-main')
 
 from inference.vendor.LyricFA.tools.ZhG2p import ZhG2p
+from inference.vendor.LyricFA.tools.JaG2p import JaG2p
 from inference.vendor.LyricFA.tools.lyric_matcher import LyricMatcher
 
 _zh_g2p = None
+_ja_g2p = None
 
 def free_memory():
     import gc
@@ -39,6 +41,12 @@ def get_zh_g2p():
     if _zh_g2p is None:
         _zh_g2p = ZhG2p("mandarin")
     return _zh_g2p
+
+def get_ja_g2p():
+    global _ja_g2p
+    if _ja_g2p is None:
+        _ja_g2p = JaG2p()
+    return _ja_g2p
 
 def load_qwen_model(model_path, device="cuda"):
     """
@@ -119,6 +127,7 @@ def extract_vowel_boundaries(result_word, original_chars: list[str]):
     last_end = 0.0
     
     ignore_tokens = {"SP", "AP", "EP", "br", "sil", "pau"}
+    is_romaji = len(original_chars) > 0 and all(c.isascii() or c == '' for c in original_chars)
     
     for i, word in enumerate(result_word):
         if word.text in ignore_tokens:
@@ -154,22 +163,32 @@ def extract_vowel_boundaries(result_word, original_chars: list[str]):
         word_durs.append(dur)
         word_vuvs.append(1)
         
-        if char_idx < len(original_chars):
-            lyrics.append(original_chars[char_idx])
-            char_idx += 1
+        if is_romaji:
+            while char_idx < len(original_chars) and original_chars[char_idx].lower() != word.text.lower():
+                char_idx += 1
+            if char_idx < len(original_chars):
+                lyrics.append(original_chars[char_idx])
+                char_idx += 1
+            else:
+                lyrics.append(word.text)
         else:
-            lyrics.append(word.text)
+            if char_idx < len(original_chars):
+                lyrics.append(original_chars[char_idx])
+                char_idx += 1
+            else:
+                lyrics.append(word.text)
             
         last_end = note_end
 
     return word_durs, word_vuvs, lyrics
 
-def run_qwen_asr_and_fa(chunks, sr, asr_model, temp_dir_path, zh_g2p, matcher, asr_batch_size=4):
+def run_qwen_asr_and_fa(chunks, sr, asr_model, temp_dir_path, g2p_model, matcher, asr_batch_size=4, language="zh"):
     """
     Runs ASR using the PyTorch Qwen model with batching and prepares .lab files for HubertFA.
     """
     import soundfile as sf
-    print(f"[Hybrid Pipeline] Running ASR with PyTorch Qwen (Batch Size: {asr_batch_size})...")
+    asr_lang = "Japanese" if language == "ja" else "Chinese"
+    print(f"[Hybrid Pipeline] Running ASR with PyTorch Qwen (Batch Size: {asr_batch_size}, Language: {asr_lang})...")
 
     chars_dict = {}
     chunk_logs = []
@@ -195,7 +214,7 @@ def run_qwen_asr_and_fa(chunks, sr, asr_model, temp_dir_path, zh_g2p, matcher, a
         try:
             with torch.cuda.amp.autocast():
                 # For batching, `transcribe` expects a list of file paths
-                batch_results = asr_model.transcribe(audio=batch_audio_paths, language="Chinese")
+                batch_results = asr_model.transcribe(audio=batch_audio_paths, language=asr_lang)
             all_results.extend(batch_results)
         except Exception as e:
             print(f"Error during Qwen ASR transcription for batch starting at index {i}: {e}")
@@ -226,42 +245,50 @@ def run_qwen_asr_and_fa(chunks, sr, asr_model, temp_dir_path, zh_g2p, matcher, a
                     chars = matched_text.split()
                     match_status = "Matched with original lyrics"
                 else:
-                    pinyin_str = zh_g2p.convert(text, include_tone=False, convert_number=True)
-                    chars = zh_g2p.split_string_no_regex(text)
+                    pinyin_str = g2p_model.convert(text, include_tone=False, convert_number=True)
+                    chars = g2p_model.split_string_no_regex(text)
                     match_status = "Fallback to ASR (No match found)"
             else:
-                pinyin_str = zh_g2p.convert(text, include_tone=False, convert_number=True)
-                chars = zh_g2p.split_string_no_regex(text)
+                pinyin_str = g2p_model.convert(text, include_tone=False, convert_number=True)
+                chars = g2p_model.split_string_no_regex(text)
                 match_status = "Fallback to ASR (No phonetics)"
         else:
-            pinyin_str = zh_g2p.convert(text, include_tone=False, convert_number=True)
-            chars = zh_g2p.split_string_no_regex(text)
-        
+            pinyin_str = g2p_model.convert(text, include_tone=False, convert_number=True)
+            chars = g2p_model.split_string_no_regex(text)
+            match_status = "Direct ASR (No original lyrics)"
+            
+        if getattr(g2p_model, '__class__', None).__name__ == 'JaG2p':
+            chars = pinyin_str.split()
+            
         (temp_dir_path / f"{stem}.lab").write_text(pinyin_str, encoding="utf-8")
         chars_dict[stem] = chars
         
         chunk_logs.append(
             f"[{stem}]\nASR Output: {text}\n"
             f"Match Status: {match_status}\n"
-            f"Final Assigned Lyrics: {''.join(chars)}\n"
+            f"Final Assigned Lyrics: {' '.join(chars) if getattr(g2p_model, '__class__', None).__name__ == 'JaG2p' else ''.join(chars)}\n"
             f"FA Pinyin (.lab): {pinyin_str}\n"
         )
             
     return chars_dict, chunk_logs
 
-def run_hubert_fa(hfa_model, temp_dir):
+def run_hubert_fa(hfa_model, temp_dir, language="zh"):
     """运行 HubertFA 强制对齐"""
     print("[Hybrid Pipeline] Running HubertFA forced alignment on GPU...")
     hfa_model.dataset = []
     hfa_model.predictions = []
-    hfa_model.get_dataset(wav_folder=temp_dir, language="zh", g2p="dictionary", dictionary_path=None)
+    
+    dict_file = "ds-zh-pinyin-lite.txt" if language == "zh" else "japanese_dict_full.txt"
+    dict_path = hfa_model.vocab_folder / dict_file
+    
+    hfa_model.get_dataset(wav_folder=temp_dir, language=language, g2p="dictionary", dictionary_path=dict_path)
     if len(hfa_model.dataset) > 0:
         hfa_model.infer(non_lexical_phonemes="AP", pad_times=1, pad_length=5)
 
     pred_dict = {p[0].stem: p for p in hfa_model.predictions}
     return pred_dict
 
-def extract_pitches_and_align_torch(chunks, sr, pred_dict, chars_dict, game_model, device, ts, seg_threshold, seg_radius, est_threshold, batch_size=4):
+def extract_pitches_and_align_torch(chunks, sr, pred_dict, chars_dict, game_model, device, ts, seg_threshold, seg_radius, est_threshold, batch_size=4, debug_mode=False):
     """
     Extracts pitches using the PyTorch GAME model and aligns to lyrics.
     (This version is a direct copy of the logic from the old ONNX pipeline)
@@ -307,6 +334,16 @@ def extract_pitches_and_align_torch(chunks, sr, pred_dict, chars_dict, game_mode
         
         with torch.no_grad():
             try:
+                if debug_mode:
+                    print(f"\n[DEBUG GAME INPUTS] Batch {i//batch_size}")
+                    print(f"waveform shape: {padded_wavs.shape}")
+                    print(f"known_durations shape: {padded_kd.shape}")
+                    print(f"boundary_threshold: {boundary_threshold}")
+                    print(f"boundary_radius: {boundary_radius}")
+                    print(f"score_threshold: {score_threshold}")
+                    print(f"language tensor: {language_tensor}")
+                    print(f"t tensor: {ts}")
+
                 durations, presence, scores = game_model(
                     waveform=padded_wavs,
                     known_durations=padded_kd,
@@ -443,7 +480,8 @@ def auto_lyric_hybrid_pipeline(
     seg_radius: float,
     est_threshold: float,
     batch_size: int = 4,
-    asr_batch_size: int = 4
+    asr_batch_size: int = 4,
+    debug_mode: bool = False
 ):
     """Auto Lyric Hybrid (PyTorch + ONNX-GPU) Pipeline"""
     output_key = pathlib.Path(output_filename).stem
@@ -453,10 +491,10 @@ def auto_lyric_hybrid_pipeline(
 
     chunks = slice_audio(waveform, sr, slicing_method)
 
-    zh_g2p = get_zh_g2p()
+    g2p_model = get_ja_g2p() if language == "ja" else get_zh_g2p()
     matcher = None
     if original_lyrics and original_lyrics.strip():
-        matcher = LyricMatcher(language="zh")
+        matcher = LyricMatcher(language if language in ["zh", "en"] else "zh")
         processor = matcher.processor
         cleaned_lyric = processor.clean_text(original_lyrics)
         matcher.lyric_text_list = processor.split_text(cleaned_lyric)
@@ -475,12 +513,12 @@ def auto_lyric_hybrid_pipeline(
         temp_dir_path = pathlib.Path(temp_dir)
 
         chars_dict, chunk_logs = run_qwen_asr_and_fa(
-            chunks, sr, asr_model, temp_dir_path, zh_g2p, matcher, asr_batch_size
+            chunks, sr, asr_model, temp_dir_path, g2p_model, matcher, asr_batch_size, language=language
         )
         free_memory()
         del asr_model
 
-        pred_dict = run_hubert_fa(hfa_model, temp_dir_path)
+        pred_dict = run_hubert_fa(hfa_model, temp_dir_path, language=language)
 
         export_artifacts(chunks, temp_dir_path, hfa_model, output_key, output_dir, output_formats)
         
@@ -489,7 +527,8 @@ def auto_lyric_hybrid_pipeline(
 
         all_notes = extract_pitches_and_align_torch(
             chunks, sr, pred_dict, chars_dict, game_model, device, ts,
-            seg_threshold, seg_radius, est_threshold, batch_size
+            seg_threshold, seg_radius, est_threshold, batch_size,
+            debug_mode=debug_mode
         )
         del game_model
         free_memory()
@@ -525,7 +564,8 @@ if __name__ == "__main__":
     @click.option("--device", type=click.Choice(["cuda", "cpu"]), default="cuda", help="Device to run inference on")
     @click.option("--t0", type=float, default=0.0, help="D3PM starting t0")
     @click.option("--nsteps", type=int, default=8, help="D3PM sampling steps")
-    def main(audio_path, game_model, hfa_model, asr_model, output_dir, lyrics, device, t0, nsteps, **kwargs):
+    @click.option("--debug", is_flag=True, help="Enable debug mode to print GAME inputs")
+    def main(audio_path, game_model, hfa_model, asr_model, output_dir, lyrics, device, t0, nsteps, debug, **kwargs):
         """
         Auto Lyric Hybrid Pipeline (PyTorch + ONNX-GPU)
         """
@@ -544,7 +584,7 @@ if __name__ == "__main__":
             hfa_model_dir=hfa_model,
             asr_model_path=asr_model,
             ts=ts,
-            language="zh",
+            language="ja",  # Will use the UI parameter when integrated
             original_lyrics=lyrics,
             output_dir=out_dir,
             output_formats=["mid", "txt"], # Simplified for now
@@ -556,7 +596,8 @@ if __name__ == "__main__":
             seg_threshold=0.2,
             seg_radius=0.02,
             est_threshold=0.2,
-            batch_size=4
+            batch_size=4,
+            debug_mode=debug
         )
         print("Done!")
 
