@@ -63,6 +63,9 @@ class InferenceModule(lightning.pytorch.LightningModule):
             ], dim=0).to(waveform)
         known_durations = batch["known_durations"]
         language = batch["language"]
+        # Get actual waveform durations (in seconds)
+        waveform_durations = torch.tensor([w.shape[-1] / samplerate for w in waveform.unbind(dim=0)], dtype=torch.float32, device=waveform.device)
+
         durations, presence, scores = self.model(
             waveform=waveform,
             known_durations=known_durations,
@@ -71,6 +74,7 @@ class InferenceModule(lightning.pytorch.LightningModule):
             boundary_threshold=torch.tensor(self.config.boundary_decoding_threshold).to(waveform),
             boundary_radius=torch.tensor(self.config.boundary_decoding_radius).to(language),
             score_threshold=torch.tensor(self.config.note_presence_threshold).to(waveform),
+            waveform_durations=waveform_durations,
         )
         return {
             "durations": durations,
