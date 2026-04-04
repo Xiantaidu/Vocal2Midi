@@ -174,6 +174,7 @@ class SegmentationEstimationInferenceModel(nn.Module):
             score_threshold: Tensor,
             language: Tensor = None,
             t: Tensor = None,
+            waveform_durations: Tensor = None,
     ) -> tuple[Tensor, Tensor, Tensor]:
         """
         :param waveform: float32 [batch_size, num_samples]
@@ -183,9 +184,13 @@ class SegmentationEstimationInferenceModel(nn.Module):
         :param score_threshold: float32 scalar
         :param language: int64 [batch_size]
         :param t: float32 [num_steps]
+        :param waveform_durations: float32 [batch_size]
         :return: durations: float32; presence: bool; scores: float32 [batch_size, num_notes]
         """
-        waveform_duration = known_durations.sum(dim=1)  # [B]
+        if waveform_durations is not None:
+            waveform_duration = waveform_durations
+        else:
+            waveform_duration = known_durations.sum(dim=1)  # [B]
         # Encoder
         x_seg, x_est, mask = self.forward_encoder(
             waveform=waveform, duration=waveform_duration
