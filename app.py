@@ -383,77 +383,103 @@ def align_transcriptions(
 
 css = """
 .container { max-width: 1200px; margin: auto; }
+.main-header { text-align: center; margin-bottom: 20px; padding: 20px; background: #f8f9fa; border-radius: 12px; border: 1px solid #e5e7eb; }
+.dark .main-header { background: #1f2937; border-color: #374151; }
+.main-header h1 { color: #111827; font-weight: 700; margin-bottom: 10px; }
+.dark .main-header h1 { color: #f9fafb; }
+.main-header p { color: #4b5563; font-size: 1.05em; }
+.dark .main-header p { color: #9ca3af; }
+.custom-panel { border: 1px solid #e5e7eb; border-radius: 8px; padding: 15px; background: #ffffff; }
+.dark .custom-panel { border-color: #374151; background: #1f2937; }
 """
 
-with gr.Blocks(title="GAME: 生成式自适应 MIDI 提取器") as demo:
-    gr.Markdown("# 🎵 GAME: 生成式自适应 MIDI 提取器 (推理界面)")
-    gr.Markdown("将歌声转换为乐谱（MIDI）。基于 D3PM 模型。支持提取原始音频和对齐 DiffSinger 数据集。")
-    
-    with gr.Row():
-        # Using a single model path input for simplicity in the main UI
-        model_path_input = gr.Textbox(label="GAME 模型路径 (PyTorch或ONNX)", placeholder="/path/to/game_model_dir", value=r"E:\Vocal2Midi\experiments\GAME-1.0-medium", scale=3)
-        language_input = gr.Dropdown(choices=["zh", "ja"], value="zh", label="语言", info="选择人声的语言", scale=1)
-        
-    with gr.Row():
-        engine_radio = gr.Radio(choices=["PyTorch", "ONNX"], value="PyTorch", label="推理引擎 (通用)", visible=False) # Hide this as auto-lyric has its own
-        device_radio = gr.Radio(choices=["cuda", "cpu"], value="cuda", label="设备 (Device)")
+theme = gr.themes.Default(
+    primary_hue="zinc",
+    secondary_hue="stone",
+    neutral_hue="gray",
+    font=[gr.themes.GoogleFont('Inter'), 'ui-sans-serif', 'system-ui', 'sans-serif'],
+)
 
-    with gr.Accordion("⚙️ 高级模型参数 (Advanced Parameters)", open=False):
+with gr.Blocks(title="GAME: 生成式自适应 MIDI 提取器", theme=theme, css=css) as demo:
+    gr.HTML("""
+        <div class="main-header">
+            <h1>🎵 GAME: 生成式自适应 MIDI 提取器</h1>
+            <p>将歌声转换为高质量乐谱（MIDI）。基于 D3PM 模型，支持自动语音识别与强制对齐歌词灌注。</p>
+        </div>
+    """)
+    
+    with gr.Group():
+        with gr.Row():
+            model_path_input = gr.Textbox(label="GAME 模型路径", placeholder="/path/to/game_model_dir", value=r"E:\Vocal2Midi\experiments\GAME-1.0-medium", scale=3)
+            language_input = gr.Dropdown(choices=["zh", "ja"], value="zh", label="目标语言", info="选择提取人声的语言", scale=1)
+            
+        with gr.Row():
+            engine_radio = gr.Radio(choices=["PyTorch", "ONNX"], value="PyTorch", label="推理引擎 (通用)", visible=False)
+            device_radio = gr.Radio(choices=["cuda", "cpu"], value="cuda", label="计算设备 (Device)", info="推荐使用 cuda 加速")
+
+    with gr.Accordion("⚙️ 高级处理参数 (Advanced Parameters)", open=False):
         with gr.Row():
             with gr.Column():
-                gr.Markdown("### 分割模型 (Segmentation Model)")
-                seg_threshold_slider = gr.Slider(minimum=0.01, maximum=0.99, value=0.2, step=0.01, label="边界解码阈值")
-                seg_radius_slider = gr.Slider(minimum=0.01, maximum=0.1, value=0.02, step=0.005, label="边界解码半径/秒")
-                t0_slider = gr.Slider(minimum=0.0, maximum=0.99, value=0.0, step=0.01, label="D3PM 起始 T 值")
-                nsteps_slider = gr.Slider(minimum=1, maximum=20, value=8, step=1, label="D3PM 采样步数")
+                gr.Markdown("### 分割模型参数")
+                # 隐藏复杂的模型解码参数，避免小白乱改导致提取失败。默认值已在代码中指定，此处将 visible 设为 False。
+                seg_threshold_slider = gr.Slider(minimum=0.01, maximum=0.99, value=0.2, step=0.01, label="边界解码阈值", visible=False)
+                seg_radius_slider = gr.Slider(minimum=0.01, maximum=0.1, value=0.02, step=0.005, label="边界解码半径/秒", visible=False)
+                t0_slider = gr.Slider(minimum=0.0, maximum=0.99, value=0.0, step=0.01, label="D3PM 起始 T 值", visible=False)
+                nsteps_slider = gr.Slider(minimum=1, maximum=20, value=8, step=1, label="D3PM 采样步数", visible=False)
+                est_threshold_slider = gr.Slider(minimum=0.01, maximum=0.99, value=0.2, step=0.01, label="音符存在阈值", visible=False)
             with gr.Column():
-                gr.Markdown("### 估计与通用 (Estimation & General)")
-                est_threshold_slider = gr.Slider(minimum=0.01, maximum=0.99, value=0.2, step=0.01, label="音符存在阈值")
-                batch_size_slider = gr.Slider(minimum=1, maximum=32, value=4, step=1, label="GAME 批处理大小 (Batch Size)")
-                asr_batch_size_slider = gr.Slider(minimum=1, maximum=32, value=2, step=1, label="ASR 批处理大小 (Batch Size)", info="增大可加速ASR，但更耗显存。")
+                gr.Markdown("### 性能与批处理")
+                batch_size_slider = gr.Slider(minimum=1, maximum=32, value=4, step=1, label="GAME 批处理大小", info="显存不足时调小此值。")
+                asr_batch_size_slider = gr.Slider(minimum=1, maximum=32, value=2, step=1, label="ASR 批处理大小", info="增大可加速语音识别，但更耗显存。")
 
     with gr.Tabs():
-        with gr.TabItem("🎤 自动歌词与灌注 (Auto Lyric)"):
-            gr.Markdown("结合 ASR 和 FA，自动识别歌词并基于**元音起始点**进行音符分割和歌词灌注。")
+        with gr.TabItem("🎤 自动提取与歌词灌注 (Auto Lyric)", id=1):
+            gr.Markdown("上传干声，结合 ASR 和 FA 技术，全自动识别歌词并基于**元音起始点**进行音符分割和对齐。")
             with gr.Row():
-                with gr.Column(scale=1):
-                    al_audio_input = gr.File(label="上传音频文件 (wav, flac 等)", file_count="multiple", type="filepath")
+                with gr.Column(scale=1, variant="panel"):
+                    al_audio_input = gr.File(label="📂 上传音频文件 (wav, flac 等)", file_count="multiple", type="filepath")
                     
-                    with gr.Row():
-                        al_engine_radio = gr.Radio(choices=["Hybrid (新版)", "ONNX (旧版)"], value="Hybrid (新版)", label="自动灌词引擎")
+                    gr.Markdown("### 🧠 辅助模型配置")
+                    with gr.Group():
+                        al_hfa_model_input = gr.Textbox(label="HubertFA 强制对齐模型目录", placeholder="E:\\Vocal2Midi\\experiments\\1218_hfa_model_new_dict", value="E:\\Vocal2Midi\\experiments\\1218_hfa_model_new_dict")
+                        al_asr_model_input = gr.Textbox(label="Qwen3-ASR 语音识别模型路径", placeholder="C:\\Users\\Xiantaidu\\.cache\\modelscope\\hub\\models\\Qwen\\Qwen3-ASR-1.7B", value="C:\\Users\\Xiantaidu\\.cache\\modelscope\\hub\\models\\Qwen\\Qwen3-ASR-1.7B")
                     
-                    al_hfa_model_input = gr.Textbox(label="HubertFA 模型目录", placeholder="E:\\Vocal2Midi\\experiments\\1218_hfa_model_new_dict", value="E:\\Vocal2Midi\\experiments\\1218_hfa_model_new_dict")
-                    
-                    al_asr_method_radio = gr.Radio(choices=["Qwen3-ASR", "FunASR (仅ONNX)", "Dynamic Lyric (仅ONNX)"], value="Qwen3-ASR", label="ASR 方法", info="Hybrid引擎仅支持Qwen3-ASR。")
-                    al_asr_model_input = gr.Textbox(label="ASR 模型路径或ID", placeholder="C:\\Users\\Xiantaidu\\.cache\\modelscope\\hub\\models\\Qwen\\Qwen3-ASR-1.7B", value="C:\\Users\\Xiantaidu\\.cache\\modelscope\\hub\\models\\Qwen\\Qwen3-ASR-1.7B")
-                                        
-                    al_lyrics_input = gr.Textbox(label="参考歌词 (可选)", placeholder="如果有确切的歌词，请在此输入（纯文本）...", lines=4)
+                    with gr.Group():
+                        al_lyrics_input = gr.Textbox(label="📝 参考歌词 (可选)", placeholder="如果有确切的歌词，请在此输入（纯文本）以提高对齐准确率...", lines=3)
+                        al_slicing_method_radio = gr.Radio(choices=["默认切片", "启发式切片", "网格搜索切片"], value="默认切片", label="✂️ 音频切片方法", info="默认最快，后两者更智能但耗时。")
 
-                    al_slicing_method_radio = gr.Radio(choices=["默认切片", "启发式切片", "网格搜索切片"], value="默认切片", label="切片方法", info="默认切片速度最快，后两者更智能但耗时。")
+                    # Hidden inputs used for backward compatibility
+                    al_engine_radio = gr.Radio(choices=["Hybrid (新版)", "ONNX (旧版)"], value="Hybrid (新版)", visible=False)
+                    al_asr_method_radio = gr.Radio(choices=["Qwen3-ASR", "FunASR (仅ONNX)", "Dynamic Lyric (仅ONNX)"], value="Qwen3-ASR", visible=False)
 
-                    with gr.Accordion("输出设置 (Output Options)", open=True):
+                    with gr.Accordion("💾 输出设置 (Output Options)", open=True):
+                        with gr.Group():
+                            with gr.Row():
+                                al_out_mid_cb = gr.Checkbox(label="导出 MIDI (.mid)", value=True)
+                                al_out_txt_cb = gr.Checkbox(label="导出 Text (.txt)", value=True)
+                            with gr.Row():
+                                al_out_csv_cb = gr.Checkbox(label="导出 CSV (.csv)", value=False)
+                                al_out_chunks_cb = gr.Checkbox(label="导出切片与 TextGrid", value=False)
+                        
                         with gr.Row():
-                            al_out_mid_cb = gr.Checkbox(label="带歌词的 MIDI (.mid)", value=True)
-                            al_out_txt_cb = gr.Checkbox(label="Text (.txt)", value=True)
-                            al_out_csv_cb = gr.Checkbox(label="CSV (.csv)", value=False)
-                            al_out_chunks_cb = gr.Checkbox(label="切片与 TextGrid (.wav, .TextGrid)", value=False)
-                        
-                        al_tempo_number = gr.Number(label="曲速 (Tempo BPM)", value=120)
-                        al_quantize_dropdown = gr.Dropdown(
-                            choices=["不量化", "1/4 音符 (1拍)", "1/8 音符 (1/2拍)", "1/16 音符 (1/4拍)", "1/32 音符 (1/8拍)", "1/64 音符 (1/16拍)"],
-                            value="不量化",
-                            label="MIDI 量化 (Quantization)"
-                        )
-                        al_pitch_format_radio = gr.Radio(choices=["name", "number"], value="name", label="音高格式 (用于 Text/CSV)")
-                        al_round_pitch_cb = gr.Checkbox(label="音高取整 (Round Pitch)", value=False)
+                            al_tempo_number = gr.Number(label="曲速 (Tempo BPM)", value=120)
+                            al_quantize_dropdown = gr.Dropdown(
+                                choices=["不量化", "1/4 音符 (1拍)", "1/8 音符 (1/2拍)", "1/16 音符 (1/4拍)", "1/32 音符 (1/8拍)", "1/64 音符 (1/16拍)"],
+                                value="不量化",
+                                label="MIDI 量化精度"
+                            )
+                        with gr.Row():
+                            al_pitch_format_radio = gr.Radio(choices=["name", "number"], value="name", label="音高格式 (Text/CSV)")
+                            al_round_pitch_cb = gr.Checkbox(label="音高取整 (Round Pitch)", value=False)
                         
                     with gr.Row():
-                        al_btn = gr.Button("🎤 开始自动灌词", variant="primary")
-                        al_stop_btn = gr.Button("🛑 强制停止", variant="stop")
+                        al_btn = gr.Button("🚀 开始全自动提取", variant="primary", size="lg")
+                        al_stop_btn = gr.Button("🛑 强制停止", variant="stop", size="lg")
                     
-                with gr.Column(scale=1):
-                    al_output_file = gr.File(label="下载提取结果 (Download Result)")
-                    al_msg = gr.Textbox(label="状态信息 (Status)", interactive=False)
+                with gr.Column(scale=1, variant="panel"):
+                    gr.Markdown("### 📥 提取结果")
+                    al_output_file = gr.File(label="下载提取文件")
+                    al_msg = gr.Textbox(label="运行日志与状态", interactive=False, lines=15)
 
             al_event = al_btn.click(
                 fn=auto_lyric,
