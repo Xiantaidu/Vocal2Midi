@@ -57,6 +57,28 @@ def _t0_nstep_to_ts(t0: float, nsteps: int) -> list[float]:
         for i in range(nsteps)
     ]
 
+def _parse_quantization(quantize_option: str) -> int:
+    if "1/4 音符" in quantize_option: return 480
+    elif "1/8 音符" in quantize_option: return 240
+    elif "1/16 音符" in quantize_option: return 120
+    elif "1/32 音符" in quantize_option: return 60
+    elif "1/64 音符" in quantize_option: return 30
+    return 0
+
+def _package_outputs(output_dir: pathlib.Path, zip_filename: str, success_msg: str):
+    generated_files = list(output_dir.glob("*"))
+    if not generated_files:
+        return None, "推理完成，但未生成任何输出文件。"
+        
+    if len(generated_files) == 1:
+        return str(generated_files[0]), success_msg
+    else:
+        zip_path = output_dir.parent / zip_filename
+        with zipfile.ZipFile(zip_path, 'w') as zipf:
+            for file in generated_files:
+                zipf.write(file, file.name)
+        return str(zip_path), f"{success_msg}请下载 ZIP 压缩包。"
+
 def load_model(model_path_str: str, engine: str, onnx_device: str):
     model_path = pathlib.Path(model_path_str)
     if not model_path.exists():
@@ -134,13 +156,7 @@ def extract_midi(
         language_id = _get_language_id(language, lang_map)
 
         ts = _t0_nstep_to_ts(t0, int(nsteps))
-
-        quantization_step = 0
-        if "1/4 音符" in quantize_option: quantization_step = 480
-        elif "1/8 音符" in quantize_option: quantization_step = 240
-        elif "1/16 音符" in quantize_option: quantization_step = 120
-        elif "1/32 音符" in quantize_option: quantization_step = 60
-        elif "1/64 音符" in quantize_option: quantization_step = 30
+        quantization_step = _parse_quantization(quantize_option)
 
         if engine == "PyTorch":
             if not PYTORCH_AVAILABLE:
@@ -210,18 +226,7 @@ def extract_midi(
                 batch_size=int(batch_size),
             )
 
-        generated_files = list(output_dir.glob("*"))
-        if not generated_files:
-            return None, "推理完成，但未生成任何输出文件。"
-            
-        if len(generated_files) == 1:
-            return str(generated_files[0]), "提取成功！"
-        else:
-            zip_path = output_dir.parent / "extracted_midi.zip"
-            with zipfile.ZipFile(zip_path, 'w') as zipf:
-                for file in generated_files:
-                    zipf.write(file, file.name)
-            return str(zip_path), "提取成功！请下载 ZIP 压缩包。"
+        return _package_outputs(output_dir, "extracted_midi.zip", "提取成功！")
 
     except Exception as e:
         import traceback
@@ -281,13 +286,7 @@ def auto_lyric(
 
         output_dir = pathlib.Path(tempfile.mkdtemp(prefix="game_gradio_autolyric_"))
 
-        quantization_step = 0
-        if "1/4 音符" in quantize_option: quantization_step = 480
-        elif "1/8 音符" in quantize_option: quantization_step = 240
-        elif "1/16 音符" in quantize_option: quantization_step = 120
-        elif "1/32 音符" in quantize_option: quantization_step = 60
-        elif "1/64 音符" in quantize_option: quantization_step = 30
-        
+        quantization_step = _parse_quantization(quantize_option)
         ts_list = _t0_nstep_to_ts(t0, int(nsteps))
 
         for temp_file in audio_files:
@@ -353,18 +352,7 @@ def auto_lyric(
                     batch_size=int(batch_size)
                 )
 
-        generated_files = list(output_dir.glob("*"))
-        if not generated_files:
-            return None, "推理完成，但未生成任何输出文件。"
-            
-        if len(generated_files) == 1:
-            return str(generated_files[0]), "自动灌词成功！"
-        else:
-            zip_path = output_dir.parent / "autolyric_results.zip"
-            with zipfile.ZipFile(zip_path, 'w') as zipf:
-                for file in generated_files:
-                    zipf.write(file, file.name)
-            return str(zip_path), "自动灌词成功！请下载 ZIP 压缩包。"
+        return _package_outputs(output_dir, "autolyric_results.zip", "自动灌词成功！")
 
     except Exception as e:
         import traceback
@@ -452,7 +440,7 @@ with gr.Blocks(title="GAME: 生成式自适应 MIDI 提取器") as demo:
                         
                         al_tempo_number = gr.Number(label="曲速 (Tempo BPM)", value=120)
                         al_quantize_dropdown = gr.Dropdown(
-                            choices=["不量化", "1/32 音符 (1/8拍)"],
+                            choices=["不量化", "1/4 音符 (1拍)", "1/8 音符 (1/2拍)", "1/16 音符 (1/4拍)", "1/32 音符 (1/8拍)", "1/64 音符 (1/16拍)"],
                             value="不量化",
                             label="MIDI 量化 (Quantization)"
                         )
