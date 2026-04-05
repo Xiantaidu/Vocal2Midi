@@ -15,3 +15,7 @@ venv
 /python/
 .vscode
 .ipynb_checkpoints/
+tempCodeRunnerFile.py
+*.wav
+*.textgrid
+*.lab
