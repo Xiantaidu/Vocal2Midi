@@ -133,9 +133,11 @@ class SequenceAligner:
 
         input_len = len(input_seq)
         ref_len = len(reference_seq)
-
+        long_input_note = ""
         if input_len > ref_len:
-            return "", -1, -1, None, None, "Input longer than reference"
+            # 允许输入长于参考：ASR 常会出现插入/幻觉词，
+            # 这里继续走窗口+编辑距离流程，尽量回填出参考歌词。
+            long_input_note = "Input longer than reference; attempted approximate alignment"
 
         direct_start = self._find_exact_match(input_seq, reference_seq)
         if direct_start != -1:
@@ -149,11 +151,18 @@ class SequenceAligner:
 
         best_start, _ = self._scan_windows(input_seq, reference_seq, window_size, input_len)
         if best_start == -1:
+            if long_input_note:
+                return "", -1, -1, None, None, f"{long_input_note}; no matching window found"
             return "", -1, -1, None, None, "No matching window found"
 
-        return self._build_match_from_alignment(
+        matched_text, start, end, matched_phonetic_list, matched_text_list, reason = self._build_match_from_alignment(
             input_seq, reference_seq, reference_text, best_start, window_size
         )
+
+        if long_input_note:
+            reason = f"{long_input_note}; {reason}" if reason else long_input_note
+
+        return matched_text, start, end, matched_phonetic_list, matched_text_list, reason
 
     @staticmethod
     def _find_exact_match(input_seq: List[str], reference_seq: List[str]) -> int:

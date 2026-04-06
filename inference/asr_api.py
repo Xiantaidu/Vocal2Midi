@@ -18,7 +18,7 @@ def load_qwen_model(model_path, device="cuda"):
         raise RuntimeError(f"Error loading Qwen3-ASR model: {e}\nPlease ensure you have run 'pip install -U qwen-asr'.")
     return model
 
-def batch_transcribe_asr(chunks, sr, asr_model, temp_dir_path, asr_batch_size, language):
+def batch_transcribe_asr(chunks, sr, asr_model, temp_dir_path, asr_batch_size, language, cancel_checker=None):
     """Saves chunks to temp_dir and runs batched ASR transcription."""
     asr_lang = "Japanese" if language == "ja" else "Chinese"
     print(f"[ASR API] Running ASR with PyTorch Qwen (Batch Size: {asr_batch_size}, Language: {asr_lang})...")
@@ -36,6 +36,8 @@ def batch_transcribe_asr(chunks, sr, asr_model, temp_dir_path, asr_batch_size, l
 
     all_results = []
     for i in range(0, len(audio_paths), asr_batch_size):
+        if cancel_checker and cancel_checker():
+            raise InterruptedError("ASR 任务已取消")
         batch_audio_paths = audio_paths[i:i+asr_batch_size]
         print(f"  Processing ASR batch {i//asr_batch_size + 1}/{(len(audio_paths) - 1)//asr_batch_size + 1}...")
         

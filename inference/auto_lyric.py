@@ -7,6 +7,10 @@ import warnings
 import sys
 import itertools
 
+# Legacy pipeline note:
+# - This module is kept for backward compatibility (ONNX/FunASR old path).
+# - Recommended main pipeline is inference/auto_lyric_hybrid.py.
+
 # Allow running this script directly from anywhere
 ROOT_DIR = pathlib.Path(__file__).parent.parent
 if str(ROOT_DIR) not in sys.path:
@@ -1038,7 +1042,7 @@ def auto_lyric_pipeline(
     sr = 44100
     waveform, sr = librosa.load(audio_path, sr=sr, mono=True)
     
-    # 1. 音频切片
+    # [Legacy] 1. 预处理和切片
     if slicing_method == "启发式切片":
         chunks = heuristic_slice(waveform, sr)
     elif slicing_method == "网格搜索切片":
@@ -1161,7 +1165,8 @@ if __name__ == "__main__":
              asr_method, dynamic_asr_dir, slicing_method, formats, pitch_format, round_pitch, seg_threshold, seg_radius, est_threshold,
              t0, nsteps, batch_size, device):
         """
-        Auto Lyric Alignment Pipeline: Extracts notes from singing voice and automatically aligns them with lyrics using ASR.
+        [Legacy] Auto Lyric Alignment Pipeline: kept for compatibility.
+        Recommended main pipeline: `inference/auto_lyric_hybrid.py`.
         """
         out_dir = pathlib.Path(output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
