@@ -400,11 +400,11 @@ theme = gr.themes.Default(
     font=[gr.themes.GoogleFont('Inter'), 'ui-sans-serif', 'system-ui', 'sans-serif'],
 )
 
-with gr.Blocks(title="GAME: 生成式自适应 MIDI 提取器", theme=theme, css=css) as demo:
+with gr.Blocks(title="GAME: 生成式自适应 MIDI 提取器 (Legacy)", theme=theme, css=css) as demo:
     gr.HTML("""
         <div class="main-header">
-            <h1>🎵 GAME: 生成式自适应 MIDI 提取器</h1>
-            <p>将歌声转换为高质量乐谱（MIDI）。基于 D3PM 模型，支持自动语音识别与强制对齐歌词灌注。</p>
+            <h1>🎵 GAME: 生成式自适应 MIDI 提取器（Legacy）</h1>
+            <p>兼容旧版 Gradio 界面。当前主力 GUI 为 app_fluent.py，主力流程为 Hybrid Pipeline。</p>
         </div>
     """)
     
@@ -433,8 +433,8 @@ with gr.Blocks(title="GAME: 生成式自适应 MIDI 提取器", theme=theme, css
                 asr_batch_size_slider = gr.Slider(minimum=1, maximum=32, value=2, step=1, label="ASR 批处理大小", info="增大可加速语音识别，但更耗显存。")
 
     with gr.Tabs():
-        with gr.TabItem("🎤 自动提取与歌词灌注 (Auto Lyric)", id=1):
-            gr.Markdown("上传干声，结合 ASR 和 FA 技术，全自动识别歌词并基于**元音起始点**进行音符分割和对齐。")
+        with gr.TabItem("🎤 自动提取与歌词灌注 (Auto Lyric, 旧版入口)", id=1):
+            gr.Markdown("上传干声，结合 ASR 和 FA 技术，全自动识别歌词并基于**元音起始点**进行音符分割和对齐。\n\n> 说明：此页面为旧版兼容入口，当前推荐使用 `app_fluent.py` + Hybrid 管线。")
             with gr.Row():
                 with gr.Column(scale=1, variant="panel"):
                     al_audio_input = gr.File(label="📂 上传音频文件 (wav, flac 等)", file_count="multiple", type="filepath")

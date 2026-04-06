@@ -31,7 +31,7 @@ def create_lyric_matcher(language, original_lyrics):
     """
     matcher = None
     if original_lyrics and original_lyrics.strip():
-        matcher_lang = language if language in ["zh", "en"] else "zh"
+        matcher_lang = language if language in ["zh", "en", "ja"] else "zh"
         matcher = LyricMatcher(matcher_lang)
         processor = matcher.processor
         cleaned_lyric = processor.clean_text(original_lyrics)
@@ -51,6 +51,9 @@ def process_asr_to_phonemes(all_results, chunk_indices, temp_dir_path, language,
     for idx, res in enumerate(all_results):
         chunk_idx = chunk_indices[idx]
         stem = f"chunk_{chunk_idx}"
+        matched_lyric_text = ""
+        matched_lyric_phonetic = ""
+        match_reason = ""
         
         if res is None or not res.text.strip():
             chunk_logs.append(f"[{stem}]\nASR Output: [Empty or Failed]\nStatus: Ignored\n")
@@ -61,14 +64,17 @@ def process_asr_to_phonemes(all_results, chunk_indices, temp_dir_path, language,
         if matcher:
             asr_text_list, asr_phonetic_list = matcher.process_asr_content(text)
             if asr_phonetic_list:
-                matched_text, matched_phonetic, _ = matcher.align_lyric_with_asr(
+                matched_text, matched_phonetic, reason = matcher.align_lyric_with_asr(
                     asr_phonetic=asr_phonetic_list,
                     lyric_text=matcher.lyric_text_list,
                     lyric_phonetic=matcher.lyric_phonetic_list
                 )
+                match_reason = reason or ""
                 if matched_phonetic:
                     pinyin_str = matched_phonetic
                     chars = matched_text.split()
+                    matched_lyric_text = matched_text
+                    matched_lyric_phonetic = matched_phonetic
                     match_status = "Matched with original lyrics"
                 else:
                     pinyin_str = g2p_model.convert(text, include_tone=False, convert_number=True)
@@ -90,11 +96,24 @@ def process_asr_to_phonemes(all_results, chunk_indices, temp_dir_path, language,
         chars_dict[stem] = chars
         
         assigned_lyrics = ' '.join(chars) if getattr(g2p_model, '__class__', None).__name__ == 'JaG2p' else ''.join(chars)
-        chunk_logs.append(
-            f"[{stem}]\nASR Output: {text}\n"
-            f"Match Status: {match_status}\n"
-            f"Final Assigned Lyrics: {assigned_lyrics}\n"
-            f"FA Pinyin (.lab): {pinyin_str}\n"
-        )
+        log_lines = [
+            f"[{stem}]",
+            f"ASR Output: {text}",
+            f"Match Status: {match_status}",
+        ]
+
+        if matched_lyric_text:
+            log_lines.append(f"Matched Lyric Segment: {matched_lyric_text}")
+        if matched_lyric_phonetic:
+            log_lines.append(f"Matched Lyric Phonetic: {matched_lyric_phonetic}")
+        if match_reason:
+            log_lines.append(f"Match Reason: {match_reason}")
+
+        log_lines.extend([
+            f"Final Assigned Lyrics: {assigned_lyrics}",
+            f"FA Pinyin (.lab): {pinyin_str}",
+        ])
+
+        chunk_logs.append("\n".join(log_lines) + "\n")
             
     return chars_dict, chunk_logs

@@ -32,11 +32,11 @@ def free_memory():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-def run_qwen_asr_and_fa(chunks, sr, asr_model, temp_dir_path, matcher, asr_batch_size=4, language="zh"):
+def run_qwen_asr_and_fa(chunks, sr, asr_model, temp_dir_path, matcher, asr_batch_size=4, language="zh", cancel_checker=None):
     """
     Runs ASR using the PyTorch Qwen model with batching and prepares .lab files for HubertFA.
     """
-    all_results, chunk_indices = batch_transcribe_asr(chunks, sr, asr_model, temp_dir_path, asr_batch_size, language)
+    all_results, chunk_indices = batch_transcribe_asr(chunks, sr, asr_model, temp_dir_path, asr_batch_size, language, cancel_checker=cancel_checker)
     return process_asr_to_phonemes(all_results, chunk_indices, temp_dir_path, language, matcher)
 
 def auto_lyric_hybrid_pipeline(
@@ -61,22 +61,35 @@ def auto_lyric_hybrid_pipeline(
     est_threshold: float,
     batch_size: int = 4,
     asr_batch_size: int = 4,
-    debug_mode: bool = False
+    debug_mode: bool = False,
+    cancel_checker=None,
 ):
     """Auto Lyric Hybrid (PyTorch + ONNX-GPU) Pipeline"""
     output_key = pathlib.Path(output_filename).stem
     print(f"\n[Hybrid Pipeline] Processing audio: {audio_path}")
+
+    def _check_cancel():
+        if cancel_checker and cancel_checker():
+            raise InterruptedError("任务已取消")
+
+    _check_cancel()
     sr = 44100
     waveform, sr = librosa.load(audio_path, sr=sr, mono=True)
+    _check_cancel()
 
     chunks = slice_audio(waveform, sr, slicing_method)
+    _check_cancel()
 
     matcher = create_lyric_matcher(language, original_lyrics)
+    _check_cancel()
 
     print("\n--- Loading Models ---")
     asr_model = load_qwen_model(asr_model_path, device=device)
+    _check_cancel()
     hfa_model = load_hfa_model(hfa_model_dir, device=device)
+    _check_cancel()
     game_model = load_game_model(game_model_dir, device=device)
+    _check_cancel()
     print("----------------------\n")
     
     all_notes = []
@@ -86,12 +99,14 @@ def auto_lyric_hybrid_pipeline(
         temp_dir_path = pathlib.Path(temp_dir)
 
         chars_dict, chunk_logs = run_qwen_asr_and_fa(
-            chunks, sr, asr_model, temp_dir_path, matcher, asr_batch_size, language=language
+            chunks, sr, asr_model, temp_dir_path, matcher, asr_batch_size, language=language, cancel_checker=cancel_checker
         )
+        _check_cancel()
         free_memory()
         del asr_model
 
         pred_dict = run_hubert_fa(hfa_model, temp_dir_path, language=language)
+        _check_cancel()
 
         export_hfa_artifacts(chunks, temp_dir_path, hfa_model, output_key, output_dir, output_formats)
         
@@ -103,6 +118,7 @@ def auto_lyric_hybrid_pipeline(
             seg_threshold, seg_radius, est_threshold, batch_size,
             debug_mode=debug_mode
         )
+        _check_cancel()
         del game_model
         free_memory()
 

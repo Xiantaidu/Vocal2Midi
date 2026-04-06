@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-title GAME 生成式自适应 MIDI 提取器 (ONNX)
+title GAME 生成式自适应 MIDI 提取器 (Fluent 主界面)
 set PYTHON_DIR=%~dp0python
 
 if not exist "%PYTHON_DIR%\python.exe" (
@@ -10,7 +10,7 @@ if not exist "%PYTHON_DIR%\python.exe" (
     exit /b
 )
 
-echo 正在启动 GAME Gradio 界面...
-"%PYTHON_DIR%\python.exe" app.py
+echo 正在启动 GAME Fluent 主界面...
+"%PYTHON_DIR%\python.exe" app_fluent.py
 
 pause
