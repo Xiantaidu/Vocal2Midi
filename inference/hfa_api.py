@@ -24,7 +24,6 @@ def load_hfa_model(model_dir, device="cuda"):
     return model
 
 def run_hubert_fa(hfa_model, temp_dir, language="zh"):
-    """运行 HubertFA 强制对齐"""
     print("[Hybrid Pipeline] Running HubertFA forced alignment on GPU...")
     hfa_model.dataset = []
     hfa_model.predictions = []
@@ -41,18 +40,24 @@ def run_hubert_fa(hfa_model, temp_dir, language="zh"):
     return pred_dict
 
 def export_hfa_artifacts(chunks, temp_dir_path, hfa_model, output_key, output_dir, output_formats):
-    """导出中间产物如 TextGrid 和切片音频（如果需要）"""
     import shutil
-    temp_tg_dir = temp_dir_path / "temp_tg"
-    hfa_model.export(temp_tg_dir, output_format=['textgrid'])
-    
-    tg_subfolder = temp_tg_dir / "TextGrid"
+
+    output_formats = set(output_formats or [])
+    export_chunks = "chunks" in output_formats
+                                           
+    export_textgrid = ("textgrid" in output_formats) or export_chunks
+
+    tg_subfolder = None
+    if export_textgrid:
+        temp_tg_dir = temp_dir_path / "temp_tg"
+        hfa_model.export(temp_tg_dir, output_format=['textgrid'])
+        tg_subfolder = temp_tg_dir / "TextGrid"
     
     for chunk_idx, chunk in enumerate(chunks):
         stem = f"chunk_{chunk_idx}"
         new_stem = f"{output_key}_{chunk_idx:03d}"
         
-        if "chunks" in output_formats:
+        if export_chunks:
             chunk_wav_path = temp_dir_path / f"{stem}.wav"
             try:
                 if chunk_wav_path.exists():
@@ -62,7 +67,7 @@ def export_hfa_artifacts(chunks, temp_dir_path, hfa_model, output_key, output_di
             except Exception as e:
                 print(f"[Error] Failed to copy chunk {chunk_wav_path}: {e}")
 
-        if tg_subfolder.exists():
+        if tg_subfolder is not None and tg_subfolder.exists():
             tg_path = tg_subfolder / f"{stem}.TextGrid"
             try:
                 if tg_path.exists():

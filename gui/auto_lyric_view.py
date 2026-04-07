@@ -102,7 +102,18 @@ class AutoLyricInterface(ScrollArea):
         combo_layout.addWidget(BodyLabel("计算设备", self))
         self.device_combo = ComboBox(self)
         self.device_combo.addItems(["cuda", "cpu"])
+        self.device_combo.currentTextChanged.connect(self.apply_device_batch_defaults)
         combo_layout.addWidget(self.device_combo)
+
+        combo_layout.addSpacing(28)
+        combo_layout.addWidget(BodyLabel("输出歌词", self))
+        from qfluentwidgets import SwitchButton
+        self.cb_output_lyrics = SwitchButton("On", self, self)
+        self.cb_output_lyrics.setOffText("Off")
+        self.cb_output_lyrics.setChecked(self.global_settings.settings.value("output_lyrics", True, type=bool))
+        self.cb_output_lyrics.checkedChanged.connect(lambda v: self.global_settings.settings.setValue("output_lyrics", v))
+        combo_layout.addWidget(self.cb_output_lyrics)
+
         combo_layout.addStretch(1)
         self.vBoxLayout.addWidget(combo_card)
 
@@ -159,6 +170,15 @@ class AutoLyricInterface(ScrollArea):
 
         self.worker = None
         self.update_lyrics_visibility()
+        self.apply_device_batch_defaults(self.device_combo.currentText())
+
+    def apply_device_batch_defaults(self, device: str):
+        if device == "cpu":
+            self.global_settings.batch_spin.setValue(1)
+            self.global_settings.asr_batch_spin.setValue(1)
+        else:
+            self.global_settings.batch_spin.setValue(2)
+            self.global_settings.asr_batch_spin.setValue(2)
 
     def update_lyrics_visibility(self):
         enabled = self.global_settings.cb_match_lyrics.isChecked()
@@ -218,6 +238,7 @@ class AutoLyricInterface(ScrollArea):
             'language': self.lang_combo.currentText(),
             'original_lyrics': self.lyrics_edit.toPlainText().strip() if self.global_settings.cb_match_lyrics.isChecked() else "",
             'output_formats': output_formats,
+            'output_lyrics': self.cb_output_lyrics.isChecked(),
             'slicing_method': self.slicing_combo.currentText(),
             'tempo': self.tempo_spin.value(),
             'quantization_step': parse_quantization(self.quantize_combo.currentText()),
