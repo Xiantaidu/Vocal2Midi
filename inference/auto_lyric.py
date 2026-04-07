@@ -368,7 +368,6 @@ def heuristic_slice(
 
 
 def smart_slice(waveform, sr):
-    """音频切片：包含基础切片、激进切片以及按RMS最小能量强制切片的逻辑"""
     slicer = Slicer(
         sr=sr,
         threshold=-30.,
@@ -454,7 +453,6 @@ def smart_slice(waveform, sr):
     return final_chunks
 
 def prepare_asr_and_labels(chunks, sr, temp_dir_path, asr_model, g2p_model, matcher):
-    """运行 ASR 并与原歌词匹配，生成 HubertFA 所需的 .lab 文件"""
     import soundfile as sf
     chars_dict = {}
     chunk_logs = []
@@ -528,7 +526,6 @@ def prepare_asr_and_labels(chunks, sr, temp_dir_path, asr_model, g2p_model, matc
     return chars_dict, chunk_logs
 
 def run_hubert_fa(hfa_model, temp_dir, language="zh"):
-    """运行 HubertFA 强制对齐"""
     print("[Auto Lyric] Running HubertFA forced alignment...")
     hfa_model.dataset = []
     hfa_model.predictions = []
@@ -545,7 +542,6 @@ def run_hubert_fa(hfa_model, temp_dir, language="zh"):
     return pred_dict
 
 def extract_pitches_and_align(chunks, sr, pred_dict, chars_dict, game_model, seg_threshold, seg_radius, est_threshold, batch_size=4):
-    """使用 GAME 模型提取音高并对齐歌词"""
     print("[Auto Lyric] Extracting pitches with GAME...")
     all_notes = []
     batch_wavs = []
@@ -667,18 +663,24 @@ def extract_pitches_and_align(chunks, sr, pred_dict, chars_dict, game_model, seg
     return all_notes
 
 def export_artifacts(chunks, temp_dir_path, hfa_model, output_key, output_dir, output_formats):
-    """导出中间产物如 TextGrid 和切片音频（如果需要）"""
     import shutil
-    temp_tg_dir = temp_dir_path / "temp_tg"
-    hfa_model.export(temp_tg_dir, output_format=['textgrid'])
-    
-    tg_subfolder = temp_tg_dir / "TextGrid"
+
+    output_formats = set(output_formats or [])
+    export_chunks = "chunks" in output_formats
+                                           
+    export_textgrid = ("textgrid" in output_formats) or export_chunks
+
+    tg_subfolder = None
+    if export_textgrid:
+        temp_tg_dir = temp_dir_path / "temp_tg"
+        hfa_model.export(temp_tg_dir, output_format=['textgrid'])
+        tg_subfolder = temp_tg_dir / "TextGrid"
     
     for chunk_idx, chunk in enumerate(chunks):
         stem = f"chunk_{chunk_idx}"
         new_stem = f"{output_key}_{chunk_idx:03d}"
         
-        if "chunks" in output_formats:
+        if export_chunks:
             chunk_wav_path = temp_dir_path / f"{stem}.wav"
             try:
                 if chunk_wav_path.exists():
@@ -688,7 +690,7 @@ def export_artifacts(chunks, temp_dir_path, hfa_model, output_key, output_dir, o
             except Exception as e:
                 print(f"[Error] Failed to copy chunk {chunk_wav_path}: {e}")
 
-        if tg_subfolder.exists():
+        if tg_subfolder is not None and tg_subfolder.exists():
             tg_path = tg_subfolder / f"{stem}.TextGrid"
             try:
                 if tg_path.exists():
@@ -1035,14 +1037,13 @@ def auto_lyric_pipeline(
     ts: list,
     batch_size: int = 4
 ):
-    """Auto Lyric 的主处理流水线"""
     output_key = pathlib.Path(output_filename).stem
     print(f"\n[Auto Lyric] Processing audio: {audio_path}")
     # Default to 44100 which is GAME's typical samplerate
     sr = 44100
     waveform, sr = librosa.load(audio_path, sr=sr, mono=True)
     
-    # [Legacy] 1. 预处理和切片
+                        
     if slicing_method == "启发式切片":
         chunks = heuristic_slice(waveform, sr)
     elif slicing_method == "网格搜索切片":
@@ -1051,10 +1052,10 @@ def auto_lyric_pipeline(
         chunks = smart_slice(waveform, sr)
     print(f"Sliced into {len(chunks)} chunks.")
     
-    # 2. 初始化G2P模型
+                 
     g2p_model = get_ja_g2p() if language == "ja" else get_zh_g2p()
     
-    # 3. 处理原歌词（如果提供）
+                    
     matcher = None
     if original_lyrics and original_lyrics.strip():
         print("[Auto Lyric] Processing original lyrics for matching...")
@@ -1071,7 +1072,7 @@ def auto_lyric_pipeline(
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir_path = pathlib.Path(temp_dir)
         
-        # 4. 运行 ASR、匹配歌词并生成标签
+                             
         if asr_method == "Dynamic Lyric (热词增强)":
             device_pref = "dml" if onnx_device == "dml" else "cpu"
             chunks, chars_dict, chunk_logs = prepare_dynamic_asr_and_labels(
@@ -1092,17 +1093,17 @@ def auto_lyric_pipeline(
             del asr_model
             free_memory()
 
-        # 5. 运行 HubertFA 强制对齐
+                             
         hfa_model = get_hfa_model(hfa_onnx_path)
         pred_dict = run_hubert_fa(hfa_model, temp_dir, language=language)
         
-        # 7. 导出额外产物 (如 TextGrid) BEFORE releasing hfa_model
+                                                           
         export_artifacts(chunks, temp_dir_path, hfa_model, output_key, output_dir, output_formats)
         
         del hfa_model
         free_memory()
         
-        # 6. 运行 GAME 推理、提取音高并与歌词对齐
+                                  
         from inference.onnx_api import load_onnx_model
         print(f"Loading GAME model from {game_model_path}...")
         game_model = load_onnx_model(pathlib.Path(game_model_path), device=onnx_device)
@@ -1117,11 +1118,15 @@ def auto_lyric_pipeline(
         del game_model
         free_memory()
 
-    # 8. 排序、量化并保存最终文件
+                     
     all_notes.sort(key=lambda x: x.onset)
     
-    log_path = output_dir / f"{output_key}_asr_match_log.txt"
-    log_path.write_text("\n".join(chunk_logs), encoding="utf-8")
+                                                     
+    output_format_set = set(output_formats or [])
+    export_asr_match_log = ("asr_match_log" in output_format_set) or ("chunks" in output_format_set)
+    if export_asr_match_log:
+        log_path = output_dir / f"{output_key}_asr_match_log.txt"
+        log_path.write_text("\n".join(chunk_logs), encoding="utf-8")
 
     if quantization_step > 0:
         quantize_notes(all_notes, tempo, quantization_step)

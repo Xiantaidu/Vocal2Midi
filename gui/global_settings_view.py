@@ -1,3 +1,5 @@
+import pathlib
+
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFileDialog
 from PyQt5.QtCore import Qt, QSettings
 
@@ -19,21 +21,23 @@ from qfluentwidgets import (
 class GlobalSettingsInterface(ScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent=parent)
+        self.project_root = pathlib.Path(__file__).resolve().parent.parent
         self.settings = QSettings("GAME_Extractor", "Vocal2Midi")
         self.default_values = {
-            "game_model": r"E:\Vocal2Midi\experiments\GAME-1.0-medium",
-            "hfa_model": r"E:\Vocal2Midi\experiments\1218_hfa_model_new_dict",
-            "asr_model": r"C:\Users\Xiantaidu\.cache\modelscope\hub\models\Qwen\Qwen3-ASR-1.7B",
+            "game_model": "experiments/GAME-1.0-medium",
+            "hfa_model": "experiments/1218_hfa_model_new_dict",
+            "asr_model": "experiments/Qwen3-ASR-1.7B",
             "seg_thresh": 0.2,
             "seg_rad": 0.02,
             "est_thresh": 0.2,
             "t0": 0.0,
             "nsteps": 8,
-            "batch_size": 4,
+            "batch_size": 2,
             "asr_batch": 2,
             "debug_txt": False,
             "debug_csv": False,
             "debug_chunks": False,
+            "output_lyrics": True,
             "enable_lyrics_match": False,
             "pitch_format": "name",
             "round_pitch": True,
@@ -65,7 +69,7 @@ class GlobalSettingsInterface(ScrollArea):
         game_layout = QHBoxLayout()
         game_layout.addWidget(BodyLabel("GAME 模型路径:", self))
         self.game_model_edit = LineEdit(self)
-        self.game_model_edit.setText(self.settings.value("game_model", self.default_values["game_model"]))
+        self.game_model_edit.setText(self._normalize_model_path("game_model", self.default_values["game_model"]))
         self.game_model_edit.textChanged.connect(lambda t: self.settings.setValue("game_model", t))
         game_layout.addWidget(self.game_model_edit, 1)
         btn_browse_game = PushButton("浏览", self, FluentIcon.FOLDER)
@@ -76,7 +80,7 @@ class GlobalSettingsInterface(ScrollArea):
         hfa_layout = QHBoxLayout()
         hfa_layout.addWidget(BodyLabel("HubertFA模型路径:", self))
         self.hfa_model_edit = LineEdit(self)
-        self.hfa_model_edit.setText(self.settings.value("hfa_model", self.default_values["hfa_model"]))
+        self.hfa_model_edit.setText(self._normalize_model_path("hfa_model", self.default_values["hfa_model"]))
         self.hfa_model_edit.textChanged.connect(lambda t: self.settings.setValue("hfa_model", t))
         hfa_layout.addWidget(self.hfa_model_edit, 1)
         btn_hfa = PushButton("浏览", self, FluentIcon.FOLDER)
@@ -87,7 +91,7 @@ class GlobalSettingsInterface(ScrollArea):
         asr_layout = QHBoxLayout()
         asr_layout.addWidget(BodyLabel("Qwen3-ASR模型路径:", self))
         self.asr_model_edit = LineEdit(self)
-        self.asr_model_edit.setText(self.settings.value("asr_model", self.default_values["asr_model"]))
+        self.asr_model_edit.setText(self._normalize_model_path("asr_model", self.default_values["asr_model"]))
         self.asr_model_edit.textChanged.connect(lambda t: self.settings.setValue("asr_model", t))
         asr_layout.addWidget(self.asr_model_edit, 1)
         btn_asr = PushButton("浏览", self, FluentIcon.FOLDER)
@@ -256,4 +260,26 @@ class GlobalSettingsInterface(ScrollArea):
     def browse_dir(self, line_edit):
         dir_path = QFileDialog.getExistingDirectory(self, "选择文件夹", line_edit.text())
         if dir_path:
-            line_edit.setText(dir_path)
+            line_edit.setText(self._to_project_relative(dir_path))
+
+    def _to_project_relative(self, path_str: str) -> str:
+        p = pathlib.Path(path_str).resolve()
+        try:
+            return str(p.relative_to(self.project_root)).replace("\\", "/")
+        except ValueError:
+            return str(p)
+
+    def _normalize_model_path(self, key: str, fallback_relative: str) -> str:
+        raw_value = self.settings.value(key, fallback_relative)
+        value = str(raw_value) if raw_value is not None else fallback_relative
+        p = pathlib.Path(value)
+
+                                          
+        if p.is_absolute():
+            try:
+                value = str(p.resolve().relative_to(self.project_root)).replace("\\", "/")
+            except ValueError:
+                value = fallback_relative
+
+        self.settings.setValue(key, value)
+        return value

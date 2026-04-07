@@ -47,6 +47,20 @@ def process_asr_to_phonemes(all_results, chunk_indices, temp_dir_path, language,
     g2p_model = get_ja_g2p() if language == "ja" else get_zh_g2p()
     chars_dict = {}
     chunk_logs = []
+
+    def _extract_text(res):
+        if res is None:
+            return ""
+                                    
+        text_attr = getattr(res, "text", None)
+        if text_attr is not None:
+            return str(text_attr)
+                              
+        if isinstance(res, dict):
+            text_val = res.get("text") or res.get("transcript") or ""
+            return str(text_val)
+            
+        return str(res)
     
     for idx, res in enumerate(all_results):
         chunk_idx = chunk_indices[idx]
@@ -55,11 +69,11 @@ def process_asr_to_phonemes(all_results, chunk_indices, temp_dir_path, language,
         matched_lyric_phonetic = ""
         match_reason = ""
         
-        if res is None or not res.text.strip():
+        text = _extract_text(res)
+        if not text.strip():
             chunk_logs.append(f"[{stem}]\nASR Output: [Empty or Failed]\nStatus: Ignored\n")
             continue
 
-        text = res.text
         match_status = "No original lyrics provided"
         if matcher:
             asr_text_list, asr_phonetic_list = matcher.process_asr_content(text)

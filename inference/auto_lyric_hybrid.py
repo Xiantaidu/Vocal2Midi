@@ -21,10 +21,10 @@ VENDOR_DIR = pathlib.Path(__file__).parent / "vendor"
 if str(VENDOR_DIR / "HubertFA") not in sys.path:
     sys.path.insert(0, str(VENDOR_DIR / "HubertFA"))
 
-from inference.asr_api import load_qwen_model, batch_transcribe_asr
+from inference.asr_api import batch_transcribe_asr
 from inference.lfa_api import create_lyric_matcher, process_asr_to_phonemes
 from inference.hfa_api import load_hfa_model, run_hubert_fa, export_hfa_artifacts
-from inference.game_api import load_game_model, extract_pitches_and_align_torch
+from inference.game_api import load_game_model, extract_pitches_and_align_torch, extract_pitches_only_torch
 
 def free_memory():
     import gc
@@ -32,11 +32,33 @@ def free_memory():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-def run_qwen_asr_and_fa(chunks, sr, asr_model, temp_dir_path, matcher, asr_batch_size=4, language="zh", cancel_checker=None):
+def run_qwen_asr_and_fa(
+    chunks,
+    sr,
+    temp_dir_path,
+    matcher,
+    asr_model_path,
+    device,
+    asr_batch_size=4,
+    language="zh",
+    cancel_checker=None,
+):
     """
     Runs ASR using the PyTorch Qwen model with batching and prepares .lab files for HubertFA.
     """
-    all_results, chunk_indices = batch_transcribe_asr(chunks, sr, asr_model, temp_dir_path, asr_batch_size, language, cancel_checker=cancel_checker)
+    all_results, chunk_indices = batch_transcribe_asr(
+        chunks,
+        sr,
+        asr_model=None,
+        temp_dir_path=temp_dir_path,
+        asr_batch_size=asr_batch_size,
+        language=language,
+        cancel_checker=cancel_checker,
+        asr_model_path=asr_model_path,
+        device=device,
+        force_subprocess=True,
+        asr_timeout_sec=180,
+    )
     return process_asr_to_phonemes(all_results, chunk_indices, temp_dir_path, language, matcher)
 
 def auto_lyric_hybrid_pipeline(
@@ -61,6 +83,7 @@ def auto_lyric_hybrid_pipeline(
     est_threshold: float,
     batch_size: int = 4,
     asr_batch_size: int = 4,
+    output_lyrics: bool = True,
     debug_mode: bool = False,
     cancel_checker=None,
 ):
@@ -80,17 +103,18 @@ def auto_lyric_hybrid_pipeline(
     chunks = slice_audio(waveform, sr, slicing_method)
     _check_cancel()
 
-    matcher = create_lyric_matcher(language, original_lyrics)
-    _check_cancel()
+    if output_lyrics:
+        matcher = create_lyric_matcher(language, original_lyrics)
+        _check_cancel()
 
-    print("\n--- Loading Models ---")
-    asr_model = load_qwen_model(asr_model_path, device=device)
-    _check_cancel()
-    hfa_model = load_hfa_model(hfa_model_dir, device=device)
-    _check_cancel()
-    game_model = load_game_model(game_model_dir, device=device)
-    _check_cancel()
-    print("----------------------\n")
+        print("\n--- Stage 1/3: Running ASR in subprocess isolation mode ---")
+                                        
+        free_memory()
+        _check_cancel()
+        print("-----------------------------------------------------------\n")
+    else:
+        matcher = None
+        print("\n--- No-Lyrics Mode: 跳过 ASR/HFA，仅执行 GAME 提取音高 ---\n")
     
     all_notes = []
     chunk_logs = []
@@ -98,34 +122,75 @@ def auto_lyric_hybrid_pipeline(
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir_path = pathlib.Path(temp_dir)
 
-        chars_dict, chunk_logs = run_qwen_asr_and_fa(
-            chunks, sr, asr_model, temp_dir_path, matcher, asr_batch_size, language=language, cancel_checker=cancel_checker
-        )
+        pred_dict = {}
+        chars_dict = {}
+
+        if output_lyrics:
+            chars_dict, chunk_logs = run_qwen_asr_and_fa(
+                chunks,
+                sr,
+                temp_dir_path,
+                matcher,
+                asr_model_path=asr_model_path,
+                device=device,
+                asr_batch_size=asr_batch_size,
+                language=language,
+                cancel_checker=cancel_checker,
+            )
+            _check_cancel()
+
+            if not chars_dict:
+                raise RuntimeError(
+                    "ASR 阶段未生成任何有效文本（可能为模型调用失败或返回为空）。"
+                    "已中断后续 HFA/GAME，避免生成空结果。"
+                )
+
+            free_memory()
+
+            print("\n--- Stage 2/3: Loading HubertFA model ---")
+            hfa_model = load_hfa_model(hfa_model_dir, device=device)
+            _check_cancel()
+            print("------------------------------------------\n")
+
+            pred_dict = run_hubert_fa(hfa_model, temp_dir_path, language=language)
+            _check_cancel()
+
+            export_hfa_artifacts(chunks, temp_dir_path, hfa_model, output_key, output_dir, output_formats)
+
+            del hfa_model
+            free_memory()
+
+            print("\n--- Stage 3/3: Loading GAME model ---")
+        else:
+            print("\n--- Stage 1/1: Loading GAME model (No-Lyrics Mode) ---")
+        game_model = load_game_model(game_model_dir, device=device)
         _check_cancel()
-        free_memory()
-        del asr_model
+        print("--------------------------------------\n")
 
-        pred_dict = run_hubert_fa(hfa_model, temp_dir_path, language=language)
-        _check_cancel()
-
-        export_hfa_artifacts(chunks, temp_dir_path, hfa_model, output_key, output_dir, output_formats)
-        
-        del hfa_model
-        free_memory()
-
-        all_notes = extract_pitches_and_align_torch(
-            chunks, sr, pred_dict, chars_dict, game_model, device, ts,
-            seg_threshold, seg_radius, est_threshold, batch_size,
-            debug_mode=debug_mode
-        )
+        if output_lyrics:
+            all_notes = extract_pitches_and_align_torch(
+                chunks, sr, pred_dict, chars_dict, game_model, device, ts,
+                seg_threshold, seg_radius, est_threshold, batch_size,
+                debug_mode=debug_mode
+            )
+        else:
+            all_notes = extract_pitches_only_torch(
+                chunks, sr, game_model, device, ts,
+                seg_threshold, seg_radius, est_threshold, batch_size,
+                debug_mode=debug_mode
+            )
         _check_cancel()
         del game_model
         free_memory()
 
     all_notes.sort(key=lambda x: x.onset)
     
-    log_path = output_dir / f"{output_key}_asr_match_log.txt"
-    log_path.write_text("\n".join(chunk_logs), encoding="utf-8")
+                                                     
+    output_format_set = set(output_formats or [])
+    export_asr_match_log = output_lyrics and (("asr_match_log" in output_format_set) or ("chunks" in output_format_set))
+    if export_asr_match_log:
+        log_path = output_dir / f"{output_key}_asr_match_log.txt"
+        log_path.write_text("\n".join(chunk_logs), encoding="utf-8")
 
     if quantization_step > 0:
         quantize_notes(all_notes, tempo, quantization_step)

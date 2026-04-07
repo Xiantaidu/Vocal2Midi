@@ -83,6 +83,7 @@ class WorkerThread(QThread):
                     est_threshold=self.kwargs['est_threshold'],
                     batch_size=self.kwargs['batch_size'],
                     asr_batch_size=self.kwargs['asr_batch_size'],
+                    output_lyrics=self.kwargs.get('output_lyrics', True),
                     debug_mode=True,
                     cancel_checker=lambda: (not self._is_running) or self.isInterruptionRequested(),
                 )

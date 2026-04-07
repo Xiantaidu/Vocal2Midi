@@ -246,3 +246,99 @@ def extract_pitches_and_align_torch(chunks, sr, pred_dict, chars_dict, game_mode
                 current_onset += n_dur
                 
     return all_notes
+
+
+def extract_pitches_only_torch(
+    chunks,
+    sr,
+    game_model,
+    device,
+    ts,
+    seg_threshold,
+    seg_radius,
+    est_threshold,
+    batch_size=4,
+    debug_mode=False,
+):
+    print("[Hybrid Pipeline] Extracting pitches with PyTorch GAME (no-lyrics mode)...")
+
+    all_notes = []
+    batch_infos = []
+    for chunk in chunks:
+        batch_infos.append({
+            "waveform": chunk["waveform"],
+            "waveform_duration": len(chunk["waveform"]) / sr,
+            "offset": chunk["offset"],
+        })
+
+    for i in range(0, len(batch_infos), batch_size):
+        batch = batch_infos[i:i + batch_size]
+
+        waveforms_np = [info["waveform"] for info in batch]
+        waveform_durations_np = [info["waveform_duration"] for info in batch]
+
+                                       
+        known_durations_np = [np.zeros(1, dtype=np.float32) for _ in batch]
+
+        padded_wavs = torch.from_numpy(pad_1d_arrays(waveforms_np)).to(device)
+        padded_kd = torch.from_numpy(pad_1d_arrays(known_durations_np, pad_value=0.0)).to(device)
+        waveform_durations_tensor = torch.tensor(waveform_durations_np, dtype=torch.float32, device=device)
+
+        boundary_threshold = torch.tensor(seg_threshold, device=device)
+        boundary_radius = torch.tensor(round(seg_radius / game_model.timestep), device=device, dtype=torch.long)
+        score_threshold = torch.tensor(est_threshold, device=device)
+        language_tensor = torch.zeros(padded_wavs.size(0), dtype=torch.long, device=device)
+
+        with torch.no_grad():
+            try:
+                if debug_mode:
+                    print(f"\n[DEBUG GAME INPUTS] Batch {i // batch_size} (no-lyrics)")
+                    print(f"waveform shape: {padded_wavs.shape}")
+                    print(f"known_durations shape: {padded_kd.shape}")
+                    print(f"boundary_threshold: {boundary_threshold}")
+                    print(f"boundary_radius: {boundary_radius}")
+                    print(f"score_threshold: {score_threshold}")
+                    print(f"language tensor: {language_tensor}")
+                    print(f"t tensor: {ts}")
+
+                durations, presence, scores = game_model(
+                    waveform=padded_wavs,
+                    known_durations=padded_kd,
+                    boundary_threshold=boundary_threshold,
+                    boundary_radius=boundary_radius,
+                    score_threshold=score_threshold,
+                    language=language_tensor,
+                    t=ts,
+                    waveform_durations=waveform_durations_tensor,
+                )
+
+                durations = durations.cpu().numpy()
+                presence = presence.cpu().numpy()
+                scores = scores.cpu().numpy()
+
+            except Exception:
+                print("Error during GAME model inference batch (no-lyrics):")
+                traceback.print_exc()
+                continue
+
+        for k, info in enumerate(batch):
+            c_durations, c_presence, c_scores = durations[k], presence[k], scores[k]
+
+            valid = c_durations > 0
+            note_dur = c_durations[valid].tolist()
+            note_presence = c_presence[valid].tolist()
+            note_scores = c_scores[valid].tolist()
+
+            current_onset = info["offset"]
+            for n_dur, n_presence, n_score in zip(note_dur, note_presence, note_scores):
+                if n_presence:
+                    pitch = float(n_score)
+                    all_notes.append(NoteInfo(
+                        onset=current_onset,
+                        offset=current_onset + n_dur,
+                        pitch=pitch,
+                        lyric="",
+                    ))
+                current_onset += n_dur
+
+    return all_notes
