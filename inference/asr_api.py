@@ -1,41 +1,42 @@
+import multiprocessing as mp
 import threading
 import time
-import json
-import subprocess
-import sys
-import tempfile
 from pathlib import Path
 
 import torch
 import soundfile as sf
 
-
+# --- Qwen Model Loading ---
 _QWEN_MODEL_CACHE = {}
 _QWEN_MODEL_CACHE_LOCK = threading.Lock()
 
+
 def load_qwen_model(model_path, device="cuda", use_cache=True):
     """
-    Loads the Qwen3-ASR model using PyTorch.
+    Loads the Qwen ASR model using PyTorch.
+    Caches model in-process to avoid repeated loading.
     """
     cache_key = (str(model_path), str(device))
     if use_cache:
         with _QWEN_MODEL_CACHE_LOCK:
             cached_model = _QWEN_MODEL_CACHE.get(cache_key)
         if cached_model is not None:
-            print(f"Reusing cached Qwen3-ASR model from '{model_path}' on {device}.")
+            print(f"Reusing cached Qwen ASR model from '{model_path}' on {device}.")
             return cached_model
 
-    print(f"Loading Qwen3-ASR PyTorch model from '{model_path}' on {device}...")
+    print(f"Loading Qwen ASR PyTorch model from '{model_path}' on {device}...")
     from qwen_asr import Qwen3ASRModel
 
     try:
+        # Use fp16 for lower VRAM usage and better performance
         model = Qwen3ASRModel.from_pretrained(
             model_path,
-            dtype=torch.bfloat16,
+            dtype=torch.float16,
             device_map=device,
         )
     except Exception as e:
-        raise RuntimeError(f"Error loading Qwen3-ASR model: {e}\nPlease ensure you have run 'pip install -U qwen-asr'.")
+        raise RuntimeError(f"Error loading Qwen ASR model: {e}\nPlease ensure you have run 'pip install -U qwen-asr'.")
+
     if use_cache:
         with _QWEN_MODEL_CACHE_LOCK:
             _QWEN_MODEL_CACHE[cache_key] = model
@@ -48,148 +49,133 @@ def clear_qwen_model_cache():
         _QWEN_MODEL_CACHE.clear()
 
 
-def _run_transcribe_in_process(asr_model, paths, asr_lang):
-    if torch.cuda.is_available():
-        with torch.amp.autocast("cuda"):
-            return asr_model.transcribe(audio=paths, language=asr_lang)
-    return asr_model.transcribe(audio=paths, language=asr_lang)
+# --- Process Pool Worker ---
+_WORKER_ASR_MODEL = None
 
 
-def _run_transcribe_subprocess(paths, model_path, device, asr_lang, timeout_sec=180):
-    """Run ASR in a subprocess to avoid in-process deadlocks/hangs."""
-    with tempfile.TemporaryDirectory(prefix="v2m_asr_subproc_") as tmp:
-        tmp_path = Path(tmp)
-        input_json = tmp_path / "input.json"
-        output_json = tmp_path / "output.json"
-
-        input_payload = {
-            "audio_paths": [str(p) for p in paths],
-            "model_path": str(model_path),
-            "device": str(device),
-            "language": asr_lang,
-        }
-        input_json.write_text(json.dumps(input_payload, ensure_ascii=False), encoding="utf-8")
-
-        cmd = [
-            sys.executable,
-            "-m",
-            "inference.asr_subprocess_worker",
-            "--input-json",
-            str(input_json),
-            "--output-json",
-            str(output_json),
-        ]
-
-        try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=timeout_sec,
-                cwd=str(Path(__file__).resolve().parent.parent),
-            )
-        except subprocess.TimeoutExpired as e:
-            raise TimeoutError(f"ASR subprocess timeout after {timeout_sec}s") from e
-
-        if proc.returncode != 0:
-            stderr_tail = (proc.stderr or "")[-1000:]
-            stdout_tail = (proc.stdout or "")[-1000:]
-            raise RuntimeError(
-                f"ASR subprocess failed (code={proc.returncode}). "
-                f"stdout tail: {stdout_tail} | stderr tail: {stderr_tail}"
-            )
-
-        if not output_json.exists():
-            raise RuntimeError("ASR subprocess finished but output json not found")
-
-        try:
-            result_payload = json.loads(output_json.read_text(encoding="utf-8"))
-        except Exception as e:
-            raise RuntimeError(f"Failed to parse ASR subprocess output: {e}")
-
-        if result_payload.get("error"):
-            raise RuntimeError(f"ASR subprocess internal error: {result_payload.get('error')}")
-
-        return result_payload.get("results", [])
+def _init_worker(model_path, device):
+    """Initializer for each worker process in the pool."""
+    global _WORKER_ASR_MODEL
+    proc_name = mp.current_process().name
+    print(f"Initializing ASR worker ({proc_name}) with model '{model_path}' on {device}...")
+    # Each worker loads its own copy of the model. `use_cache=False` is fine here
+    # as this function is only called once per worker.
+    _WORKER_ASR_MODEL = load_qwen_model(model_path, device, use_cache=False)
+    print(f"ASR worker ({proc_name}) initialized.")
 
 
+def _transcribe_task(paths, asr_lang):
+    """The actual transcription task executed by a worker process."""
+    if _WORKER_ASR_MODEL is None:
+        return RuntimeError("ASR worker model not initialized.")
+
+    try:
+        # Use autocast for performance on CUDA devices
+        use_cuda = torch.cuda.is_available() and "cuda" in str(_WORKER_ASR_MODEL.device)
+        with torch.inference_mode():
+            if use_cuda:
+                with torch.amp.autocast("cuda"):
+                    results = _WORKER_ASR_MODEL.transcribe(audio=paths, language=asr_lang)
+            else:
+                results = _WORKER_ASR_MODEL.transcribe(audio=paths, language=asr_lang)
+        return results
+    except Exception as e:
+        # Propagate exceptions back to the main process
+        return e
+
+
+# --- Main ASR API ---
 def batch_transcribe_asr(
-    chunks,
-    sr,
-    asr_model,
-    temp_dir_path,
-    asr_batch_size,
-    language,
-    cancel_checker=None,
-    asr_model_path=None,
-    device="cuda",
-    force_subprocess=False,
-    asr_timeout_sec=180,
+        chunks,
+        sr,
+        asr_model,  # This is for in-process, will be None for pooled
+        temp_dir_path,
+        asr_batch_size,
+        language,
+        cancel_checker=None,
+        asr_model_path=None,
+        device="cuda",
+        force_subprocess=False,  # If True, uses the new process pool
+        asr_timeout_sec=180,
 ):
     """Saves chunks to temp_dir and runs batched ASR transcription."""
     asr_lang = "Japanese" if language == "ja" else "Chinese"
     print(f"[ASR API] Running ASR with PyTorch Qwen (Batch Size: {asr_batch_size}, Language: {asr_lang})...")
 
+    # 1. Prepare audio files
     audio_paths = []
     chunk_indices = []
-
     for chunk_idx, chunk in enumerate(chunks):
         stem = f"chunk_{chunk_idx}"
         chunk_path = temp_dir_path / f"{stem}.wav"
-                                          
         sf.write(chunk_path, chunk["waveform"], sr)
         audio_paths.append(str(chunk_path))
         chunk_indices.append(chunk_idx)
 
-    all_results = []
-    total_batches = (len(audio_paths) - 1) // asr_batch_size + 1 if audio_paths else 0
+    if not audio_paths:
+        return [], []
 
-    def _run_transcribe(paths):
-        if force_subprocess:
-            if not asr_model_path:
-                raise ValueError("asr_model_path is required when force_subprocess=True")
-            return _run_transcribe_subprocess(
-                paths,
-                model_path=asr_model_path,
-                device=device,
-                asr_lang=asr_lang,
-                timeout_sec=asr_timeout_sec,
-            )
+    # 2. Group paths into batches for processing
+    batches = [audio_paths[i:i + asr_batch_size] for i in range(0, len(audio_paths), asr_batch_size)]
+    total_batches = len(batches)
+    all_results = []
+
+    # 3. Choose execution strategy: Process Pool vs. In-Process
+    if force_subprocess:
+        if not asr_model_path:
+            raise ValueError("asr_model_path is required when force_subprocess=True")
+
+        # Use a managed process pool
+        # Using 'spawn' is safer for CUDA applications
+        ctx = mp.get_context("spawn")
+        # Limit to 1 worker to ensure only one model is loaded into VRAM
+        with ctx.Pool(processes=1, initializer=_init_worker, initargs=(asr_model_path, device)) as pool:
+            print(f"ASR Process Pool created with 1 worker for {total_batches} batches.")
+            # Map tasks to the pool
+            async_results = [pool.apply_async(_transcribe_task, args=(batch, asr_lang)) for batch in batches]
+
+            # Collect results with progress
+            for i, res in enumerate(async_results):
+                if cancel_checker and cancel_checker():
+                    raise InterruptedError("ASR 任务已取消")
+
+                batch_no = i + 1
+                print(f"  Waiting for ASR batch {batch_no}/{total_batches}...")
+                batch_start_time = time.perf_counter()
+                try:
+                    # Wait for the result with a timeout
+                    batch_result = res.get(timeout=asr_timeout_sec)
+                    cost = time.perf_counter() - batch_start_time
+
+                    if isinstance(batch_result, Exception):
+                        print(f"  ASR batch {batch_no}/{total_batches} failed with an error: {batch_result}")
+                        all_results.extend([None] * len(batches[i]))
+                    else:
+                        print(f"  ASR batch {batch_no}/{total_batches} done in {cost:.2f}s")
+                        all_results.extend(batch_result)
+                except mp.TimeoutError:
+                    print(f"  ASR batch {batch_no}/{total_batches} timed out after {asr_timeout_sec}s.")
+                    all_results.extend([None] * len(batches[i]))
+
+    else:
+        # Fallback to the original in-process method
         if asr_model is None:
             raise ValueError("asr_model is required when force_subprocess=False")
-        return _run_transcribe_in_process(asr_model, paths, asr_lang)
 
-    for i in range(0, len(audio_paths), asr_batch_size):
-        if cancel_checker and cancel_checker():
-            raise InterruptedError("ASR 任务已取消")
+        for i, batch in enumerate(batches):
+            if cancel_checker and cancel_checker():
+                raise InterruptedError("ASR 任务已取消")
 
-        batch_audio_paths = audio_paths[i:i+asr_batch_size]
-        batch_no = i // asr_batch_size + 1
-        print(f"  Processing ASR batch {batch_no}/{total_batches} (size={len(batch_audio_paths)})...")
-        
-        try:
-            batch_start = time.perf_counter()
-            with torch.inference_mode():
-                batch_results = _run_transcribe(batch_audio_paths)
-            cost = time.perf_counter() - batch_start
-            print(f"  ASR batch {batch_no}/{total_batches} done in {cost:.2f}s")
-            all_results.extend(batch_results)
-        except Exception as e:
-            print(f"Error during Qwen ASR transcription for batch starting at index {i}: {e}")
-                                  
-            if len(batch_audio_paths) > 1:
-                print("  Falling back to single-item ASR for this batch...")
-                for single_path in batch_audio_paths:
-                    if cancel_checker and cancel_checker():
-                        raise InterruptedError("ASR 任务已取消")
-                    try:
-                        with torch.inference_mode():
-                            single_res = _run_transcribe([single_path])
-                        all_results.append(single_res[0] if single_res else None)
-                    except Exception as single_e:
-                        print(f"  Single-item ASR failed for '{single_path}': {single_e}")
-                        all_results.append(None)
-            else:
-                all_results.extend([None] * len(batch_audio_paths))
-            
+            batch_no = i + 1
+            print(f"  Processing ASR batch {batch_no}/{total_batches} (size={len(batch)})...")
+            try:
+                batch_start = time.perf_counter()
+                results = _transcribe_task(batch, asr_lang)
+                cost = time.perf_counter() - batch_start
+                print(f"  ASR batch {batch_no}/{total_batches} done in {cost:.2f}s")
+                all_results.extend(results)
+            except Exception as e:
+                print(f"Error during in-process ASR for batch {batch_no}: {e}")
+                all_results.extend([None] * len(batch))
+
     return all_results, chunk_indices
