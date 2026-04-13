@@ -1,8 +1,34 @@
 import librosa
 import numpy as np
 import itertools
+import torch
+import functools
+from concurrent.futures import ProcessPoolExecutor
 
 from inference.slicer2 import Slicer
+
+def get_pitch_curve(
+    y: np.ndarray,
+    sr: int,
+    hop_length: int = 512,
+    f0_min: float = 65.0,
+    f0_max: float = 1100.0,
+) -> np.ndarray:
+    """Calculate the pitch curve (F0) and voicing confidence."""
+    if y.ndim > 1:
+        y = np.mean(y, axis=0)
+    
+    f0, voiced_flag, voiced_probs = librosa.pyin(
+        y,
+        fmin=f0_min,
+        fmax=f0_max,
+        sr=sr,
+        frame_length=hop_length * 4, # pyin requires a larger frame
+        hop_length=hop_length
+    )
+    # Set unvoiced frames to 0
+    f0[~voiced_flag] = 0
+    return f0, voiced_flag
 
 def get_rms_db(
     y: np.ndarray,
@@ -205,6 +231,171 @@ def heuristic_slice(
 
     return final_chunks
 
+def _split_wrapper(segment, slicer_func):
+    """
+    A wrapper function for parallel processing.
+    It takes a segment dictionary and a slicing function, and returns the processed chunks.
+    """
+    sub_chunks = slicer_func(segment['waveform'])
+    # Add the original offset to each sub-chunk
+    for sub in sub_chunks:
+        sub['offset'] += segment['offset']
+    return sub_chunks
+
+
+def _pitch_based_split(
+    waveform: np.ndarray,
+    sr: int,
+    min_len_sec: float,
+    max_len_sec: float,
+    hop_length: int,
+):
+    """
+    Internal helper for splitting a single, long audio segment based on pitch.
+    """
+    total_samples = waveform.shape[-1]
+    total_sec = total_samples / sr
+
+    if total_sec <= max_len_sec:
+        return [{'offset': 0.0, 'waveform': waveform}]
+
+    f0, voiced_flag = get_pitch_curve(waveform, sr=sr, hop_length=hop_length)
+    
+    chunks = []
+    current_start_sec = 0.0
+
+    while current_start_sec < total_sec:
+        window_start_sec = current_start_sec + min_len_sec
+        window_end_sec = current_start_sec + max_len_sec
+
+        if window_end_sec >= total_sec:
+            start_sample = int(current_start_sec * sr)
+            chunk_wav = waveform[:, start_sample:] if waveform.ndim > 1 else waveform[start_sample:]
+            chunks.append({'offset': current_start_sec, 'waveform': chunk_wav})
+            break
+
+        start_frame = librosa.time_to_frames(window_start_sec, sr=sr, hop_length=hop_length)
+        end_frame = librosa.time_to_frames(window_end_sec, sr=sr, hop_length=hop_length)
+
+        start_frame = max(0, min(start_frame, len(voiced_flag) - 1))
+        end_frame = max(0, min(end_frame, len(voiced_flag)))
+        
+        cut_frame = -1
+        if start_frame < end_frame:
+            unvoiced_indices = np.where(~voiced_flag[start_frame:end_frame])[0]
+            if len(unvoiced_indices) > 0:
+                # Find the longest continuous unvoiced segment
+                max_len = 0
+                best_start = -1
+                for k, g in itertools.groupby(enumerate(unvoiced_indices), lambda i_x: i_x[0] - i_x[1]):
+                    group = list(map(lambda i_x: i_x[1], g))
+                    if len(group) > max_len:
+                        max_len = len(group)
+                        best_start = group[0]
+                
+                # Cut in the middle of the longest unvoiced segment
+                if best_start != -1:
+                    cut_idx_in_window = best_start + max_len // 2
+                    cut_frame = start_frame + cut_idx_in_window
+                    cut_type = "Pitch-based (unvoiced)"
+
+        # Fallback to RMS-based splitting if no good unvoiced segment is found
+        if cut_frame == -1:
+            rms_db = get_rms_db(waveform, frame_length=hop_length*4, hop_length=hop_length)
+            start_frame_rms = librosa.time_to_frames(window_start_sec, sr=sr, hop_length=hop_length)
+            end_frame_rms = librosa.time_to_frames(window_end_sec, sr=sr, hop_length=hop_length)
+            start_frame_rms = max(0, min(start_frame_rms, len(rms_db) - 1))
+            end_frame_rms = max(0, min(end_frame_rms, len(rms_db)))
+            
+            if start_frame_rms < end_frame_rms:
+                window_rms = rms_db[start_frame_rms:end_frame_rms]
+                best_idx_in_window = np.argmin(window_rms)
+                cut_frame = start_frame_rms + best_idx_in_window
+                cut_type = f"Fallback to RMS (Local Min {window_rms[best_idx_in_window]:.1f}dB)"
+            else: # Should not happen often
+                cut_frame = end_frame
+                cut_type = "Fallback (end of window)"
+
+        cut_sec = librosa.frames_to_time(cut_frame, sr=sr, hop_length=hop_length)
+        
+        start_sample = int(current_start_sec * sr)
+        end_sample = int(cut_sec * sr)
+        
+        chunk_wav = waveform[:, start_sample:end_sample] if waveform.ndim > 1 else waveform[start_sample:end_sample]
+        
+        dur = cut_sec - current_start_sec
+        print(f"    Sub-split at {cut_sec:.2f}s (duration {dur:.2f}s) - Reason: {cut_type}")
+        
+        chunks.append({'offset': current_start_sec, 'waveform': chunk_wav})
+        current_start_sec = cut_sec
+
+    return chunks
+
+def pitch_based_slice(
+    waveform: np.ndarray,
+    sr: int,
+    min_len_sec: float = 4.0,
+    max_len_sec: float = 12.0,
+    silence_removal_threshold_db: float = -40.0,
+    min_silence_len_ms: int = 800,
+):
+    """
+    A two-stage slicer using pitch information.
+    """
+    print(f"Stage 1: Removing long silences below {silence_removal_threshold_db}dB...")
+    pre_slicer = Slicer(
+        sr=sr,
+        threshold=silence_removal_threshold_db,
+        min_length=min_silence_len_ms,
+        min_interval=200,
+        max_sil_kept=100
+    )
+    vocal_segments = pre_slicer.slice(waveform)
+    print(f"  Found {len(vocal_segments)} vocal segments.")
+
+    final_chunks = []
+    print("\nStage 2: Splitting long segments based on pitch...")
+    
+    short_segments = []
+    long_segments = []
+    for seg in vocal_segments:
+        if len(seg['waveform']) / sr > max_len_sec:
+            long_segments.append(seg)
+        elif len(seg['waveform']) / sr >= min_len_sec:
+            short_segments.append(seg)
+        else:
+            print(f"  Discarding short segment at {seg['offset']:.2f}s (duration {len(seg['waveform'])/sr:.2f}s < {min_len_sec}s)")
+    
+    if long_segments:
+        print(f"  Found {len(long_segments)} long segments to split in parallel...")
+        
+        # Create a partial function with fixed arguments
+        slicer_func = functools.partial(
+            _pitch_based_split,
+            sr=sr,
+            min_len_sec=min_len_sec,
+            max_len_sec=max_len_sec,
+            hop_length=512
+        )
+        
+        # Create a wrapper for the slicer function to handle segment offsets
+        split_task = functools.partial(_split_wrapper, slicer_func=slicer_func)
+
+        with ProcessPoolExecutor() as executor:
+            # Map the task to all long segments
+            processed_chunks_iter = executor.map(split_task, long_segments)
+            
+            # Flatten the list of lists
+            processed_chunks = [chunk for sublist in processed_chunks_iter for chunk in sublist]
+
+        final_chunks = short_segments + processed_chunks
+        # Sort by offset to maintain original order
+        final_chunks.sort(key=lambda x: x['offset'])
+    else:
+        final_chunks = short_segments
+
+    return final_chunks
+
 def default_slice(waveform, sr):
     """The default slicing method from Slicer."""
     slicer = Slicer(
@@ -220,7 +411,9 @@ def slice_audio(waveform: np.ndarray, sr: int, method: str):
     Top-level API for slicing audio with different methods.
     """
     print(f"Slicing audio with method: '{method}'")
-    if method == "启发式切片":
+    if method == "智能切片":
+        chunks = pitch_based_slice(waveform, sr)
+    elif method == "启发式切片":
         chunks = heuristic_slice(waveform, sr)
     elif method == "网格搜索切片":
         chunks = grid_search_slice(waveform, sr)
