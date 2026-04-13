@@ -83,7 +83,7 @@ class AutoLyricInterface(ScrollArea):
         combo_layout.addWidget(slice_icon)
         combo_layout.addWidget(BodyLabel("音频切片方法", self))
         self.slicing_combo = ComboBox(self)
-        self.slicing_combo.addItems(["默认切片", "启发式切片", "网格搜索切片"])
+        self.slicing_combo.addItems(["智能切片", "启发式切片", "默认切片", "网格搜索切片"])
         combo_layout.addWidget(self.slicing_combo)
 
         lang_icon = IconWidget(FluentIcon.LANGUAGE, self)
