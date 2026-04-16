@@ -64,14 +64,16 @@ class JapaneseProcessor(LanguageProcessor):
         return re.sub(r'\s+', ' ', text).strip()
 
     def split_text(self, text: str) -> List[str]:
-        # Align Japanese by mora-level romaji tokens, consistent with HFA dictionary usage.
+        # Keep Japanese display tokens at kana mora level while phonetic alignment
+        # still uses romaji mora tokens for HFA compatibility.
         if not text:
             return []
-        return self.g2p.convert(text, include_tone=False, convert_number=True).split()
+        return self.g2p.split_kana_no_regex(text)
 
     def get_phonetic_list(self, text_list: List[str]) -> List[str]:
-        # For Japanese we use the same mora tokens for both text and phonetic tracks.
-        return text_list
+        if not text_list:
+            return []
+        return self.g2p.convert_list(text_list, include_tone=False, convert_number=True).split()
 
 
 @dataclass(frozen=True)

@@ -41,6 +41,7 @@ def run_qwen_asr_and_fa(
     device,
     asr_batch_size=4,
     language="zh",
+    lyric_output_mode=None,
     cancel_checker=None,
 ):
     """
@@ -59,7 +60,14 @@ def run_qwen_asr_and_fa(
         force_subprocess=True,
         asr_timeout_sec=180,
     )
-    return process_asr_to_phonemes(all_results, chunk_indices, temp_dir_path, language, matcher)
+    return process_asr_to_phonemes(
+        all_results,
+        chunk_indices,
+        temp_dir_path,
+        language,
+        matcher,
+        lyric_output_mode=lyric_output_mode,
+    )
 
 def auto_lyric_hybrid_pipeline(
     audio_path: str,
@@ -70,6 +78,7 @@ def auto_lyric_hybrid_pipeline(
     asr_model_path: str,
     ts: torch.Tensor,
     language: str,
+    lyric_output_mode: str,
     original_lyrics: str,
     output_dir: pathlib.Path,
     output_formats: list,
@@ -135,6 +144,7 @@ def auto_lyric_hybrid_pipeline(
                 device=device,
                 asr_batch_size=asr_batch_size,
                 language=language,
+                lyric_output_mode=lyric_output_mode,
                 cancel_checker=cancel_checker,
             )
             _check_cancel()
@@ -239,6 +249,7 @@ if __name__ == "__main__":
             asr_model_path=asr_model,
             ts=ts,
             language="ja",  # Will use the UI parameter when integrated
+            lyric_output_mode="romaji",
             original_lyrics=lyrics,
             output_dir=out_dir,
             output_formats=["mid", "txt"], # Simplified for now

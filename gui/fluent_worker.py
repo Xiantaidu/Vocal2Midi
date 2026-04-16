@@ -70,6 +70,7 @@ class WorkerThread(QThread):
                     asr_model_path=self.kwargs['asr_model_path_str'],
                     ts=ts_tensor,
                     language=self.kwargs['language'],
+                    lyric_output_mode=self.kwargs.get('lyric_output_mode'),
                     original_lyrics=self.kwargs['original_lyrics'],
                     output_dir=save_dir,
                     output_formats=self.kwargs['output_formats'],

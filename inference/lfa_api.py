@@ -13,6 +13,50 @@ from inference.vendor.LyricFA.tools.lyric_matcher import LyricMatcher
 _zh_g2p = None
 _ja_g2p = None
 
+
+def _normalize_lyric_output_mode(language, lyric_output_mode):
+    language = (language or "zh").lower()
+    mode = (lyric_output_mode or "").lower()
+    aliases = {
+        "拼音": "pinyin",
+        "汉字": "hanzi",
+        "罗马音": "romaji",
+        "假名": "kana",
+    }
+    mode = aliases.get(lyric_output_mode, mode)
+    valid_modes = {
+        "zh": {"pinyin", "hanzi"},
+        "ja": {"romaji", "kana"},
+    }
+    defaults = {"zh": "hanzi", "ja": "romaji"}
+    return mode if mode in valid_modes.get(language, set()) else defaults.get(language, "hanzi")
+
+
+def _build_display_tokens(text, language, lyric_output_mode, g2p_model):
+    mode = _normalize_lyric_output_mode(language, lyric_output_mode)
+    if language == "ja":
+        if mode == "kana" and hasattr(g2p_model, "split_kana_no_regex"):
+            return g2p_model.split_kana_no_regex(text)
+        return g2p_model.convert(text, include_tone=False, convert_number=True).split()
+
+    if mode == "pinyin":
+        return g2p_model.convert(text, include_tone=False, convert_number=True).split()
+    return g2p_model.split_string_no_regex(text)
+
+
+def _select_matched_display_tokens(language, lyric_output_mode, matched_text, matched_phonetic):
+    mode = _normalize_lyric_output_mode(language, lyric_output_mode)
+    phonetic_mode = (language == "zh" and mode == "pinyin") or (language == "ja" and mode == "romaji")
+    source = matched_phonetic if phonetic_mode else matched_text
+    return source.split() if source else []
+
+
+def _join_display_tokens(language, lyric_output_mode, tokens):
+    mode = _normalize_lyric_output_mode(language, lyric_output_mode)
+    if (language == "zh" and mode == "pinyin") or (language == "ja" and mode == "romaji"):
+        return " ".join(tokens)
+    return "".join(tokens)
+
 def get_zh_g2p():
     global _zh_g2p
     if _zh_g2p is None:
@@ -39,7 +83,7 @@ def create_lyric_matcher(language, original_lyrics):
         matcher.lyric_phonetic_list = processor.get_phonetic_list(matcher.lyric_text_list)
     return matcher
 
-def process_asr_to_phonemes(all_results, chunk_indices, temp_dir_path, language, matcher):
+def process_asr_to_phonemes(all_results, chunk_indices, temp_dir_path, language, matcher, lyric_output_mode=None):
     """
     Processes batched ASR text, aligns with original lyrics if available, 
     and generates .lab phoneme files.
@@ -86,30 +130,27 @@ def process_asr_to_phonemes(all_results, chunk_indices, temp_dir_path, language,
                 match_reason = reason or ""
                 if matched_phonetic:
                     pinyin_str = matched_phonetic
-                    chars = matched_text.split()
+                    chars = _select_matched_display_tokens(language, lyric_output_mode, matched_text, matched_phonetic)
                     matched_lyric_text = matched_text
                     matched_lyric_phonetic = matched_phonetic
                     match_status = "Matched with original lyrics"
                 else:
                     pinyin_str = g2p_model.convert(text, include_tone=False, convert_number=True)
-                    chars = g2p_model.split_string_no_regex(text)
+                    chars = _build_display_tokens(text, language, lyric_output_mode, g2p_model)
                     match_status = "Fallback to ASR (No match found)"
             else:
                 pinyin_str = g2p_model.convert(text, include_tone=False, convert_number=True)
-                chars = g2p_model.split_string_no_regex(text)
+                chars = _build_display_tokens(text, language, lyric_output_mode, g2p_model)
                 match_status = "Fallback to ASR (No phonetics)"
         else:
             pinyin_str = g2p_model.convert(text, include_tone=False, convert_number=True)
-            chars = g2p_model.split_string_no_regex(text)
+            chars = _build_display_tokens(text, language, lyric_output_mode, g2p_model)
             match_status = "Direct ASR (No original lyrics)"
-            
-        if getattr(g2p_model, '__class__', None).__name__ == 'JaG2p':
-            chars = pinyin_str.split()
-            
+
         (temp_dir_path / f"{stem}.lab").write_text(pinyin_str, encoding="utf-8")
         chars_dict[stem] = chars
-        
-        assigned_lyrics = ' '.join(chars) if getattr(g2p_model, '__class__', None).__name__ == 'JaG2p' else ''.join(chars)
+
+        assigned_lyrics = _join_display_tokens(language, lyric_output_mode, chars)
         log_lines = [
             f"[{stem}]",
             f"ASR Output: {text}",
