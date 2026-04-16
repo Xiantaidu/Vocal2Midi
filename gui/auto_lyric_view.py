@@ -93,7 +93,15 @@ class AutoLyricInterface(ScrollArea):
         combo_layout.addWidget(BodyLabel("目标语言", self))
         self.lang_combo = ComboBox(self)
         self.lang_combo.addItems(["zh", "ja"])
+        self.lang_combo.currentTextChanged.connect(self.update_lyric_output_options)
         combo_layout.addWidget(self.lang_combo)
+
+        combo_layout.addSpacing(28)
+        self.lyric_output_label = BodyLabel("歌词输出格式", self)
+        combo_layout.addWidget(self.lyric_output_label)
+        self.lyric_output_combo = ComboBox(self)
+        self.lyric_output_combo.currentTextChanged.connect(self.save_lyric_output_preference)
+        combo_layout.addWidget(self.lyric_output_combo)
 
         combo_layout.addSpacing(28)
         dev_icon = IconWidget(FluentIcon.SETTING, self)
@@ -111,7 +119,7 @@ class AutoLyricInterface(ScrollArea):
         self.cb_output_lyrics = SwitchButton("On", self, self)
         self.cb_output_lyrics.setOffText("Off")
         self.cb_output_lyrics.setChecked(self.global_settings.settings.value("output_lyrics", True, type=bool))
-        self.cb_output_lyrics.checkedChanged.connect(lambda v: self.global_settings.settings.setValue("output_lyrics", v))
+        self.cb_output_lyrics.checkedChanged.connect(self.on_output_lyrics_changed)
         combo_layout.addWidget(self.cb_output_lyrics)
 
         combo_layout.addStretch(1)
@@ -170,6 +178,7 @@ class AutoLyricInterface(ScrollArea):
 
         self.worker = None
         self.update_lyrics_visibility()
+        self.update_lyric_output_options(self.lang_combo.currentText())
         self.apply_device_batch_defaults(self.device_combo.currentText())
 
     def apply_device_batch_defaults(self, device: str):
@@ -185,6 +194,52 @@ class AutoLyricInterface(ScrollArea):
         self.lyric_card.setVisible(enabled)
         self.lyric_title.setVisible(enabled)
         self.lyrics_edit.setVisible(enabled)
+
+    def _lyric_output_setting_key(self, language: str):
+        return f"lyric_output_mode_{language}"
+
+    def _default_lyric_output_text(self, language: str):
+        return "汉字" if language == "zh" else "罗马音"
+
+    def save_lyric_output_preference(self, text: str):
+        language = self.lang_combo.currentText()
+        if text:
+            self.global_settings.settings.setValue(self._lyric_output_setting_key(language), text)
+
+    def update_lyric_output_enabled_state(self):
+        enabled = self.cb_output_lyrics.isChecked()
+        self.lyric_output_label.setEnabled(enabled)
+        self.lyric_output_combo.setEnabled(enabled)
+
+    def on_output_lyrics_changed(self, enabled: bool):
+        self.global_settings.settings.setValue("output_lyrics", enabled)
+        self.update_lyric_output_enabled_state()
+
+    def update_lyric_output_options(self, language: str):
+        options = ["拼音", "汉字"] if language == "zh" else ["罗马音", "假名"]
+        saved_text = self.global_settings.settings.value(
+            self._lyric_output_setting_key(language),
+            self._default_lyric_output_text(language),
+        )
+        saved_text = str(saved_text) if saved_text is not None else self._default_lyric_output_text(language)
+
+        self.lyric_output_combo.blockSignals(True)
+        self.lyric_output_combo.clear()
+        self.lyric_output_combo.addItems(options)
+        self.lyric_output_combo.setCurrentText(saved_text if saved_text in options else self._default_lyric_output_text(language))
+        self.lyric_output_combo.blockSignals(False)
+
+        self.save_lyric_output_preference(self.lyric_output_combo.currentText())
+        self.update_lyric_output_enabled_state()
+
+    def get_lyric_output_mode(self):
+        text = self.lyric_output_combo.currentText()
+        return {
+            "拼音": "pinyin",
+            "汉字": "hanzi",
+            "罗马音": "romaji",
+            "假名": "kana",
+        }.get(text, "hanzi" if self.lang_combo.currentText() == "zh" else "romaji")
 
     def browse_dir(self, line_edit):
         dir_path = QFileDialog.getExistingDirectory(self, "选择文件夹", line_edit.text())
@@ -236,6 +291,7 @@ class AutoLyricInterface(ScrollArea):
             'hfa_model_path_str': self.global_settings.hfa_model_edit.text(),
             'asr_model_path_str': self.global_settings.asr_model_edit.text(),
             'language': self.lang_combo.currentText(),
+            'lyric_output_mode': self.get_lyric_output_mode(),
             'original_lyrics': self.lyrics_edit.toPlainText().strip() if self.global_settings.cb_match_lyrics.isChecked() else "",
             'output_formats': output_formats,
             'output_lyrics': self.cb_output_lyrics.isChecked(),
