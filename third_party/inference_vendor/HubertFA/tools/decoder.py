@@ -1,7 +1,7 @@
 import numpy as np
 
-from tools.align_word import Phoneme, Word, WordList
-from tools.plot import plot_force_alignment_prob, plot_non_lexical_phonemes
+from .align_word import Phoneme, Word, WordList
+from .plot import plot_force_alignment_prob, plot_non_lexical_phonemes
 
 
 def sigmoid(x):

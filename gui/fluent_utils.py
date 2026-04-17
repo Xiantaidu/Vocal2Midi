@@ -12,6 +12,12 @@ def parse_quantization(quantize_option: str) -> int:
     return 0
 
 
+def parse_quantization_mode(mode_option: str) -> str:
+    if "智能" in (mode_option or ""):
+        return "smart"
+    return "simple"
+
+
 def t0_nstep_to_ts(t0: float, nsteps: int) -> list:
     step = (1 - t0) / nsteps
     return [t0 + i * step for i in range(nsteps)]

@@ -28,7 +28,11 @@ class NoteInfo:
     lyric: str = ""
 
 
-def quantize_notes(notes: list[NoteInfo], tempo: float, quantization_step: int):
+def _ticks_from_sec(t: float, tempo: float) -> int:
+    return int(round(t * tempo * 8))
+
+
+def _quantize_notes_simple(notes: list[NoteInfo], tempo: float, quantization_step: int):
     """
     Quantize notes to musical ticks grid.
     tempo: BPM
@@ -44,7 +48,7 @@ def quantize_notes(notes: list[NoteInfo], tempo: float, quantization_step: int):
     
     q_onsets = []
     for onset in orig_onsets:
-        ticks = round(onset * tempo * 8)
+        ticks = _ticks_from_sec(onset, tempo)
         q_ticks = round(ticks / quantization_step) * quantization_step
         q_onsets.append(q_ticks)
         
@@ -55,7 +59,7 @@ def quantize_notes(notes: list[NoteInfo], tempo: float, quantization_step: int):
             
     q_offsets = []
     for i in range(len(notes)):
-        ticks = round(orig_offsets[i] * tempo * 8)
+        ticks = _ticks_from_sec(orig_offsets[i], tempo)
         q_ticks = round(ticks / quantization_step) * quantization_step
         
         if i < len(notes) - 1:
@@ -74,6 +78,95 @@ def quantize_notes(notes: list[NoteInfo], tempo: float, quantization_step: int):
     for i in range(len(notes)):
         notes[i].onset = q_onsets[i] / (tempo * 8)
         notes[i].offset = q_offsets[i] / (tempo * 8)
+
+
+def _build_duration_candidates(step: int, max_raw_tick: int) -> list[int]:
+    multipliers = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32]
+    cap = max(step, int(np.ceil(max_raw_tick / step)) * step + 2 * step)
+    vals = [m * step for m in multipliers if m * step <= cap]
+    if not vals:
+        vals = [step]
+    return sorted(set(vals))
+
+
+def _quantize_notes_smart(notes: list[NoteInfo], tempo: float, quantization_step: int):
+    """Rhythm-aware quantization using duration dictionary + dynamic programming."""
+    if quantization_step <= 0 or not notes:
+        return
+
+    notes.sort(key=lambda n: n.onset)
+    n = len(notes)
+
+    orig_onsets = [_ticks_from_sec(n_.onset, tempo) for n_ in notes]
+    orig_offsets = [_ticks_from_sec(n_.offset, tempo) for n_ in notes]
+    raw_durs = [max(1, off - on) for on, off in zip(orig_onsets, orig_offsets)]
+    max_raw = max(raw_durs) if raw_durs else quantization_step
+
+    candidates = _build_duration_candidates(quantization_step, max_raw)
+    m = len(candidates)
+
+    # DP[i, k]: min cost for notes[:i+1] with note i using candidates[k]
+    dp = np.full((n, m), np.inf, dtype=np.float64)
+    prev = np.full((n, m), -1, dtype=np.int32)
+
+    # prefer binary-note-like durations slightly (扒谱常见), but still allow triplets
+    preferred = {1, 2, 4, 8, 16}
+    dur_pref_penalty = np.array([
+        0.0 if (c // quantization_step) in preferred else 0.08 * quantization_step
+        for c in candidates
+    ], dtype=np.float64)
+
+    for k, c in enumerate(candidates):
+        dp[0, k] = abs(raw_durs[0] - c) + dur_pref_penalty[k]
+
+    for i in range(1, n):
+        for k, c in enumerate(candidates):
+            local_cost = abs(raw_durs[i] - c) + dur_pref_penalty[k]
+            # smoothness term: discourage abrupt duration jump
+            jump_cost = np.abs(np.array(candidates, dtype=np.float64) - c) * 0.08
+            trans = dp[i - 1] + jump_cost + local_cost
+            best_prev = int(np.argmin(trans))
+            dp[i, k] = trans[best_prev]
+            prev[i, k] = best_prev
+
+    best_last = int(np.argmin(dp[-1]))
+    q_durs = [0] * n
+    q_durs[-1] = candidates[best_last]
+    idx = best_last
+    for i in range(n - 1, 0, -1):
+        idx = prev[i, idx]
+        if idx < 0:
+            idx = 0
+        q_durs[i - 1] = candidates[idx]
+
+    # Rebuild timeline sequentially for stability (avoid independent onset jitter)
+    q_onsets = [0] * n
+    q_offsets = [0] * n
+    q_onsets[0] = round(orig_onsets[0] / quantization_step) * quantization_step
+
+    for i in range(n):
+        q_offsets[i] = q_onsets[i] + max(quantization_step, int(q_durs[i]))
+        if i < n - 1:
+            raw_rest = max(0, orig_onsets[i + 1] - orig_offsets[i])
+            q_rest = 0 if raw_rest < quantization_step * 0.5 else round(raw_rest / quantization_step) * quantization_step
+            q_onsets[i + 1] = q_offsets[i] + q_rest
+
+    for i in range(n):
+        notes[i].onset = q_onsets[i] / (tempo * 8)
+        notes[i].offset = q_offsets[i] / (tempo * 8)
+
+
+def quantize_notes(notes: list[NoteInfo], tempo: float, quantization_step: int, mode: str = "simple"):
+    """
+    mode:
+      - simple: independent rounding per note (legacy)
+      - smart: dictionary + dynamic programming (score-like)
+    """
+    mode = (mode or "simple").lower()
+    if mode == "smart":
+        _quantize_notes_smart(notes, tempo, quantization_step)
+    else:
+        _quantize_notes_simple(notes, tempo, quantization_step)
 
 def pad_1d_arrays(arrays: list[np.ndarray], pad_value=0.0) -> np.ndarray:
     """Pad a list of 1D numpy arrays to the maximum length and stack them."""

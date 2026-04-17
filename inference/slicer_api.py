@@ -7,16 +7,78 @@ from concurrent.futures import ProcessPoolExecutor
 
 from inference.slicer2 import Slicer
 
+
+def _concat_waveforms(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    axis = -1 if a.ndim > 1 else 0
+    return np.concatenate([a, b], axis=axis)
+
+
+def _merge_segments(left: dict, right: dict) -> dict:
+    """Merge two consecutive segments into one."""
+    return {
+        'offset': left['offset'],
+        'waveform': _concat_waveforms(left['waveform'], right['waveform'])
+    }
+
+
+def _merge_tiny_chunks(chunks: list, sr: int, tiny_sec: float = 0.35) -> list:
+    """Merge tiny chunks into adjacent chunks instead of discarding them."""
+    if not chunks:
+        return chunks
+
+    merged = []
+    pending_head = None
+
+    for seg in chunks:
+        seg_dur = len(seg['waveform']) / sr
+
+        if seg_dur < tiny_sec:
+            if merged:
+                print(f"  Merging tiny segment at {seg['offset']:.2f}s ({seg_dur:.2f}s) into previous chunk")
+                merged[-1] = _merge_segments(merged[-1], seg)
+            else:
+                if pending_head is None:
+                    pending_head = seg
+                else:
+                    pending_head = _merge_segments(pending_head, seg)
+            continue
+
+        if pending_head is not None:
+            pdur = len(pending_head['waveform']) / sr
+            print(f"  Merging leading tiny segment at {pending_head['offset']:.2f}s ({pdur:.2f}s) into next chunk")
+            seg = _merge_segments(pending_head, seg)
+            pending_head = None
+
+        merged.append(seg)
+
+    if pending_head is not None:
+        # No neighbor chunk available (e.g., all chunks are tiny), keep it to avoid data loss.
+        print(f"  Keeping isolated tiny segment at {pending_head['offset']:.2f}s (no neighbor to merge)")
+        merged.append(pending_head)
+
+    return merged
+
 def get_pitch_curve(
     y: np.ndarray,
     sr: int,
     hop_length: int = 512,
     f0_min: float = 65.0,
     f0_max: float = 1100.0,
+    voiced_flag_override: np.ndarray | None = None,
+    voiced_flag_override_step_sec: float | None = None,
 ) -> np.ndarray:
     """Calculate the pitch curve (F0) and voicing confidence."""
     if y.ndim > 1:
         y = np.mean(y, axis=0)
+
+    if voiced_flag_override is not None and voiced_flag_override_step_sec and voiced_flag_override_step_sec > 0:
+        target_frames = int(np.ceil(len(y) / hop_length)) + 1
+        times = np.arange(target_frames, dtype=np.float64) * (hop_length / sr)
+        src_idx = np.round(times / voiced_flag_override_step_sec).astype(np.int64)
+        src_idx = np.clip(src_idx, 0, len(voiced_flag_override) - 1)
+        voiced_flag = np.asarray(voiced_flag_override, dtype=bool)[src_idx]
+        # Return a dummy f0 to keep signature compatibility; split logic only needs voiced_flag.
+        return np.zeros_like(voiced_flag, dtype=np.float32), voiced_flag
     
     f0, voiced_flag, voiced_probs = librosa.pyin(
         y,
@@ -191,7 +253,8 @@ def heuristic_slice(
     max_len_sec: float = 12.0,
     silence_removal_threshold_db: float = -40.0,
     min_silence_len_ms: int = 800,
-    split_threshold_db: float = -30.0
+    split_threshold_db: float = -30.0,
+    ultra_short_sec: float = 0.35,
 ):
     """
     A two-stage heuristic slicer.
@@ -226,9 +289,15 @@ def heuristic_slice(
                 final_chunks.append(sub)
         elif seg_dur >= min_len_sec:
             final_chunks.append(segment)
+        elif seg_dur >= ultra_short_sec:
+            print(f"  Keeping short segment at {segment['offset']:.2f}s (duration {seg_dur:.2f}s < {min_len_sec}s) to avoid lyric loss")
+            final_chunks.append(segment)
         else:
-             print(f"  Discarding short segment at {segment['offset']:.2f}s (duration {seg_dur:.2f}s < {min_len_sec}s)")
+             print(f"  Keeping ultra-short segment at {segment['offset']:.2f}s (duration {seg_dur:.2f}s < {ultra_short_sec}s) for later merge")
+             final_chunks.append(segment)
 
+    final_chunks.sort(key=lambda x: x['offset'])
+    final_chunks = _merge_tiny_chunks(final_chunks, sr=sr, tiny_sec=ultra_short_sec)
     return final_chunks
 
 def _split_wrapper(segment, slicer_func):
@@ -249,6 +318,8 @@ def _pitch_based_split(
     min_len_sec: float,
     max_len_sec: float,
     hop_length: int,
+    voiced_flag_override: np.ndarray | None = None,
+    voiced_flag_override_step_sec: float | None = None,
 ):
     """
     Internal helper for splitting a single, long audio segment based on pitch.
@@ -259,7 +330,13 @@ def _pitch_based_split(
     if total_sec <= max_len_sec:
         return [{'offset': 0.0, 'waveform': waveform}]
 
-    f0, voiced_flag = get_pitch_curve(waveform, sr=sr, hop_length=hop_length)
+    f0, voiced_flag = get_pitch_curve(
+        waveform,
+        sr=sr,
+        hop_length=hop_length,
+        voiced_flag_override=voiced_flag_override,
+        voiced_flag_override_step_sec=voiced_flag_override_step_sec,
+    )
     
     chunks = []
     current_start_sec = 0.0
@@ -338,6 +415,9 @@ def pitch_based_slice(
     max_len_sec: float = 12.0,
     silence_removal_threshold_db: float = -40.0,
     min_silence_len_ms: int = 800,
+    ultra_short_sec: float = 0.35,
+    voiced_flag_override: np.ndarray | None = None,
+    voiced_flag_override_step_sec: float | None = None,
 ):
     """
     A two-stage slicer using pitch information.
@@ -359,12 +439,17 @@ def pitch_based_slice(
     short_segments = []
     long_segments = []
     for seg in vocal_segments:
-        if len(seg['waveform']) / sr > max_len_sec:
+        seg_dur = len(seg['waveform']) / sr
+        if seg_dur > max_len_sec:
             long_segments.append(seg)
-        elif len(seg['waveform']) / sr >= min_len_sec:
+        elif seg_dur >= min_len_sec:
+            short_segments.append(seg)
+        elif seg_dur >= ultra_short_sec:
+            print(f"  Keeping short segment at {seg['offset']:.2f}s (duration {seg_dur:.2f}s < {min_len_sec}s) to avoid lyric loss")
             short_segments.append(seg)
         else:
-            print(f"  Discarding short segment at {seg['offset']:.2f}s (duration {len(seg['waveform'])/sr:.2f}s < {min_len_sec}s)")
+            print(f"  Keeping ultra-short segment at {seg['offset']:.2f}s (duration {seg_dur:.2f}s < {ultra_short_sec}s) for later merge")
+            short_segments.append(seg)
     
     if long_segments:
         print(f"  Found {len(long_segments)} long segments to split in parallel...")
@@ -375,7 +460,9 @@ def pitch_based_slice(
             sr=sr,
             min_len_sec=min_len_sec,
             max_len_sec=max_len_sec,
-            hop_length=512
+            hop_length=512,
+            voiced_flag_override=voiced_flag_override,
+            voiced_flag_override_step_sec=voiced_flag_override_step_sec,
         )
         
         # Create a wrapper for the slicer function to handle segment offsets
@@ -394,6 +481,7 @@ def pitch_based_slice(
     else:
         final_chunks = short_segments
 
+    final_chunks = _merge_tiny_chunks(final_chunks, sr=sr, tiny_sec=ultra_short_sec)
     return final_chunks
 
 def default_slice(waveform, sr):
@@ -406,13 +494,26 @@ def default_slice(waveform, sr):
     )
     return slicer.slice(waveform)
 
-def slice_audio(waveform: np.ndarray, sr: int, method: str):
+def slice_audio(
+    waveform: np.ndarray,
+    sr: int,
+    method: str,
+    rmvpe_voiced_mask: np.ndarray | None = None,
+    rmvpe_time_step_seconds: float | None = None,
+):
     """
     Top-level API for slicing audio with different methods.
     """
     print(f"Slicing audio with method: '{method}'")
     if method == "智能切片":
-        chunks = pitch_based_slice(waveform, sr)
+        if rmvpe_voiced_mask is not None and rmvpe_time_step_seconds and rmvpe_time_step_seconds > 0:
+            print("Using RMVPE voiced mask for smart slicing (pyin fallback disabled for this run).")
+        chunks = pitch_based_slice(
+            waveform,
+            sr,
+            voiced_flag_override=rmvpe_voiced_mask,
+            voiced_flag_override_step_sec=rmvpe_time_step_seconds,
+        )
     elif method == "启发式切片":
         chunks = heuristic_slice(waveform, sr)
     elif method == "网格搜索切片":

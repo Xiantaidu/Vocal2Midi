@@ -19,7 +19,7 @@ from qfluentwidgets import (
     SubtitleLabel,
 )
 
-from gui.fluent_utils import parse_quantization
+from gui.fluent_utils import parse_quantization, parse_quantization_mode
 from gui.fluent_worker import WorkerThread, HYBRID_AVAILABLE
 
 
@@ -171,6 +171,19 @@ class AutoLyricInterface(ScrollArea):
         self.quantize_combo = ComboBox(self)
         self.quantize_combo.addItems(["不量化", "1/4 音符 (1拍)", "1/8 音符 (1/2拍)", "1/16 音符 (1/4拍)", "1/32 音符 (1/8拍)", "1/64 音符 (1/16拍)"])
         opts_layout.addWidget(self.quantize_combo)
+
+        opts_layout.addSpacing(20)
+        opts_layout.addWidget(BodyLabel("量化算法:", self))
+        self.quantize_mode_combo = ComboBox(self)
+        self.quantize_mode_combo.addItems(["简单量化（传统）", "智能量化（扒谱风格）"])
+        self.quantize_mode_combo.setCurrentText(
+            self.global_settings.settings.value("quantization_mode_ui", "智能量化（扒谱风格）")
+        )
+        self.quantize_mode_combo.currentTextChanged.connect(
+            lambda t: self.global_settings.settings.setValue("quantization_mode_ui", t)
+        )
+        opts_layout.addWidget(self.quantize_mode_combo)
+
         opts_layout.addStretch(1)
         output_layout.addLayout(opts_layout)
 
@@ -336,6 +349,7 @@ class AutoLyricInterface(ScrollArea):
             'slicing_method': self.slicing_combo.currentText(),
             'tempo': self.tempo_spin.value(),
             'quantization_step': parse_quantization(self.quantize_combo.currentText()),
+            'quantization_mode': parse_quantization_mode(self.quantize_mode_combo.currentText()),
             'pitch_format': self.global_settings.pitch_combo.currentText(),
             'round_pitch': self.global_settings.cb_round.isChecked(),
             'seg_threshold': self.global_settings.seg_thresh_spin.value(),

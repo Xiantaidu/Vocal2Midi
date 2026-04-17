@@ -1,14 +1,6 @@
-import pathlib
-import sys
-
-# Add vendor paths
-VENDOR_DIR = pathlib.Path(__file__).parent / "vendor"
-if str(VENDOR_DIR / "HubertFA") not in sys.path:
-    sys.path.insert(0, str(VENDOR_DIR / "HubertFA"))
-
-from inference.vendor.LyricFA.tools.ZhG2p import ZhG2p
-from inference.vendor.LyricFA.tools.JaG2p import JaG2p
-from inference.vendor.LyricFA.tools.lyric_matcher import LyricMatcher
+from third_party.inference_vendor.LyricFA.tools.ZhG2p import ZhG2p
+from third_party.inference_vendor.LyricFA.tools.JaG2p import JaG2p
+from third_party.inference_vendor.LyricFA.tools.lyric_matcher import LyricMatcher
 
 _zh_g2p = None
 _ja_g2p = None

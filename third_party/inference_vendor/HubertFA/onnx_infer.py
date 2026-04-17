@@ -4,8 +4,8 @@ import pathlib
 import click
 import onnxruntime as ort
 
-from tools.config_utils import check_configs
-from tools.infer_base import InferenceBase
+from .tools.config_utils import check_configs
+from .tools.infer_base import InferenceBase
 
 
 class InferenceOnnx(InferenceBase):

@@ -10,7 +10,7 @@ from gui.fluent_utils import t0_nstep_to_ts
 
 # Import the hybrid pipeline
 try:
-    from inference.auto_lyric_hybrid import auto_lyric_hybrid_pipeline
+    from application.pipeline import run_auto_lyric_job
     HYBRID_AVAILABLE = True
 except ImportError as e:
     print(f"WARNING: Hybrid pipeline not available. Error: {e}")
@@ -61,9 +61,10 @@ class WorkerThread(QThread):
                 ts_list = t0_nstep_to_ts(self.kwargs['t0'], int(self.kwargs['nsteps']))
                 ts_tensor = torch.tensor(ts_list, device=self.kwargs['device'])
 
-                auto_lyric_hybrid_pipeline(
+                run_auto_lyric_job(
                     audio_path=str(original_path),
                     output_filename=filename,
+                    output_dir=save_dir,
                     game_model_dir=self.kwargs['game_model_path_str'],
                     device=self.kwargs['device'],
                     hfa_model_dir=self.kwargs['hfa_model_path_str'],
@@ -72,11 +73,11 @@ class WorkerThread(QThread):
                     language=self.kwargs['language'],
                     lyric_output_mode=self.kwargs.get('lyric_output_mode'),
                     original_lyrics=self.kwargs['original_lyrics'],
-                    output_dir=save_dir,
                     output_formats=self.kwargs['output_formats'],
                     slicing_method=self.kwargs['slicing_method'],
                     tempo=self.kwargs['tempo'],
                     quantization_step=self.kwargs['quantization_step'],
+                    quantization_mode=self.kwargs.get('quantization_mode', 'simple'),
                     pitch_format=self.kwargs['pitch_format'],
                     round_pitch=self.kwargs['round_pitch'],
                     seg_threshold=self.kwargs['seg_threshold'],

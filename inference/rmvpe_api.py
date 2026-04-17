@@ -28,6 +28,7 @@ RMVPE_CONST = 1997.3794084376191
 class RmvpeResult:
     time_step_seconds: float
     midi_pitch: np.ndarray
+    voiced_mask: np.ndarray | None = None
 
 
 # ===== RMVPE model (aligned with RMVPE-main) =====
@@ -362,8 +363,13 @@ class RmvpeTranscriber:
         audio = torch.from_numpy(waveform).to(self.device)
         salience = self._inference_salience(audio, cancel_checker=cancel_checker)
         f0_hz = self._salience_to_f0(salience, self.threshold)
+        voiced_mask = f0_hz > 0
         midi_pitch = self._f0_to_interpolated_midi(f0_hz)
-        return RmvpeResult(time_step_seconds=HOP_LENGTH / SAMPLE_RATE, midi_pitch=midi_pitch)
+        return RmvpeResult(
+            time_step_seconds=HOP_LENGTH / SAMPLE_RATE,
+            midi_pitch=midi_pitch,
+            voiced_mask=voiced_mask,
+        )
 
     def _inference_salience(self, audio: torch.Tensor, cancel_checker=None) -> np.ndarray:
         with torch.no_grad():
@@ -496,6 +502,7 @@ class RmvpeTranscriber:
                 midi[gap_start:] = midi[prev]
 
         return midi
+
 
 
 

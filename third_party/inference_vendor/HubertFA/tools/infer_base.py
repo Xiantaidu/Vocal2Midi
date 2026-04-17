@@ -7,10 +7,10 @@ import librosa
 import numpy as np
 from tqdm import tqdm
 
-from tools.align_word import WordList, Word, Phoneme
-from tools.decoder import AlignmentDecoder, NonLexicalDecoder
-from tools.export_tool import Exporter
-from tools.g2p import DictionaryG2P, PhonemeG2P
+from .align_word import WordList, Word, Phoneme
+from .decoder import AlignmentDecoder, NonLexicalDecoder
+from .export_tool import Exporter
+from .g2p import DictionaryG2P, PhonemeG2P
 
 
 def find_all_duplicate_phonemes(ph_list):
