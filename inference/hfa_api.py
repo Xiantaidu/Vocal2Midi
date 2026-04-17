@@ -1,17 +1,12 @@
 import pathlib
-import sys
 
-# Add vendor paths
-VENDOR_DIR = pathlib.Path(__file__).parent / "vendor"
-if str(VENDOR_DIR / "HubertFA") not in sys.path:
-    sys.path.insert(0, str(VENDOR_DIR / "HubertFA"))
+from third_party.inference_vendor.HubertFA.onnx_infer import InferenceOnnx
 
 def load_hfa_model(model_dir, device="cuda"):
     """
     Loads the HubertFA ONNX model ensuring it runs on the specified device (CUDA).
     """
     print("Loading HubertFA ONNX model for GPU...")
-    from onnx_infer import InferenceOnnx
     model = InferenceOnnx(onnx_path=pathlib.Path(model_dir) / 'model.onnx')
     model.load_config()
     model.init_decoder()

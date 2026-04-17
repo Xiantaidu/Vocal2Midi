@@ -16,11 +16,6 @@ if str(ROOT_DIR) not in sys.path:
 from inference.slicer_api import slice_audio
 from inference.onnx_api import quantize_notes, _save_midi, _save_text
 
-# Add vendor paths
-VENDOR_DIR = pathlib.Path(__file__).parent / "vendor"
-if str(VENDOR_DIR / "HubertFA") not in sys.path:
-    sys.path.insert(0, str(VENDOR_DIR / "HubertFA"))
-
 from inference.asr_api import batch_transcribe_asr
 from inference.lfa_api import create_lyric_matcher, process_asr_to_phonemes
 from inference.hfa_api import load_hfa_model, run_hubert_fa, export_hfa_artifacts
@@ -89,6 +84,7 @@ def auto_lyric_hybrid_pipeline(
     quantization_step: int,
     pitch_format: str,
     round_pitch: bool,
+    quantization_mode: str,
     seg_threshold: float,
     seg_radius: float,
     est_threshold: float,
@@ -121,7 +117,19 @@ def auto_lyric_hybrid_pipeline(
         rmvpe_result = rmvpe.infer(waveform, sr, cancel_checker=cancel_checker)
         print(f"[Hybrid Pipeline] RMVPE done. Frames={len(rmvpe_result.midi_pitch)} step={rmvpe_result.time_step_seconds:.4f}s")
 
-    chunks = slice_audio(waveform, sr, slicing_method)
+    rmvpe_voiced_mask = None
+    rmvpe_step = None
+    if rmvpe_result is not None and getattr(rmvpe_result, "voiced_mask", None) is not None:
+        rmvpe_voiced_mask = rmvpe_result.voiced_mask
+        rmvpe_step = rmvpe_result.time_step_seconds
+
+    chunks = slice_audio(
+        waveform,
+        sr,
+        slicing_method,
+        rmvpe_voiced_mask=rmvpe_voiced_mask,
+        rmvpe_time_step_seconds=rmvpe_step,
+    )
     _check_cancel()
 
     if output_lyrics:
@@ -224,7 +232,7 @@ def auto_lyric_hybrid_pipeline(
         log_path.write_text("\n".join(chunk_logs), encoding="utf-8")
 
     if quantization_step > 0:
-        quantize_notes(all_notes, tempo, quantization_step)
+        quantize_notes(all_notes, tempo, quantization_step, mode=quantization_mode)
     
     print(f"Extracted {len(all_notes)} notes with lyrics.")
 
@@ -280,6 +288,7 @@ if __name__ == "__main__":
             tempo=120.0, # Simplified
             quantization_step=60, # Simplified
             pitch_format="name", # Simplified
+            quantization_mode="simple",
             round_pitch=True, # Simplified
             seg_threshold=0.2,
             seg_radius=0.02,

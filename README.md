@@ -8,6 +8,30 @@ This repository now has a **clear primary path**:
 - **Primary GUI**: `app_fluent.py` (Fluent desktop UI)
 - **Primary pipeline**: `inference/auto_lyric_hybrid.py` (Hybrid pipeline)
 
+For architecture and layering guidance, see:
+
+- `docs/architecture.md`
+
+---
+
+## 0. Developer Navigation (Layered Responsibilities)
+
+To reduce coupling and keep future refactors safe, follow this routing:
+
+`gui -> application -> inference -> modules/lib`
+
+- `gui/`: UI components and worker threads
+- `application/`: application use-cases / orchestration boundary
+- `inference/`: model inference + pipeline implementation
+- `modules/`, `lib/`: lower-level model/math/tooling primitives
+
+Current application-layer entry:
+
+- `application/pipeline.py::run_auto_lyric_job(...)`
+
+This means GUI code should call application-layer functions instead of importing
+heavy pipeline modules directly.
+
 ---
 
 ## 1. Current Architecture (Important)
