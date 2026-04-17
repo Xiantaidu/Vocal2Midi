@@ -3,12 +3,10 @@
 Vocal2Midi is an end-to-end singing voice inference toolkit that converts vocal audio into MIDI with lyric alignment.  
 It is built around the GAME note extraction model and integrates ASR + forced alignment + lyric matching into one workflow.
 
-This repository now has a **clear primary path** and a **legacy compatibility path**:
+This repository now has a **clear primary path**:
 
 - **Primary GUI**: `app_fluent.py` (Fluent desktop UI)
 - **Primary pipeline**: `inference/auto_lyric_hybrid.py` (Hybrid pipeline)
-- **Legacy GUI**: `app.py` (Gradio)
-- **Legacy pipeline**: `inference/auto_lyric.py`
 
 ---
 
@@ -33,27 +31,14 @@ This is the default direction for ongoing use and iteration.
 
 ---
 
-### Legacy (Compatibility)
-
-#### GUI
-- `app.py`
-- Gradio Web UI retained for backward compatibility
-
-#### Pipeline
-- `inference/auto_lyric.py`
-- Older ONNX/FunASR-oriented auto lyric pipeline
-
-These are kept to avoid breaking old workflows, but are no longer the primary path.
-
----
-
 ## 2. Features
 
 - Vocal-to-MIDI extraction with note timing and pitch
 - Auto lyric transcription and alignment
 - Optional reference lyric correction via LyricFA matching
 - Chinese (`zh`) and Japanese (`ja`) flow support
-- Multiple output formats (`.mid`, `.txt`, `.csv`, optional chunks/TextGrid artifacts)
+- Multiple output formats (`.mid`, `.ustx`, `.txt`, `.csv`, optional chunks/TextGrid artifacts)
+- RMVPE pitch extraction and USTX export with pitch curve (`pitd`)
 - Batch processing support
 
 ---
@@ -106,26 +91,6 @@ Purpose:
 - Main auto-lyric pipeline for current development
 - Preferred for better integration of ASR + matching + FA + GAME flow
 
-### 4.2 Legacy auto lyric pipeline
-
-File:
-
-```text
-inference/auto_lyric.py
-```
-
-Purpose:
-- Backward compatibility
-- Older ONNX/FunASR-style flow
-
-CLI help:
-
-```bash
-python inference/auto_lyric.py --help
-```
-
----
-
 ## 5. Typical Processing Flow (Primary Path)
 
 On the primary path (`app_fluent.py` -> `auto_lyric_hybrid.py`), the pipeline is generally:
@@ -136,8 +101,9 @@ On the primary path (`app_fluent.py` -> `auto_lyric_hybrid.py`), the pipeline is
 4. Generate `.lab` phonetic labels
 5. Run HubertFA forced alignment
 6. Run GAME model to extract notes/pitches
-7. Align notes with lyric units
-8. Export target formats
+7. (Optional) Run RMVPE to extract frame-level pitch curve
+8. Align notes with lyric units
+9. Export target formats (`.mid`, `.ustx`, etc.)
 
 ---
 
@@ -199,6 +165,7 @@ Set these in the GUI global settings before running long jobs.
 Depending on your options, outputs can include:
 
 - `.mid` (MIDI)
+- `.ustx` (OpenUtau project with pitch deviation curve)
 - `.txt` (note/lyric text export)
 - `.csv` (tabular note/lyric export)
 - chunk artifacts / TextGrid (debug or analysis workflows)
@@ -220,7 +187,7 @@ Logs are also generated for ASR/matching behavior, which helps diagnose fallback
 
 - `app_fluent.py` is the **main GUI**.
 - `inference/auto_lyric_hybrid.py` is the **main pipeline**.
-- `app.py` and `inference/auto_lyric.py` are **legacy compatibility paths**.
+- RMVPE pitch extraction + USTX export are available in the primary hybrid pipeline.
 - `app_pyside2.py` has been removed.
 
 ---

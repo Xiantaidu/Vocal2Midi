@@ -136,15 +136,23 @@ def batch_transcribe_asr(
 
             # Collect results with progress
             for i, res in enumerate(async_results):
-                if cancel_checker and cancel_checker():
-                    raise InterruptedError("ASR 任务已取消")
-
                 batch_no = i + 1
                 print(f"  Waiting for ASR batch {batch_no}/{total_batches}...")
                 batch_start_time = time.perf_counter()
                 try:
-                    # Wait for the result with a timeout
-                    batch_result = res.get(timeout=asr_timeout_sec)
+                    # Wait for result in short polling intervals so cancel can preempt quickly
+                    deadline = time.perf_counter() + asr_timeout_sec
+                    while not res.ready():
+                        if cancel_checker and cancel_checker():
+                            print("  ASR cancel requested. Terminating ASR pool...")
+                            pool.terminate()
+                            pool.join()
+                            raise InterruptedError("ASR 任务已取消")
+                        if time.perf_counter() >= deadline:
+                            raise mp.TimeoutError
+                        time.sleep(0.2)
+
+                    batch_result = res.get(timeout=1)
                     cost = time.perf_counter() - batch_start_time
 
                     if isinstance(batch_result, Exception):

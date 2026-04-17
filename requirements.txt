@@ -18,6 +18,7 @@ onnx
 onnxscript
 onnxslim
 pydantic>=2.11,<3.0
+PyYAML
 resampy
 scipy>=1.10.0
 sympy
