@@ -77,52 +77,81 @@ class AutoLyricInterface(ScrollArea):
         self.vBoxLayout.addWidget(self.lyric_card)
 
         combo_card = CardWidget(self)
-        combo_layout = QHBoxLayout(combo_card)
+        combo_layout = QVBoxLayout(combo_card)
+
+        combo_row1 = QHBoxLayout()
         slice_icon = IconWidget(FluentIcon.CUT, self)
         slice_icon.setFixedSize(16, 16)
-        combo_layout.addWidget(slice_icon)
-        combo_layout.addWidget(BodyLabel("音频切片方法", self))
+        combo_row1.addWidget(slice_icon)
+        combo_row1.addWidget(BodyLabel("音频切片方法", self))
         self.slicing_combo = ComboBox(self)
         self.slicing_combo.addItems(["智能切片", "启发式切片", "默认切片", "网格搜索切片"])
-        combo_layout.addWidget(self.slicing_combo)
+        combo_row1.addWidget(self.slicing_combo)
 
         lang_icon = IconWidget(FluentIcon.LANGUAGE, self)
         lang_icon.setFixedSize(16, 16)
-        combo_layout.addSpacing(28)
-        combo_layout.addWidget(lang_icon)
-        combo_layout.addWidget(BodyLabel("目标语言", self))
+        combo_row1.addSpacing(28)
+        combo_row1.addWidget(lang_icon)
+        combo_row1.addWidget(BodyLabel("目标语言", self))
         self.lang_combo = ComboBox(self)
         self.lang_combo.addItems(["zh", "ja"])
         self.lang_combo.currentTextChanged.connect(self.update_lyric_output_options)
-        combo_layout.addWidget(self.lang_combo)
+        combo_row1.addWidget(self.lang_combo)
 
-        combo_layout.addSpacing(28)
+        combo_row1.addSpacing(28)
         self.lyric_output_label = BodyLabel("歌词输出格式", self)
-        combo_layout.addWidget(self.lyric_output_label)
+        combo_row1.addWidget(self.lyric_output_label)
         self.lyric_output_combo = ComboBox(self)
         self.lyric_output_combo.currentTextChanged.connect(self.save_lyric_output_preference)
-        combo_layout.addWidget(self.lyric_output_combo)
+        combo_row1.addWidget(self.lyric_output_combo)
 
-        combo_layout.addSpacing(28)
+        combo_row1.addSpacing(28)
         dev_icon = IconWidget(FluentIcon.SETTING, self)
         dev_icon.setFixedSize(16, 16)
-        combo_layout.addWidget(dev_icon)
-        combo_layout.addWidget(BodyLabel("计算设备", self))
+        combo_row1.addWidget(dev_icon)
+        combo_row1.addWidget(BodyLabel("计算设备", self))
         self.device_combo = ComboBox(self)
         self.device_combo.addItems(["cuda", "cpu"])
         self.device_combo.currentTextChanged.connect(self.apply_device_batch_defaults)
-        combo_layout.addWidget(self.device_combo)
+        combo_row1.addWidget(self.device_combo)
 
-        combo_layout.addSpacing(28)
-        combo_layout.addWidget(BodyLabel("输出歌词", self))
+        combo_row1.addStretch(1)
+        combo_layout.addLayout(combo_row1)
+
+        combo_row2 = QHBoxLayout()
+        # 对齐第一行：补一个与切片图标等宽的占位
+        icon_placeholder = QWidget(self)
+        icon_placeholder.setFixedSize(16, 16)
+        combo_row2.addWidget(icon_placeholder)
+
+        combo_row2.addWidget(BodyLabel("输出歌词", self))
         from qfluentwidgets import SwitchButton
         self.cb_output_lyrics = SwitchButton("On", self, self)
         self.cb_output_lyrics.setOffText("Off")
         self.cb_output_lyrics.setChecked(self.global_settings.settings.value("output_lyrics", True, type=bool))
         self.cb_output_lyrics.checkedChanged.connect(self.on_output_lyrics_changed)
-        combo_layout.addWidget(self.cb_output_lyrics)
+        combo_row2.addWidget(self.cb_output_lyrics)
 
-        combo_layout.addStretch(1)
+        combo_row2.addSpacing(28)
+        combo_row2.addWidget(BodyLabel("导出 USTX (.ustx)", self))
+        self.cb_ustx = SwitchButton("On", self, self)
+        self.cb_ustx.setOffText("Off")
+        self.cb_ustx.setChecked(self.global_settings.settings.value("debug_ustx", False, type=bool))
+        self.cb_ustx.checkedChanged.connect(self.on_ustx_changed)
+        combo_row2.addWidget(self.cb_ustx)
+
+        combo_row2.addSpacing(28)
+        self.pitch_curve_label = BodyLabel("输出音高曲线", self)
+        combo_row2.addWidget(self.pitch_curve_label)
+        self.cb_pitch_curve = SwitchButton("On", self, self)
+        self.cb_pitch_curve.setOffText("Off")
+        self.cb_pitch_curve.setChecked(self.global_settings.settings.value("output_pitch_curve", True, type=bool))
+        self.cb_pitch_curve.checkedChanged.connect(lambda v: self.global_settings.settings.setValue("output_pitch_curve", v))
+        combo_row2.addWidget(self.cb_pitch_curve)
+
+        combo_row2.addStretch(1)
+        combo_layout.addLayout(combo_row2)
+
         self.vBoxLayout.addWidget(combo_card)
 
         output_card = CardWidget(self)
@@ -180,6 +209,7 @@ class AutoLyricInterface(ScrollArea):
         self.update_lyrics_visibility()
         self.update_lyric_output_options(self.lang_combo.currentText())
         self.apply_device_batch_defaults(self.device_combo.currentText())
+        self.on_ustx_changed(self.cb_ustx.isChecked())
 
     def apply_device_batch_defaults(self, device: str):
         if device == "cpu":
@@ -214,6 +244,11 @@ class AutoLyricInterface(ScrollArea):
     def on_output_lyrics_changed(self, enabled: bool):
         self.global_settings.settings.setValue("output_lyrics", enabled)
         self.update_lyric_output_enabled_state()
+
+    def on_ustx_changed(self, enabled: bool):
+        self.global_settings.settings.setValue("debug_ustx", enabled)
+        self.pitch_curve_label.setEnabled(enabled)
+        self.cb_pitch_curve.setEnabled(enabled)
 
     def update_lyric_output_options(self, language: str):
         options = ["拼音", "汉字"] if language == "zh" else ["罗马音", "假名"]
@@ -277,6 +312,8 @@ class AutoLyricInterface(ScrollArea):
             output_formats.append("csv")
         if self.global_settings.cb_chunks.isChecked():
             output_formats.append("chunks")
+        if self.cb_ustx.isChecked():
+            output_formats.append("ustx")
 
         save_dir = self.save_dir_edit.text()
         if not save_dir or not os.path.isdir(save_dir):
@@ -295,6 +332,7 @@ class AutoLyricInterface(ScrollArea):
             'original_lyrics': self.lyrics_edit.toPlainText().strip() if self.global_settings.cb_match_lyrics.isChecked() else "",
             'output_formats': output_formats,
             'output_lyrics': self.cb_output_lyrics.isChecked(),
+            'output_pitch_curve': self.cb_pitch_curve.isChecked() if self.cb_ustx.isChecked() else False,
             'slicing_method': self.slicing_combo.currentText(),
             'tempo': self.tempo_spin.value(),
             'quantization_step': parse_quantization(self.quantize_combo.currentText()),

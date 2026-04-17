@@ -28,6 +28,9 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.autoLyricInterface, FluentIcon.MUSIC, "自动提取与灌注")
         self.addSubInterface(self.globalSettingsInterface, FluentIcon.SETTING, "全局设置", position=NavigationItemPosition.BOTTOM)
 
+        # 隐藏侧边栏顶部三条杠（菜单）按钮
+        self.navigationInterface.setMenuButtonVisible(False)
+
         self.navigationInterface.setCurrentItem(self.autoLyricInterface.objectName())
         self.stackedWidget.setCurrentWidget(self.autoLyricInterface)
 

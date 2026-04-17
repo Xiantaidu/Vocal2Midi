@@ -25,6 +25,8 @@ from inference.asr_api import batch_transcribe_asr
 from inference.lfa_api import create_lyric_matcher, process_asr_to_phonemes
 from inference.hfa_api import load_hfa_model, run_hubert_fa, export_hfa_artifacts
 from inference.game_api import load_game_model, extract_pitches_and_align_torch, extract_pitches_only_torch
+from inference.rmvpe_api import RmvpeTranscriber
+from inference.ustx_api import save_ustx
 
 def free_memory():
     import gc
@@ -93,6 +95,7 @@ def auto_lyric_hybrid_pipeline(
     batch_size: int = 4,
     asr_batch_size: int = 4,
     output_lyrics: bool = True,
+    output_pitch_curve: bool = False,
     debug_mode: bool = False,
     cancel_checker=None,
 ):
@@ -108,6 +111,15 @@ def auto_lyric_hybrid_pipeline(
     sr = 44100
     waveform, sr = librosa.load(audio_path, sr=sr, mono=True)
     _check_cancel()
+
+    output_format_set = set(output_formats or [])
+    rmvpe_result = None
+    if "ustx" in output_format_set and output_pitch_curve:
+        rmvpe_model = ROOT_DIR / "experiments" / "RMVPE" / "rmvpe.pt"
+        print(f"[Hybrid Pipeline] Running RMVPE from: {rmvpe_model}")
+        rmvpe = RmvpeTranscriber(rmvpe_model, device=device)
+        rmvpe_result = rmvpe.infer(waveform, sr, cancel_checker=cancel_checker)
+        print(f"[Hybrid Pipeline] RMVPE done. Frames={len(rmvpe_result.midi_pitch)} step={rmvpe_result.time_step_seconds:.4f}s")
 
     chunks = slice_audio(waveform, sr, slicing_method)
     _check_cancel()
@@ -162,10 +174,18 @@ def auto_lyric_hybrid_pipeline(
             _check_cancel()
             print("------------------------------------------\n")
 
-            pred_dict = run_hubert_fa(hfa_model, temp_dir_path, language=language)
+            pred_dict = run_hubert_fa(hfa_model, temp_dir_path, language=language, cancel_checker=cancel_checker)
             _check_cancel()
 
-            export_hfa_artifacts(chunks, temp_dir_path, hfa_model, output_key, output_dir, output_formats)
+            export_hfa_artifacts(
+                chunks,
+                temp_dir_path,
+                hfa_model,
+                output_key,
+                output_dir,
+                output_formats,
+                cancel_checker=cancel_checker,
+            )
 
             del hfa_model
             free_memory()
@@ -181,13 +201,15 @@ def auto_lyric_hybrid_pipeline(
             all_notes = extract_pitches_and_align_torch(
                 chunks, sr, pred_dict, chars_dict, game_model, device, ts,
                 seg_threshold, seg_radius, est_threshold, batch_size,
-                debug_mode=debug_mode
+                debug_mode=debug_mode,
+                cancel_checker=cancel_checker,
             )
         else:
             all_notes = extract_pitches_only_torch(
                 chunks, sr, game_model, device, ts,
                 seg_threshold, seg_radius, est_threshold, batch_size,
-                debug_mode=debug_mode
+                debug_mode=debug_mode,
+                cancel_checker=cancel_checker,
             )
         _check_cancel()
         del game_model
@@ -196,7 +218,6 @@ def auto_lyric_hybrid_pipeline(
     all_notes.sort(key=lambda x: x.onset)
     
                                                      
-    output_format_set = set(output_formats or [])
     export_asr_match_log = output_lyrics and (("asr_match_log" in output_format_set) or ("chunks" in output_format_set))
     if export_asr_match_log:
         log_path = output_dir / f"{output_key}_asr_match_log.txt"
@@ -213,6 +234,8 @@ def auto_lyric_hybrid_pipeline(
         _save_text(all_notes, output_dir / f"{output_key}.txt", "txt", pitch_format, round_pitch)
     if "csv" in output_formats:
         _save_text(all_notes, output_dir / f"{output_key}.csv", "csv", pitch_format, round_pitch)
+    if "ustx" in output_formats:
+        save_ustx(all_notes, output_dir / f"{output_key}.ustx", tempo=float(tempo), rmvpe_result=rmvpe_result)
 
 
 if __name__ == "__main__":

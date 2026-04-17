@@ -23,8 +23,10 @@ def load_hfa_model(model_dir, device="cuda"):
     print(f"HubertFA ONNX session created with providers: {model.model.get_providers()}")
     return model
 
-def run_hubert_fa(hfa_model, temp_dir, language="zh"):
+def run_hubert_fa(hfa_model, temp_dir, language="zh", cancel_checker=None):
     print("[Hybrid Pipeline] Running HubertFA forced alignment on GPU...")
+    if cancel_checker and cancel_checker():
+        raise InterruptedError("HFA 任务已取消")
     hfa_model.dataset = []
     hfa_model.predictions = []
     
@@ -32,6 +34,8 @@ def run_hubert_fa(hfa_model, temp_dir, language="zh"):
     dict_path = hfa_model.vocab_folder / dict_file
     
     hfa_model.get_dataset(wav_folder=temp_dir, language=language, g2p="dictionary", dictionary_path=dict_path)
+    if cancel_checker and cancel_checker():
+        raise InterruptedError("HFA 任务已取消")
     if len(hfa_model.dataset) > 0:
         nl_phonemes = "AP" if language == "zh" else ""
         hfa_model.infer(non_lexical_phonemes=nl_phonemes, pad_times=1, pad_length=5)
@@ -39,7 +43,7 @@ def run_hubert_fa(hfa_model, temp_dir, language="zh"):
     pred_dict = {p[0].stem: p for p in hfa_model.predictions}
     return pred_dict
 
-def export_hfa_artifacts(chunks, temp_dir_path, hfa_model, output_key, output_dir, output_formats):
+def export_hfa_artifacts(chunks, temp_dir_path, hfa_model, output_key, output_dir, output_formats, cancel_checker=None):
     import shutil
 
     output_formats = set(output_formats or [])
@@ -49,11 +53,15 @@ def export_hfa_artifacts(chunks, temp_dir_path, hfa_model, output_key, output_di
 
     tg_subfolder = None
     if export_textgrid:
+        if cancel_checker and cancel_checker():
+            raise InterruptedError("HFA 导出任务已取消")
         temp_tg_dir = temp_dir_path / "temp_tg"
         hfa_model.export(temp_tg_dir, output_format=['textgrid'])
         tg_subfolder = temp_tg_dir / "TextGrid"
     
     for chunk_idx, chunk in enumerate(chunks):
+        if cancel_checker and cancel_checker():
+            raise InterruptedError("HFA 导出任务已取消")
         stem = f"chunk_{chunk_idx}"
         new_stem = f"{output_key}_{chunk_idx:03d}"
         

@@ -108,7 +108,7 @@ def extract_vowel_boundaries(result_word, original_chars: list[str]):
 
     return word_durs, word_vuvs, lyrics
 
-def extract_pitches_and_align_torch(chunks, sr, pred_dict, chars_dict, game_model, device, ts, seg_threshold, seg_radius, est_threshold, batch_size=4, debug_mode=False):
+def extract_pitches_and_align_torch(chunks, sr, pred_dict, chars_dict, game_model, device, ts, seg_threshold, seg_radius, est_threshold, batch_size=4, debug_mode=False, cancel_checker=None):
     """
     Extracts pitches using the PyTorch GAME model and aligns to lyrics.
     """
@@ -118,6 +118,8 @@ def extract_pitches_and_align_torch(chunks, sr, pred_dict, chars_dict, game_mode
     batch_infos = []
 
     for chunk_idx, chunk in enumerate(chunks):
+        if cancel_checker and cancel_checker():
+            raise InterruptedError("GAME 任务已取消")
         stem = f"chunk_{chunk_idx}"
         if stem not in pred_dict:
             continue
@@ -139,6 +141,8 @@ def extract_pitches_and_align_torch(chunks, sr, pred_dict, chars_dict, game_mode
         })
 
     for i in range(0, len(batch_infos), batch_size):
+        if cancel_checker and cancel_checker():
+            raise InterruptedError("GAME 任务已取消")
         batch = batch_infos[i:i+batch_size]
         
         waveforms_np = [info["waveform"] for info in batch]
@@ -259,12 +263,15 @@ def extract_pitches_only_torch(
     est_threshold,
     batch_size=4,
     debug_mode=False,
+    cancel_checker=None,
 ):
     print("[Hybrid Pipeline] Extracting pitches with PyTorch GAME (no-lyrics mode)...")
 
     all_notes = []
     batch_infos = []
     for chunk in chunks:
+        if cancel_checker and cancel_checker():
+            raise InterruptedError("GAME 任务已取消")
         batch_infos.append({
             "waveform": chunk["waveform"],
             "waveform_duration": len(chunk["waveform"]) / sr,
@@ -272,6 +279,8 @@ def extract_pitches_only_torch(
         })
 
     for i in range(0, len(batch_infos), batch_size):
+        if cancel_checker and cancel_checker():
+            raise InterruptedError("GAME 任务已取消")
         batch = batch_infos[i:i + batch_size]
 
         waveforms_np = [info["waveform"] for info in batch]
