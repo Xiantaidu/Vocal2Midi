@@ -10,7 +10,7 @@ ROOT_DIR = pathlib.Path(__file__).parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from inference.onnx_api import pad_1d_arrays, NoteInfo
+from inference.note_io import pad_1d_arrays, NoteInfo
 from inference.utils import align_notes_to_words
 
 def load_game_model(model_dir: str, device="cuda"):

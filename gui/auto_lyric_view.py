@@ -175,7 +175,11 @@ class AutoLyricInterface(ScrollArea):
         opts_layout.addSpacing(20)
         opts_layout.addWidget(BodyLabel("量化算法:", self))
         self.quantize_mode_combo = ComboBox(self)
-        self.quantize_mode_combo.addItems(["简单量化（传统）", "智能量化（扒谱风格）"])
+        self.quantize_mode_combo.addItems([
+            "简单量化（传统）",
+            "智能量化（扒谱风格）",
+            "DP量化（SVP迁移版，作用于MIDI）",
+        ])
         self.quantize_mode_combo.setCurrentText(
             self.global_settings.settings.value("quantization_mode_ui", "智能量化（扒谱风格）")
         )

@@ -13,7 +13,10 @@ def parse_quantization(quantize_option: str) -> int:
 
 
 def parse_quantization_mode(mode_option: str) -> str:
-    if "智能" in (mode_option or ""):
+    mode_option = mode_option or ""
+    if "DP" in mode_option or "动态规划" in mode_option:
+        return "dp"
+    if "智能" in mode_option:
         return "smart"
     return "simple"
 
