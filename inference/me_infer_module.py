@@ -5,9 +5,9 @@ import torchmetrics
 from torch import nn, Tensor
 
 from inference.me_infer import SegmentationEstimationInferenceModel
-from lib.config.schema import ValidationConfig
-from modules.functional import flatten_sequences, regions_to_durations
-from modules.metrics import (
+from inference.game.lib.config.schema import ValidationConfig
+from inference.game.modules.functional import flatten_sequences, regions_to_durations
+from inference.game.modules.metrics import (
     AverageChamferDistance,
     QuantityMetricCollection,
     NotePresenceMetricCollection,

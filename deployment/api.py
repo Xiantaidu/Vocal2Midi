@@ -3,7 +3,7 @@ import pathlib
 
 from deployment.exporter import Exporter
 from inference.me_infer import SegmentationEstimationInferenceModel
-from lib import logging
+from inference.game.lib import logging
 
 
 def deploy_model(

@@ -5,8 +5,8 @@ import torch.nn.functional as F
 from einops import rearrange
 
 from deployment.context import is_export_mode
-from modules.backbones.EBF import CgMLP, GLUFFN, FFN, LayScale
-from modules.backbones.eglu import HalfCacheGLUFFN
+from inference.game.modules.backbones.EBF import CgMLP, GLUFFN, FFN, LayScale
+from inference.game.modules.backbones.eglu import HalfCacheGLUFFN
 
 
 def compute_inv_freq(dim: int, theta: float = 10000.0):

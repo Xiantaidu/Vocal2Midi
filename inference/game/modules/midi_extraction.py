@@ -1,9 +1,9 @@
 import torch
 from torch import nn
 
-from lib.config.schema import ModelConfig
-from lib.reflection import build_object_from_class_name
-from modules.commons.common_layers import CyclicRegionEmbedding
+from inference.game.lib.config.schema import ModelConfig
+from inference.game.lib.reflection import build_object_from_class_name
+from inference.game.modules.commons.common_layers import CyclicRegionEmbedding
 
 
 class SegmentationEstimationModel(nn.Module):

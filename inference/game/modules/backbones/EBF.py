@@ -6,8 +6,8 @@ from torch import nn
 import torch.nn.functional as F
 
 from deployment.context import is_export_mode
-from modules.backbones.RoPosEmb_s2 import SingleRoPosEmb
-from modules.backbones.eglu import HalfCacheGLUFFN
+from inference.game.modules.backbones.RoPosEmb_s2 import SingleRoPosEmb
+from inference.game.modules.backbones.eglu import HalfCacheGLUFFN
 
 
 class LayScale(nn.Module):

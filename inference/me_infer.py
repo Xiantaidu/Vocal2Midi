@@ -1,22 +1,22 @@
 import torch
 from torch import nn, Tensor
 
-from lib.config.schema import ModelConfig, InferenceConfig
-from lib.feature.mel import StretchableMelSpectrogram
-from modules.d3pm import (
+from inference.game.lib.config.schema import ModelConfig, InferenceConfig
+from inference.game.lib.feature.mel import StretchableMelSpectrogram
+from inference.game.modules.d3pm import (
     d3pm_time_schedule,
     remove_mutable_boundaries,
 )
-from modules.decoding import (
+from inference.game.modules.decoding import (
     decode_soft_boundaries,
     decode_gaussian_blurred_probs,
 )
-from modules.functional import (
+from inference.game.modules.functional import (
     format_boundaries,
     boundaries_to_regions,
     regions_to_durations,
 )
-from modules.midi_extraction import SegmentationEstimationModel
+from inference.game.modules.midi_extraction import SegmentationEstimationModel
 
 
 class SegmentationEstimationInferenceModel(nn.Module):

@@ -7,11 +7,11 @@ import torch
 from lightning_utilities.core.rank_zero import rank_zero_only, rank_zero_info
 from torch import Tensor
 
-from lib import logging
-from lib.config.core import ConfigBaseModel
-from lib.config.formatter import ModelFormatter
-from lib.config.io import load_raw_config
-from lib.config.schema import ModelConfig, InferenceConfig, ValidationConfig
+from inference.game.lib import logging
+from inference.game.lib.config.core import ConfigBaseModel
+from inference.game.lib.config.formatter import ModelFormatter
+from inference.game.lib.config.io import load_raw_config
+from inference.game.lib.config.schema import ModelConfig, InferenceConfig, ValidationConfig
 from .me_infer import SegmentationEstimationInferenceModel
 from .me_infer_module import InferenceModule
 
