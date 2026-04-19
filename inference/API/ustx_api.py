@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 import yaml
 
-from inference.rmvpe_api import RmvpeResult
+from inference.API.rmvpe_api import RmvpeResult
 
 
 UCurveInterval = 5

@@ -5,7 +5,7 @@ import torch
 import functools
 from concurrent.futures import ProcessPoolExecutor
 
-from inference.slicer2 import Slicer
+from inference.slicer.slicer2 import Slicer
 
 
 def _concat_waveforms(a: np.ndarray, b: np.ndarray) -> np.ndarray:

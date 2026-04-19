@@ -12,8 +12,8 @@ from inference.game.lib.config.core import ConfigBaseModel
 from inference.game.lib.config.formatter import ModelFormatter
 from inference.game.lib.config.io import load_raw_config
 from inference.game.lib.config.schema import ModelConfig, InferenceConfig, ValidationConfig
-from .me_infer import SegmentationEstimationInferenceModel
-from .me_infer_module import InferenceModule
+from inference.game.core.me_infer import SegmentationEstimationInferenceModel
+from inference.game.core.me_infer_module import InferenceModule
 
 __all__ = [
     "load_config_for_inference",

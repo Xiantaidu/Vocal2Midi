@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch.utils.data
 from librosa.filters import mel as librosa_mel_fn
 
-from deployment.context import is_export_mode
+from inference.game.deployment.context import is_export_mode
 
 
 def dynamic_range_compression_torch(x, C=1, clip_val=1e-5):

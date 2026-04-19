@@ -1,8 +1,8 @@
 import json
 import pathlib
 
-from deployment.exporter import Exporter
-from inference.me_infer import SegmentationEstimationInferenceModel
+from inference.game.deployment.exporter import Exporter
+from inference.game.core.me_infer import SegmentationEstimationInferenceModel
 from inference.game.lib import logging
 
 

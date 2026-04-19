@@ -10,16 +10,16 @@ ROOT_DIR = pathlib.Path(__file__).parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from inference.note_io import pad_1d_arrays, NoteInfo
-from inference.utils import align_notes_to_words
+from inference.io.note_io import pad_1d_arrays, NoteInfo
+from inference.game.alignment_utils import align_notes_to_words
 
 def load_game_model(model_dir: str, device="cuda"):
     """
     Loads the GAME model using PyTorch.
     """
     print(f"Loading GAME PyTorch model from '{model_dir}'...")
-    from inference.api import load_config_for_inference, load_state_dict_for_inference
-    from inference.me_infer import SegmentationEstimationInferenceModel
+    from inference.game.api import load_config_for_inference, load_state_dict_for_inference
+    from inference.game.core.me_infer import SegmentationEstimationInferenceModel
 
     model_dir = pathlib.Path(model_dir)
     config_path = model_dir / "config.yaml"
