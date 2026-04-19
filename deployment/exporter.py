@@ -7,8 +7,8 @@ from torch import Tensor
 from torch.onnx import ONNXProgram
 
 from inference.me_infer import SegmentationEstimationInferenceModel
-from lib import logging
-from modules.functional import format_boundaries, boundaries_to_regions, regions_to_durations
+from inference.game.lib import logging
+from inference.game.modules.functional import format_boundaries, boundaries_to_regions, regions_to_durations
 
 
 class WrappedEncoderModel(torch.nn.Module):

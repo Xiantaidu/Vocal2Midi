@@ -15,8 +15,8 @@ import torch.nn.functional as F
 
 from inference.me_infer_module import InferenceModule
 from inference.utils import validate_phones, parse_words, align_notes_to_words
-from lib import logging
-from lib.plot import note_to_figure
+from inference.game.lib import logging
+from inference.game.lib.plot import note_to_figure
 
 __all__ = [
     "SaveCombinedFileCallback",

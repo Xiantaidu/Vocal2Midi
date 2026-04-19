@@ -1,13 +1,13 @@
 training:
   optimizer:
-    cls: lib.optimizer.chained_optimizer.ChainedOptimizer
+    cls: inference.game.lib.optimizer.chained_optimizer.ChainedOptimizer
     wraps: module
     kwargs:
       specs:
-        - cls: lib.optimizer.muon.Muon
+        - cls: inference.game.lib.optimizer.muon.Muon
           kwargs:
             weight_decay: 0.1
-          filter: lib.optimizer.muon.muon_param_filter
+          filter: inference.game.lib.optimizer.muon.muon_param_filter
         - cls: torch.optim.AdamW
       lr: 0.0006
       weight_decay: 0.0

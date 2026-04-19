@@ -13,7 +13,7 @@ model:
   region_cycle_len: 3
   use_glu: true
   encoder:
-    cls: "modules.backbones.EBF.EBFBackbone"
+    cls: "inference.game.modules.backbones.EBF.EBFBackbone"
     kwargs:
       dim: 256
       num_layers: 4
@@ -30,7 +30,7 @@ model:
       c_out_drop: 0.1
       c_latent_drop: 0.0
   segmenter:
-    cls: "modules.backbones.EBF.EBFBackbone"
+    cls: "inference.game.modules.backbones.EBF.EBFBackbone"
     kwargs:
       dim: 256
       num_layers: 8
@@ -49,7 +49,7 @@ model:
       c_out_drop: 0.1
       c_latent_drop: 0.0
   estimator:
-    cls: "modules.backbones.ebf_with_joint_attention.JEBFBackbone"
+    cls: "inference.game.modules.backbones.ebf_with_joint_attention.JEBFBackbone"
     kwargs:
       dim: 256
       num_layers: 4

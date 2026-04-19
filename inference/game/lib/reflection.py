@@ -12,7 +12,25 @@ def get_object_by_module_path(path: str):
     Get an object by module path. The path should be in the format like 'module.submodule.name'.
     """
     module_name, class_name = path.rsplit(".", 1)
-    module = importlib.import_module(module_name)
+    try:
+        module = importlib.import_module(module_name)
+    except ModuleNotFoundError:
+        # Backward compatibility for old GAME config/checkpoint class paths.
+        # e.g. "modules.backbones.EBF.EBFBackbone" ->
+        #      "inference.game.modules.backbones.EBF.EBFBackbone"
+        # e.g. "lib.optimizer.muon.Muon" ->
+        #      "inference.game.lib.optimizer.muon.Muon"
+        remapped_path = path
+        if path.startswith("modules."):
+            remapped_path = f"inference.game.{path}"
+        elif path.startswith("lib."):
+            remapped_path = f"inference.game.{path}"
+
+        if remapped_path == path:
+            raise
+
+        module_name, class_name = remapped_path.rsplit(".", 1)
+        module = importlib.import_module(module_name)
     obj = getattr(module, class_name)
     return obj
 
