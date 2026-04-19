@@ -5,8 +5,8 @@ from typing import Any, Literal
 import librosa
 import torch.utils.data
 
-from inference.slicer2 import Slicer
-from inference.utils import validate_phones, parse_words
+from inference.slicer.slicer2 import Slicer
+from inference.game.alignment_utils import validate_phones, parse_words
 
 def collate_nd(values, pad_value=0, max_len=None):
     """

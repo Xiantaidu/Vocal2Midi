@@ -4,7 +4,7 @@ import torch
 import torchmetrics
 from torch import nn, Tensor
 
-from inference.me_infer import SegmentationEstimationInferenceModel
+from inference.game.core.me_infer import SegmentationEstimationInferenceModel
 from inference.game.lib.config.schema import ValidationConfig
 from inference.game.modules.functional import flatten_sequences, regions_to_durations
 from inference.game.modules.metrics import (

@@ -13,8 +13,8 @@ import mido
 import torch
 import torch.nn.functional as F
 
-from inference.me_infer_module import InferenceModule
-from inference.utils import validate_phones, parse_words, align_notes_to_words
+from inference.game.core.me_infer_module import InferenceModule
+from inference.game.alignment_utils import validate_phones, parse_words, align_notes_to_words
 from inference.game.lib import logging
 from inference.game.lib.plot import note_to_figure
 

@@ -1,5 +1,5 @@
 bases: [
-  "configs/base.yaml",
+  "inference/game/configs/base.yaml",
 ]
 
 binarizer:

@@ -13,16 +13,16 @@ ROOT_DIR = pathlib.Path(__file__).parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from inference.slicer_api import slice_audio
-from inference.note_io import _save_midi, _save_text
-from inference.quantization import quantize_notes, should_apply_quantization
+from inference.API.slicer_api import slice_audio
+from inference.io.note_io import _save_midi, _save_text
+from inference.quant.quantization import quantize_notes, should_apply_quantization
 
-from inference.asr_api import batch_transcribe_asr
-from inference.lfa_api import create_lyric_matcher, process_asr_to_phonemes
-from inference.hfa_api import load_hfa_model, run_hubert_fa, export_hfa_artifacts
-from inference.game_api import load_game_model, extract_pitches_and_align_torch, extract_pitches_only_torch
-from inference.rmvpe_api import RmvpeTranscriber
-from inference.ustx_api import save_ustx
+from inference.API.asr_api import batch_transcribe_asr
+from inference.API.lfa_api import create_lyric_matcher, process_asr_to_phonemes
+from inference.API.hfa_api import load_hfa_model, run_hubert_fa, export_hfa_artifacts
+from inference.API.game_api import load_game_model, extract_pitches_and_align_torch, extract_pitches_only_torch
+from inference.API.rmvpe_api import RmvpeTranscriber
+from inference.API.ustx_api import save_ustx
 
 def free_memory():
     import gc

@@ -3,7 +3,7 @@ from typing import Callable, Optional
 
 import torch
 
-from inference.auto_lyric_hybrid import auto_lyric_hybrid_pipeline
+from inference.pipeline.auto_lyric_hybrid import auto_lyric_hybrid_pipeline
 
 
 def run_auto_lyric_job(

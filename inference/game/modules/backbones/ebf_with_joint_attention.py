@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 
-from deployment.context import is_export_mode
+from inference.game.deployment.context import is_export_mode
 from inference.game.modules.backbones.EBF import CgMLP, GLUFFN, FFN, LayScale
 from inference.game.modules.backbones.eglu import HalfCacheGLUFFN
 

@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor
 
-from deployment.context import is_export_mode
+from inference.game.deployment.context import is_export_mode
 
 
 def find_local_extremum(x: Tensor, threshold: float = None, radius: int = 2, maxima=True):
