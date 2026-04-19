@@ -14,7 +14,8 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from inference.slicer_api import slice_audio
-from inference.onnx_api import quantize_notes, _save_midi, _save_text
+from inference.note_io import _save_midi, _save_text
+from inference.quantization import quantize_notes, should_apply_quantization
 
 from inference.asr_api import batch_transcribe_asr
 from inference.lfa_api import create_lyric_matcher, process_asr_to_phonemes
@@ -231,7 +232,7 @@ def auto_lyric_hybrid_pipeline(
         log_path = output_dir / f"{output_key}_asr_match_log.txt"
         log_path.write_text("\n".join(chunk_logs), encoding="utf-8")
 
-    if quantization_step > 0:
+    if should_apply_quantization(quantization_mode, quantization_step):
         quantize_notes(all_notes, tempo, quantization_step, mode=quantization_mode)
     
     print(f"Extracted {len(all_notes)} notes with lyrics.")
