@@ -1,6 +1,6 @@
-from third_party.inference_vendor.LyricFA.tools.ZhG2p import ZhG2p
-from third_party.inference_vendor.LyricFA.tools.JaG2p import JaG2p
-from third_party.inference_vendor.LyricFA.tools.lyric_matcher import LyricMatcher
+from inference.LyricFA.tools.ZhG2p import ZhG2p
+from inference.LyricFA.tools.JaG2p import JaG2p
+from inference.LyricFA.tools.lyric_matcher import LyricMatcher
 
 _zh_g2p = None
 _ja_g2p = None

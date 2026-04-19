@@ -1,6 +1,6 @@
 import pathlib
 
-from third_party.inference_vendor.HubertFA.onnx_infer import InferenceOnnx
+from inference.HubertFA.onnx_infer import InferenceOnnx
 
 
 _HFA_REPAIR_IGNORE_TOKENS = {"SP", "AP", "EP", "br", "sil", "pau"}
