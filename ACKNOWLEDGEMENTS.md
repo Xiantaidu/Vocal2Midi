@@ -1,27 +1,36 @@
-# Acknowledgements
+# 致谢
 
-This project, **Vocal2Midi**, builds upon and integrates code from several excellent open-source projects. We express our deep gratitude to their authors and contributors.
+Vocal2Midi 项目建立在以下优秀的开源工作的基础上：
 
-## Upstream Repositories
+## 核心依赖
 
-### 1. [GAME (Generative Adaptive MIDI Extractor)](https://github.com/openvpi/GAME)
-Vocal2Midi is heavily based on GAME for its core generative boundary extraction and pitch estimation capabilities. 
-- **License**: MIT License
-- **Modifications**: We utilized its ONNX inference pipeline and extended it with automatic lyric alignment and full GUI support.
+| 项目 | 说明 | 链接 |
+|------|------|------|
+| **GAME** | 歌声合成音符提取模型 | [GitHub](https://github.com/openvpi/GAME) |
+| **HubertFA** | 基于 HuBERT 的音素级强制对齐工具 | [GitHub](https://github.com/Soulter/HubertFA) |
+| **LyricFA** | 歌词强制对齐与音素匹配工具 | [GitHub](https://github.com/Anya1010/LyricFA) |
+| **FunASR / Qwen3-ASR** | 端到端语音识别模型，提供高质量的多语言 ASR 能力 | [GitHub](https://github.com/modelscope/FunASR) |
 
-### 2. [HubertFA](https://github.com/Soulter/HubertFA)
-Used for robust acoustic forced alignment in the automatic lyric transcription pipeline.
-- **Modifications**: We extracted the essential ONNX inference and decoding scripts to `third_party/inference_vendor/HubertFA/` to keep third-party code isolated from first-party runtime modules.
+## 其他依赖
 
-### 3. [LyricFA](https://github.com/Anya1010/LyricFA)
-Used for G2P (Grapheme-to-Phoneme) conversion and intelligent lyric-to-ASR matching.
-- **Modifications**: Extracted the core alignment logic and dictionaries to `third_party/inference_vendor/LyricFA/`.
+| 项目 | 说明 |
+|------|------|
+| **RMVPE** | 歌声基频（F0）估计模型 |
+| **qfluentwidgets** | 基于 PyQt5 的现代化 Fluent Design 组件库 |
+| **PyTorch** | 深度学习框架 |
+| **ONNX Runtime** | 跨平台高性能推理引擎 |
+| **librosa** | 音频分析库 |
+| **soundfile** | 音频文件读写库 |
+| **pydantic** | 数据验证与模型定义 |
+| **mido** | MIDI 文件读写库 |
+| **tqdm** | 进度条显示 |
 
-### 4. [FunASR](https://github.com/modelscope/FunASR)
-Historically evaluated in earlier experimentation branches for ASR exploration.
-It is not part of the current primary runtime pipeline.
-- **License**: MIT License
+## 项目作者
+
+- **Team OpenVPI** — 项目发起与主要维护
+
+特别感谢所有为歌声合成与音乐信息检索领域做出贡献的研究者和开发者。
 
 ---
 
-*All extracted third-party code remains under the copyright of their respective owners and is subject to their original open-source licenses.*
+如需查看完整的依赖列表，请参阅 `requirements.txt` 和 `environment.yml`。

@@ -25,4 +25,8 @@ sympy
 tensorboard
 tensorboardX
 torchmetrics
+onnxruntime
+qwen-asr[vllm]
+soundfile
+textgrid
 tqdm
