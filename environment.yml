@@ -19,6 +19,23 @@ dependencies:
     - pyyaml
     - click
     - tqdm
-    - scipy
-    - numpy
+    - scipy>=1.10.0
+    - numpy<2.0.0
     - textgrid
+    - colorednoise
+    - dask
+    - einops>=0.7.0
+    - h5py
+    - loguru
+    - matplotlib
+    - mido
+    - omegaconf
+    - onnx
+    - onnxscript
+    - onnxslim
+    - pydantic>=2.11,<3.0
+    - resampy
+    - sympy
+    - tensorboard
+    - tensorboardX
+    - torchmetrics
