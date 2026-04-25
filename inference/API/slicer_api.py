@@ -66,6 +66,7 @@ def get_pitch_curve(
     f0_max: float = 1100.0,
     voiced_flag_override: np.ndarray | None = None,
     voiced_flag_override_step_sec: float | None = None,
+    segment_offset_sec: float = 0.0,
 ) -> np.ndarray:
     """Calculate the pitch curve (F0) and voicing confidence."""
     if y.ndim > 1:
@@ -73,7 +74,8 @@ def get_pitch_curve(
 
     if voiced_flag_override is not None and voiced_flag_override_step_sec and voiced_flag_override_step_sec > 0:
         target_frames = int(np.ceil(len(y) / hop_length)) + 1
-        times = np.arange(target_frames, dtype=np.float64) * (hop_length / sr)
+        # Add the segment offset to get global times
+        times = np.arange(target_frames, dtype=np.float64) * (hop_length / sr) + segment_offset_sec
         src_idx = np.round(times / voiced_flag_override_step_sec).astype(np.int64)
         src_idx = np.clip(src_idx, 0, len(voiced_flag_override) - 1)
         voiced_flag = np.asarray(voiced_flag_override, dtype=bool)[src_idx]
@@ -305,7 +307,8 @@ def _split_wrapper(segment, slicer_func):
     A wrapper function for parallel processing.
     It takes a segment dictionary and a slicing function, and returns the processed chunks.
     """
-    sub_chunks = slicer_func(segment['waveform'])
+    # 传递 segment['offset'] 让音高提取器能对齐到正确的全局时间
+    sub_chunks = slicer_func(segment['waveform'], segment_offset_sec=segment['offset'])
     # Add the original offset to each sub-chunk
     for sub in sub_chunks:
         sub['offset'] += segment['offset']
@@ -320,6 +323,7 @@ def _pitch_based_split(
     hop_length: int,
     voiced_flag_override: np.ndarray | None = None,
     voiced_flag_override_step_sec: float | None = None,
+    segment_offset_sec: float = 0.0,
 ):
     """
     Internal helper for splitting a single, long audio segment based on pitch.
@@ -336,6 +340,7 @@ def _pitch_based_split(
         hop_length=hop_length,
         voiced_flag_override=voiced_flag_override,
         voiced_flag_override_step_sec=voiced_flag_override_step_sec,
+        segment_offset_sec=segment_offset_sec,
     )
     
     chunks = []

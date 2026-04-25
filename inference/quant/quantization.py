@@ -21,12 +21,12 @@ _DPQ_DEFAULT_ASYM = {
 }
 _DPQ_WEIGHTS = [0.08971, 0.025064, 0.235416, 0.038973, 0.580321, 0.030516]
 _DPQ_INTERNAL_GRID = 30
-_DPQ_SEGMENT_SHIFT_CANDIDATES = (0, 60, 90)
-_DPQ_SEGMENT_CENTER_WEIGHT = 0.035
-_DPQ_SEGMENT_SWITCH_PENALTY = 6.0
-_DPQ_SEGMENT_TIE_DELAY_BONUS = 0.8
-_DPQ_SEGMENT_ZERO_GAP_BONUS = 0.6
-_DPQ_SEGMENT_LONG_DELAY_BONUS = 0.35
+_DPQ_SEGMENT_SHIFT_CANDIDATES = (0, 60, 120)
+_DPQ_SEGMENT_CENTER_WEIGHT = 0.02
+_DPQ_SEGMENT_SWITCH_PENALTY = 1.0
+_DPQ_SEGMENT_TIE_DELAY_BONUS = 0.4
+_DPQ_SEGMENT_ZERO_GAP_BONUS = 0.3
+_DPQ_SEGMENT_LONG_DELAY_BONUS = 0.2
 _DPQ_SEGMENT_LONG_THRESHOLD = 240
 _DPQ_SEGMENT_MAX_NOTES = 16
 
@@ -138,18 +138,17 @@ def _center_adjustment(
         bonus += _DPQ_SEGMENT_ZERO_GAP_BONUS
     if pair["raw_dur"] >= _DPQ_SEGMENT_LONG_THRESHOLD:
         bonus += _DPQ_SEGMENT_LONG_DELAY_BONUS
-    if center >= 90:
+    if center >= 120:
         bonus *= 1.15
     return penalty - bonus
 
 
 def _decode_segment_with_center(
     pairs: list[dict[str, Any]],
-    step: int,
     center: int,
     asym: dict[str, float] | None = None,
 ) -> tuple[list[tuple[int, int]], float]:
-    cand_lists = [_build_candidate_pairs(p, radius=3, step=step) for p in pairs]
+    cand_lists = [_build_candidate_pairs(p, radius=3, step=_DPQ_INTERNAL_GRID) for p in pairs]
     dp = []
     back = []
 
@@ -190,7 +189,6 @@ def _quantize_notes_phrase_hybrid(notes: list[Any], tempo: float, quantization_s
     if not notes:
         return
 
-    step = quantization_step if quantization_step > 0 else _DPQ_INTERNAL_GRID
     notes.sort(key=lambda n: n.onset)
 
     orig_onsets = [_ticks_from_sec(n.onset, tempo) for n in notes]
@@ -199,14 +197,14 @@ def _quantize_notes_phrase_hybrid(notes: list[Any], tempo: float, quantization_s
         _build_note_pair(note, onset, max(onset + 1, offset))
         for note, onset, offset in zip(notes, orig_onsets, orig_offsets)
     ]
-    segments = _segment_split_indices(pairs, step)
+    segments = _segment_split_indices(pairs, _DPQ_INTERNAL_GRID)
 
     segment_candidates = []
     for start, end in segments:
         seg_pairs = pairs[start:end]
         center_options = []
         for center in _DPQ_SEGMENT_SHIFT_CANDIDATES:
-            seq, cost = _decode_segment_with_center(seg_pairs, step=step, center=center, asym=_DPQ_DEFAULT_ASYM)
+            seq, cost = _decode_segment_with_center(seg_pairs, center=center, asym=_DPQ_DEFAULT_ASYM)
             center_options.append({"center": center, "seq": seq, "cost": cost})
         segment_candidates.append(center_options)
 
@@ -225,6 +223,15 @@ def _quantize_notes_phrase_hybrid(notes: list[Any], tempo: float, quantization_s
             for prev_idx, prev_cost in seg_dp[-1].items():
                 prev_center = segment_candidates[i - 1][prev_idx]["center"]
                 trans = 0.0 if prev_center == opt["center"] else _DPQ_SEGMENT_SWITCH_PENALTY
+                
+                # Second order shifting consistency penalty
+                if i >= 2:
+                    prevprev_idx = seg_back[-1][prev_idx]
+                    if prevprev_idx is not None:
+                        prevprev_center = segment_candidates[i - 2][prevprev_idx]["center"]
+                        # We penalize changes in shift (consistency)
+                        trans += 0.08 * abs(opt["center"] - prev_center)
+
                 total = prev_cost + opt["cost"] + trans
                 if best is None or total < best:
                     best = total
@@ -249,7 +256,7 @@ def _quantize_notes_phrase_hybrid(notes: list[Any], tempo: float, quantization_s
         if i > 0 and start_tick < fixed[-1][1]:
             start_tick = fixed[-1][1]
         if end_tick <= start_tick:
-            end_tick = start_tick + step
+            end_tick = start_tick + _DPQ_INTERNAL_GRID
         fixed.append((start_tick, end_tick))
 
     for note, (start_tick, end_tick) in zip(notes, fixed):
@@ -377,7 +384,8 @@ def quantize_notes(notes: list[Any], tempo: float, quantization_step: int, mode:
     if mode == "smart":
         _quantize_notes_smart(notes, tempo, quantization_step)
     elif mode == "dp":
-        _quantize_notes_dp_asym(notes, tempo, quantization_step)
+        # 忽略传入的 quantization_step，高度忠于原始 SVP 智能量化逻辑
+        _quantize_notes_dp_asym(notes, tempo, quantization_step=0)
     else:
         _quantize_notes_simple(notes, tempo, quantization_step)
 

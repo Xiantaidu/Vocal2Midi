@@ -19,7 +19,9 @@ from qfluentwidgets import (
     SubtitleLabel,
 )
 
-from gui.fluent_utils import parse_quantization, parse_quantization_mode
+import torch
+from application.config import PipelineConfig
+from gui.fluent_utils import parse_quantization, parse_quantization_mode, t0_nstep_to_ts
 from gui.fluent_worker import WorkerThread, HYBRID_AVAILABLE
 
 
@@ -337,38 +339,45 @@ class AutoLyricInterface(ScrollArea):
             self.log_msg("错误: 请选择一个有效的保存目录。")
             return
 
-        kwargs = {
-            'audio_files': audio_files,
-            'save_dir': save_dir,
-            'game_model_path_str': self.global_settings.game_model_edit.text(),
-            'device': self.device_combo.currentText(),
-            'hfa_model_path_str': self.global_settings.hfa_model_edit.text(),
-            'asr_model_path_str': self.global_settings.asr_model_edit.text(),
-            'language': self.lang_combo.currentText(),
-            'lyric_output_mode': self.get_lyric_output_mode(),
-            'original_lyrics': self.lyrics_edit.toPlainText().strip() if self.global_settings.cb_match_lyrics.isChecked() else "",
-            'output_formats': output_formats,
-            'output_lyrics': self.cb_output_lyrics.isChecked(),
-            'output_pitch_curve': self.cb_pitch_curve.isChecked() if self.cb_ustx.isChecked() else False,
-            'slicing_method': self.slicing_combo.currentText(),
-            'tempo': self.tempo_spin.value(),
-            'quantization_step': parse_quantization(self.quantize_combo.currentText()),
-            'quantization_mode': parse_quantization_mode(self.quantize_mode_combo.currentText()),
-            'pitch_format': self.global_settings.pitch_combo.currentText(),
-            'round_pitch': self.global_settings.cb_round.isChecked(),
-            'seg_threshold': self.global_settings.seg_thresh_spin.value(),
-            'seg_radius': self.global_settings.seg_rad_spin.value(),
-            't0': self.global_settings.t0_spin.value(),
-            'nsteps': self.global_settings.nsteps_spin.value(),
-            'est_threshold': self.global_settings.est_thresh_spin.value(),
-            'batch_size': self.global_settings.batch_spin.value(),
-            'asr_batch_size': self.global_settings.asr_batch_spin.value(),
-        }
+        ts_list = t0_nstep_to_ts(
+            self.global_settings.t0_spin.value(),
+            int(self.global_settings.nsteps_spin.value()),
+        )
+        ts_tensor = torch.tensor(ts_list, device=self.device_combo.currentText())
+
+        config = PipelineConfig(
+            audio_path="",  # set per-file in worker
+            output_filename="",  # set per-file in worker
+            output_dir=pathlib.Path(save_dir),
+            game_model_dir=self.global_settings.game_model_edit.text(),
+            hfa_model_dir=self.global_settings.hfa_model_edit.text(),
+            asr_model_path=self.global_settings.asr_model_edit.text(),
+            device=self.device_combo.currentText(),
+            language=self.lang_combo.currentText(),
+            ts=ts_tensor,
+            lyric_output_mode=self.get_lyric_output_mode(),
+            original_lyrics=self.lyrics_edit.toPlainText().strip() if self.global_settings.cb_match_lyrics.isChecked() else "",
+            output_formats=output_formats,
+            output_lyrics=self.cb_output_lyrics.isChecked(),
+            output_pitch_curve=self.cb_pitch_curve.isChecked() if self.cb_ustx.isChecked() else False,
+            slicing_method=self.slicing_combo.currentText(),
+            tempo=self.tempo_spin.value(),
+            quantization_step=parse_quantization(self.quantize_combo.currentText()),
+            quantization_mode=parse_quantization_mode(self.quantize_mode_combo.currentText()),
+            pitch_format=self.global_settings.pitch_combo.currentText(),
+            round_pitch=self.global_settings.cb_round.isChecked(),
+            seg_threshold=self.global_settings.seg_thresh_spin.value(),
+            seg_radius=self.global_settings.seg_rad_spin.value(),
+            est_threshold=self.global_settings.est_thresh_spin.value(),
+            batch_size=self.global_settings.batch_spin.value(),
+            asr_batch_size=self.global_settings.asr_batch_spin.value(),
+            rmvpe_model_path=str(pathlib.Path.cwd() / "experiments" / "RMVPE" / "rmvpe.pt"),
+        )
 
         self.log_edit.clear()
         self.btn_run.setEnabled(False)
         self.btn_stop.setEnabled(True)
-        self.worker = WorkerThread(kwargs)
+        self.worker = WorkerThread(config, audio_files)
         self.worker.log_signal.connect(self.log_msg)
         self.worker.finished_signal.connect(self.on_finished)
         self.worker.error_signal.connect(self.on_error)

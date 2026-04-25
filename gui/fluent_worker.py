@@ -2,10 +2,9 @@ import pathlib
 import sys
 import traceback
 
-import torch
 from PyQt5.QtCore import QThread, pyqtSignal as Signal
 
-from gui.fluent_utils import t0_nstep_to_ts
+from application.config import PipelineConfig
 
 
 # Import the hybrid pipeline
@@ -36,9 +35,16 @@ class WorkerThread(QThread):
     finished_signal = Signal(str)
     error_signal = Signal(str)
 
-    def __init__(self, kwargs):
+    def __init__(self, config: PipelineConfig, audio_files: list):
+        """Initialize the worker thread with a PipelineConfig and audio file list.
+
+        Args:
+            config: PipelineConfig with all pipeline parameters.
+            audio_files: List of audio file paths to process.
+        """
         super().__init__()
-        self.kwargs = kwargs
+        self.config = config
+        self.audio_files = audio_files
         self._is_running = True
 
     def run(self):
@@ -48,48 +54,24 @@ class WorkerThread(QThread):
         sys.stderr = StreamRedirector(sys.stderr, self.log_signal)
 
         try:
-            audio_files = self.kwargs['audio_files']
-            save_dir = pathlib.Path(self.kwargs['save_dir'])
+            save_dir = self.config.output_dir
 
-            for audio_path in audio_files:
+            for audio_path in self.audio_files:
                 if not self._is_running:
                     break
                 original_path = pathlib.Path(audio_path)
                 filename = original_path.name
                 self.log_signal.emit(f"========== 正在处理: {filename} ==========")
 
-                ts_list = t0_nstep_to_ts(self.kwargs['t0'], int(self.kwargs['nsteps']))
-                ts_tensor = torch.tensor(ts_list, device=self.kwargs['device'])
+                # Update per-file fields in config
+                self.config.audio_path = str(original_path)
+                self.config.output_filename = filename
+                self.config.cancel_checker = lambda: (
+                    not self._is_running
+                ) or self.isInterruptionRequested()
+                self.config.debug_mode = True
 
-                run_auto_lyric_job(
-                    audio_path=str(original_path),
-                    output_filename=filename,
-                    output_dir=save_dir,
-                    game_model_dir=self.kwargs['game_model_path_str'],
-                    device=self.kwargs['device'],
-                    hfa_model_dir=self.kwargs['hfa_model_path_str'],
-                    asr_model_path=self.kwargs['asr_model_path_str'],
-                    ts=ts_tensor,
-                    language=self.kwargs['language'],
-                    lyric_output_mode=self.kwargs.get('lyric_output_mode'),
-                    original_lyrics=self.kwargs['original_lyrics'],
-                    output_formats=self.kwargs['output_formats'],
-                    slicing_method=self.kwargs['slicing_method'],
-                    tempo=self.kwargs['tempo'],
-                    quantization_step=self.kwargs['quantization_step'],
-                    quantization_mode=self.kwargs.get('quantization_mode', 'simple'),
-                    pitch_format=self.kwargs['pitch_format'],
-                    round_pitch=self.kwargs['round_pitch'],
-                    seg_threshold=self.kwargs['seg_threshold'],
-                    seg_radius=self.kwargs['seg_radius'],
-                    est_threshold=self.kwargs['est_threshold'],
-                    batch_size=self.kwargs['batch_size'],
-                    asr_batch_size=self.kwargs['asr_batch_size'],
-                    output_lyrics=self.kwargs.get('output_lyrics', True),
-                    output_pitch_curve=self.kwargs.get('output_pitch_curve', False),
-                    debug_mode=True,
-                    cancel_checker=lambda: (not self._is_running) or self.isInterruptionRequested(),
-                )
+                run_auto_lyric_job(self.config)
 
             if self._is_running:
                 self.finished_signal.emit(f"提取成功！文件已保存至: {save_dir}")

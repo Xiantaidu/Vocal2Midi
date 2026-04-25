@@ -30,6 +30,11 @@ class MainWindow(FluentWindow):
 
         # 隐藏侧边栏顶部三条杠（菜单）按钮
         self.navigationInterface.setMenuButtonVisible(False)
+        
+        # 固定侧边栏宽度
+        self.navigationInterface.setExpandWidth(50)
+        self.navigationInterface.setMinimumExpandWidth(50)
+        self.navigationInterface.setMaximumWidth(50)
 
         self.navigationInterface.setCurrentItem(self.autoLyricInterface.objectName())
         self.stackedWidget.setCurrentWidget(self.autoLyricInterface)

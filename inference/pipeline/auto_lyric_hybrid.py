@@ -24,6 +24,12 @@ from inference.API.game_api import load_game_model, extract_pitches_and_align_to
 from inference.API.rmvpe_api import RmvpeTranscriber
 from inference.API.ustx_api import save_ustx
 
+def _resolve_rmvpe_path(model_path: str) -> str:
+    """解析 RMVPE 模型路径"""
+    if not model_path:
+        raise ValueError("RMVPE 模型路径不能为空")
+    return model_path
+
 def free_memory():
     import gc
     gc.collect()
@@ -94,6 +100,7 @@ def auto_lyric_hybrid_pipeline(
     output_lyrics: bool = True,
     output_pitch_curve: bool = False,
     debug_mode: bool = False,
+    rmvpe_model_path: str = "",
     cancel_checker=None,
 ):
     """Auto Lyric Hybrid (PyTorch + ONNX-GPU) Pipeline"""
@@ -112,7 +119,7 @@ def auto_lyric_hybrid_pipeline(
     output_format_set = set(output_formats or [])
     rmvpe_result = None
     if "ustx" in output_format_set and output_pitch_curve:
-        rmvpe_model = ROOT_DIR / "experiments" / "RMVPE" / "rmvpe.pt"
+        rmvpe_model = _resolve_rmvpe_path(rmvpe_model_path)
         print(f"[Hybrid Pipeline] Running RMVPE from: {rmvpe_model}")
         rmvpe = RmvpeTranscriber(rmvpe_model, device=device)
         rmvpe_result = rmvpe.infer(waveform, sr, cancel_checker=cancel_checker)
