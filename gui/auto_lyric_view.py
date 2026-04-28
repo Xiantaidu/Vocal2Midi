@@ -335,8 +335,19 @@ class AutoLyricInterface(ScrollArea):
             output_formats.append("ustx")
 
         save_dir = self.save_dir_edit.text()
-        if not save_dir or not os.path.isdir(save_dir):
-            self.log_msg("错误: 请选择一个有效的保存目录。")
+        if not save_dir:
+            self.log_msg("错误: 请选择或输入一个保存目录。")
+            return
+            
+        if not os.path.exists(save_dir):
+            try:
+                os.makedirs(save_dir)
+                self.log_msg(f"提示: 保存目录不存在，已自动创建 {save_dir}")
+            except Exception as e:
+                self.log_msg(f"错误: 无法创建保存目录: {e}")
+                return
+        elif not os.path.isdir(save_dir):
+            self.log_msg("错误: 您输入的保存路径已存在但不是一个目录。")
             return
 
         ts_list = t0_nstep_to_ts(
