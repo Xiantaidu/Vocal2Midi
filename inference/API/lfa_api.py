@@ -6,6 +6,78 @@ _zh_g2p = None
 _ja_g2p = None
 
 
+def _normalize_asr_phoneme_token(token: str) -> str:
+    t = (token or "").strip()
+    if not t:
+        return ""
+    low = t.lower()
+    # HFA phoneme mode uses SP as silence separator; 'sil' is not a vocab token.
+    if low in {"sil", "sp", "pau", "br"}:
+        return "SP"
+    if low == "ap":
+        return "AP"
+    if low == "ep":
+        return "EP"
+    if low in {"<blank>", "pad", "<unk>", "unk"}:
+        return ""
+    return t
+
+
+def _phoneme_tokens_to_romaji_moras(tokens):
+    """Convert phoneme-ASR token stream to romaji-mora tokens for HFA dictionary mode."""
+    if not tokens:
+        return []
+
+    vowel_map = {"a": "a", "i": "i", "u": "u", "e": "e", "o": "o", "I": "i", "U": "u"}
+    special_join = {
+        ("sh", "a"): "sha", ("sh", "i"): "shi", ("sh", "u"): "shu", ("sh", "e"): "she", ("sh", "o"): "sho",
+        ("ch", "a"): "cha", ("ch", "i"): "chi", ("ch", "u"): "chu", ("ch", "e"): "che", ("ch", "o"): "cho",
+        ("j", "a"): "ja", ("j", "i"): "ji", ("j", "u"): "ju", ("j", "e"): "je", ("j", "o"): "jo",
+        ("ts", "u"): "tsu",
+    }
+    consonants = {
+        "b", "by", "ch", "d", "dy", "f", "fy", "g", "gw", "gy", "h", "hy", "j", "k", "kw", "ky",
+        "m", "my", "n", "ny", "p", "py", "r", "ry", "s", "sh", "t", "ts", "ty", "v", "w", "y", "z"
+    }
+
+    out = []
+    i = 0
+    while i < len(tokens):
+        t = tokens[i]
+        if t == "SP":
+            i += 1
+            continue
+        if t in {"AP", "EP"}:
+            out.append(t)
+            i += 1
+            continue
+        if t == "N":
+            out.append("n")
+            i += 1
+            continue
+        if t == "cl":
+            # Keep as standalone mora-like pause marker
+            out.append("cl")
+            i += 1
+            continue
+        if t in vowel_map:
+            out.append(vowel_map[t])
+            i += 1
+            continue
+
+        if i + 1 < len(tokens) and tokens[i + 1] in vowel_map and t in consonants:
+            v_raw = tokens[i + 1]
+            v = vowel_map[v_raw]
+            out.append(special_join.get((t, v), f"{t}{v}"))
+            i += 2
+            continue
+
+        out.append(t.lower())
+        i += 1
+
+    return out
+
+
 def _normalize_lyric_output_mode(language, lyric_output_mode):
     language = (language or "zh").lower()
     mode = (lyric_output_mode or "").lower()
@@ -75,7 +147,7 @@ def create_lyric_matcher(language, original_lyrics):
         matcher.lyric_phonetic_list = processor.get_phonetic_list(matcher.lyric_text_list)
     return matcher
 
-def process_asr_to_phonemes(all_results, chunk_indices, temp_dir_path, language, matcher, lyric_output_mode=None):
+def process_asr_to_phonemes(all_results, chunk_indices, temp_dir_path, language, matcher, lyric_output_mode=None, use_asr_phonemes=False):
     """
     Processes batched ASR text, aligns with original lyrics if available, 
     and generates .lab phoneme files.
@@ -106,12 +178,26 @@ def process_asr_to_phonemes(all_results, chunk_indices, temp_dir_path, language,
         match_reason = ""
         
         text = _extract_text(res)
+        direct_phoneme_tokens = []
+        if use_asr_phonemes and isinstance(res, dict):
+            tokens = res.get("phonemes")
+            if isinstance(tokens, list):
+                direct_phoneme_tokens = []
+                for t in tokens:
+                    nt = _normalize_asr_phoneme_token(str(t))
+                    if nt:
+                        direct_phoneme_tokens.append(nt)
         if not text.strip():
             chunk_logs.append(f"[{stem}]\nASR Output: [Empty or Failed]\nStatus: Ignored\n")
             continue
 
         match_status = "No original lyrics provided"
-        if matcher:
+        if direct_phoneme_tokens:
+            romaji_moras = _phoneme_tokens_to_romaji_moras(direct_phoneme_tokens)
+            pinyin_str = " ".join(romaji_moras or direct_phoneme_tokens)
+            chars = romaji_moras or direct_phoneme_tokens
+            match_status = "Direct phoneme ASR -> Romaji moras"
+        elif matcher:
             asr_text_list, asr_phonetic_list = matcher.process_asr_content(text)
             if asr_phonetic_list:
                 matched_text, matched_phonetic, reason = matcher.align_lyric_with_asr(
