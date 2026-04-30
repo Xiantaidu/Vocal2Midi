@@ -1,0 +1,44 @@
+# File: configs/base.yaml
+model:
+  pretrained: checkpoints/japanese-hubert-base-phoneme-ctc-v4
+  freeze_feat: true
+  freeze_backbone_epochs: 5
+
+data:
+  train_manifest: data/manifest/train.jsonl
+  dev_manifest: data/manifest/dev.jsonl
+  vocab: data/phoneme_vocab.json
+  sample_rate: 16000
+  max_seconds: 12.0
+
+train:
+  output_dir: checkpoints/exp1
+  epochs: 80
+  per_device_batch_size: 2
+  grad_accum_steps: 8
+  lr_backbone: 3.0e-5
+  lr_head: 3.0e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  fp16: true
+  grad_clip: 1.0
+  eval_every_epoch: 1
+  early_stop_patience: 10
+
+augment:
+  specaug:
+    enable: true
+    time_mask_num: 2
+    time_mask_width: 30
+    freq_mask_num: 2
+    freq_mask_width: 20
+  waveform:
+    enable: true
+    # 严禁 pitch shift / time stretch / speed 变换：会破坏 TextGrid 与切片的时长对应
+    gain_db: [-6, 6]
+    noise_snr_db: [15, 30]
+    rir_prob: 0.2
+    rir_path: null  # 设置为 IR wav 文件目录路径以启用 RIR 增强，例如 "data/rir_wavs"
+    eq_prob: 0.3
+    polarity_inversion_prob: 0.5
+    prob: 0.5

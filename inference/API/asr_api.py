@@ -1,6 +1,7 @@
 import multiprocessing as mp
 import threading
 import time
+import json
 from pathlib import Path
 
 import torch
@@ -9,6 +10,8 @@ import soundfile as sf
 # --- Qwen Model Loading ---
 _QWEN_MODEL_CACHE = {}
 _QWEN_MODEL_CACHE_LOCK = threading.Lock()
+_PHONEME_MODEL_CACHE = {}
+_PHONEME_MODEL_CACHE_LOCK = threading.Lock()
 
 
 def load_qwen_model(model_path, device="cuda", use_cache=True):
@@ -47,6 +50,118 @@ def clear_qwen_model_cache():
     """Clears in-process Qwen ASR model cache."""
     with _QWEN_MODEL_CACHE_LOCK:
         _QWEN_MODEL_CACHE.clear()
+
+
+def load_phoneme_asr_model(ckpt_dir, device="cuda", use_cache=True):
+    """Load HuBERT-CTC phoneme ASR model + vocab from checkpoint directory."""
+    ckpt_dir = str(ckpt_dir)
+    ckpt_path = Path(ckpt_dir)
+    if ckpt_path.is_file():
+        # e.g. .../best/model.safetensors -> use .../best as from_pretrained directory
+        ckpt_path = ckpt_path.parent
+        ckpt_dir = str(ckpt_path)
+    cache_key = (ckpt_dir, str(device))
+    if use_cache:
+        with _PHONEME_MODEL_CACHE_LOCK:
+            cached = _PHONEME_MODEL_CACHE.get(cache_key)
+        if cached is not None:
+            print(f"Reusing cached phoneme ASR model from '{ckpt_dir}' on {device}.")
+            return cached
+
+    from transformers import HubertForCTC
+
+    vocab_path = ckpt_path / "phoneme_vocab.json"
+    if not vocab_path.exists():
+        fallback_vocab = Path(__file__).resolve().parent.parent / "phonemeASR" / "data" / "phoneme_vocab.json"
+        if fallback_vocab.exists():
+            vocab_path = fallback_vocab
+    if not vocab_path.exists():
+        raise FileNotFoundError(f"phoneme_vocab.json not found in checkpoint dir: {ckpt_dir}")
+
+    with vocab_path.open("r", encoding="utf-8") as f:
+        vocab = json.load(f)
+    id2phone = {int(v): k for k, v in vocab.items()}
+    blank_id = vocab.get("<blank>", vocab.get("PAD", 0))
+
+    print(f"Loading phoneme ASR model from '{ckpt_dir}' on {device}...")
+    model = HubertForCTC.from_pretrained(ckpt_dir).to(device)
+    model.eval()
+
+    payload = {
+        "model": model,
+        "id2phone": id2phone,
+        "blank_id": int(blank_id),
+    }
+    if use_cache:
+        with _PHONEME_MODEL_CACHE_LOCK:
+            _PHONEME_MODEL_CACHE[cache_key] = payload
+    return payload
+
+
+def clear_phoneme_model_cache():
+    with _PHONEME_MODEL_CACHE_LOCK:
+        _PHONEME_MODEL_CACHE.clear()
+
+
+def _greedy_decode_ctc(logits, id2phone, blank=0):
+    pred = logits.argmax(-1).tolist()
+    out = []
+    prev = -1
+    for p in pred:
+        if p != prev and p != blank:
+            out.append(id2phone.get(p, "<unk>"))
+        prev = p
+    return out
+
+
+def batch_transcribe_phoneme_asr(
+        chunks,
+        sr,
+        temp_dir_path,
+        phoneme_ckpt_dir,
+        device="cuda",
+        cancel_checker=None,
+):
+    """Run phoneme ASR directly and return token lists per chunk."""
+    print("[ASR API] Running phoneme ASR (HuBERT-CTC) for Japanese romaji mode...")
+    asr = load_phoneme_asr_model(phoneme_ckpt_dir, device=device, use_cache=True)
+    model = asr["model"]
+    id2phone = asr["id2phone"]
+    blank_id = asr["blank_id"]
+
+    all_results = []
+    chunk_indices = []
+    target_sr = 16000
+
+    for chunk_idx, chunk in enumerate(chunks):
+        if cancel_checker and cancel_checker():
+            raise InterruptedError("ASR 任务已取消")
+
+        stem = f"chunk_{chunk_idx}"
+        chunk_path = temp_dir_path / f"{stem}.wav"
+        sf.write(chunk_path, chunk["waveform"], sr)
+
+        waveform, wav_sr = sf.read(str(chunk_path), dtype="float32", always_2d=True)
+        waveform = waveform.mean(axis=1)  # mono
+
+        wav_t = torch.from_numpy(waveform).unsqueeze(0)
+        if wav_sr != target_sr:
+            wav_t = torch.nn.functional.interpolate(
+                wav_t.unsqueeze(1),
+                size=int(wav_t.shape[-1] * target_sr / wav_sr),
+                mode="linear",
+                align_corners=False,
+            ).squeeze(1)
+
+        wav_t = wav_t.to(device)
+        with torch.inference_mode():
+            logits = model(wav_t).logits[0]
+        phones = _greedy_decode_ctc(logits, id2phone, blank=blank_id)
+
+        all_results.append({"phonemes": phones, "text": " ".join(phones)})
+        chunk_indices.append(chunk_idx)
+
+    return all_results, chunk_indices
 
 
 # --- Process Pool Worker ---

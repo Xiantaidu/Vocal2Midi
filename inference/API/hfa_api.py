@@ -111,7 +111,7 @@ def load_hfa_model(model_dir, device="cuda"):
     print(f"HubertFA ONNX session created with providers: {model.model.get_providers()}")
     return model
 
-def run_hubert_fa(hfa_model, temp_dir, language="zh", cancel_checker=None):
+def run_hubert_fa(hfa_model, temp_dir, language="zh", cancel_checker=None, use_phoneme_g2p=False):
     print("[Hybrid Pipeline] Running HubertFA forced alignment on GPU...")
     if cancel_checker and cancel_checker():
         raise InterruptedError("HFA 任务已取消")
@@ -120,8 +120,12 @@ def run_hubert_fa(hfa_model, temp_dir, language="zh", cancel_checker=None):
     
     dict_file = "ds-zh-pinyin-lite.txt" if language == "zh" else "japanese_dict_full.txt"
     dict_path = hfa_model.vocab_folder / dict_file
-    
-    hfa_model.get_dataset(wav_folder=temp_dir, language=language, g2p="dictionary", dictionary_path=dict_path)
+
+    if use_phoneme_g2p:
+        # 输入 .lab 已经是音素 token（如 sh a N ...），直接按音素模式喂给 HFA
+        hfa_model.get_dataset(wav_folder=temp_dir, language=language, g2p="phoneme", dictionary_path=None)
+    else:
+        hfa_model.get_dataset(wav_folder=temp_dir, language=language, g2p="dictionary", dictionary_path=dict_path)
     if cancel_checker and cancel_checker():
         raise InterruptedError("HFA 任务已取消")
     if len(hfa_model.dataset) > 0:

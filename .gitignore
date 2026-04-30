@@ -21,3 +21,8 @@ tempCodeRunnerFile.py
 *.lab
 tempCodeRunnerFile.py
 inference/tempCodeRunnerFile.py
+/inference/phonemeASR/database
+/inference/phonemeASR/data
+/inference/phonemeASR/日语音素ASR训练方案.md
+/inference/phonemeASR/checkpoints
+/inference/phonemeASR/logs

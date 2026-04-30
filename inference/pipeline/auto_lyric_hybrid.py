@@ -17,12 +17,14 @@ from inference.API.slicer_api import slice_audio
 from inference.io.note_io import _save_midi, _save_text
 from inference.quant.quantization import quantize_notes, should_apply_quantization
 
-from inference.API.asr_api import batch_transcribe_asr
+from inference.API.asr_api import batch_transcribe_asr, batch_transcribe_phoneme_asr
 from inference.API.lfa_api import create_lyric_matcher, process_asr_to_phonemes
 from inference.API.hfa_api import load_hfa_model, run_hubert_fa, export_hfa_artifacts
 from inference.API.game_api import load_game_model, extract_pitches_and_align_torch, extract_pitches_only_torch
 from inference.API.rmvpe_api import RmvpeTranscriber
 from inference.API.ustx_api import save_ustx
+
+PHONEME_ASR_DEFAULT_CKPT = pathlib.Path(__file__).resolve().parent.parent / "phonemeASR" / "checkpoints" / "exp1" / "best" / "model.safetensors"
 
 def _resolve_rmvpe_path(model_path: str) -> str:
     """解析 RMVPE 模型路径"""
@@ -71,6 +73,36 @@ def run_qwen_asr_and_fa(
         language,
         matcher,
         lyric_output_mode=lyric_output_mode,
+    )
+
+
+def run_phoneme_asr_and_fa(
+    chunks,
+    sr,
+    temp_dir_path,
+    matcher,
+    asr_model_path,
+    device,
+    language="ja",
+    lyric_output_mode=None,
+    cancel_checker=None,
+):
+    all_results, chunk_indices = batch_transcribe_phoneme_asr(
+        chunks,
+        sr,
+        temp_dir_path=temp_dir_path,
+        phoneme_ckpt_dir=asr_model_path,
+        device=device,
+        cancel_checker=cancel_checker,
+    )
+    return process_asr_to_phonemes(
+        all_results,
+        chunk_indices,
+        temp_dir_path,
+        language,
+        matcher,
+        lyric_output_mode=lyric_output_mode,
+        use_asr_phonemes=True,
     )
 
 def auto_lyric_hybrid_pipeline(
@@ -163,18 +195,34 @@ def auto_lyric_hybrid_pipeline(
         chars_dict = {}
 
         if output_lyrics:
-            chars_dict, chunk_logs = run_qwen_asr_and_fa(
-                chunks,
-                sr,
-                temp_dir_path,
-                matcher,
-                asr_model_path=asr_model_path,
-                device=device,
-                asr_batch_size=asr_batch_size,
-                language=language,
-                lyric_output_mode=lyric_output_mode,
-                cancel_checker=cancel_checker,
-            )
+            use_phoneme_asr = (language == "ja" and (lyric_output_mode or "").lower() == "romaji")
+            if use_phoneme_asr:
+                print("\n--- Stage 1/3: Running phoneme ASR for Japanese romaji mode ---")
+                phoneme_asr_path = str(PHONEME_ASR_DEFAULT_CKPT) if PHONEME_ASR_DEFAULT_CKPT.exists() else asr_model_path
+                chars_dict, chunk_logs = run_phoneme_asr_and_fa(
+                    chunks,
+                    sr,
+                    temp_dir_path,
+                    matcher,
+                    asr_model_path=phoneme_asr_path,
+                    device=device,
+                    language=language,
+                    lyric_output_mode=lyric_output_mode,
+                    cancel_checker=cancel_checker,
+                )
+            else:
+                chars_dict, chunk_logs = run_qwen_asr_and_fa(
+                    chunks,
+                    sr,
+                    temp_dir_path,
+                    matcher,
+                    asr_model_path=asr_model_path,
+                    device=device,
+                    asr_batch_size=asr_batch_size,
+                    language=language,
+                    lyric_output_mode=lyric_output_mode,
+                    cancel_checker=cancel_checker,
+                )
             _check_cancel()
 
             if not chars_dict:
@@ -190,7 +238,13 @@ def auto_lyric_hybrid_pipeline(
             _check_cancel()
             print("------------------------------------------\n")
 
-            pred_dict = run_hubert_fa(hfa_model, temp_dir_path, language=language, cancel_checker=cancel_checker)
+            pred_dict = run_hubert_fa(
+                hfa_model,
+                temp_dir_path,
+                language=language,
+                cancel_checker=cancel_checker,
+                use_phoneme_g2p=False,
+            )
             _check_cancel()
 
             export_hfa_artifacts(

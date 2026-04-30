@@ -1,0 +1,15 @@
+# File: requirements.txt
+torch==2.2.2+cu121
+torchaudio==2.2.2+cu121
+transformers>=4.40.0
+datasets>=2.18.0
+accelerate>=0.29.0
+librosa
+soundfile
+textgrid
+numpy
+pandas
+pyyaml
+tensorboard
+audiomentations
+tqdm
