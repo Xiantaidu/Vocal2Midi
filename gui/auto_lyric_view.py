@@ -382,7 +382,8 @@ class AutoLyricInterface(ScrollArea):
             est_threshold=self.global_settings.est_thresh_spin.value(),
             batch_size=self.global_settings.batch_spin.value(),
             asr_batch_size=self.global_settings.asr_batch_spin.value(),
-            rmvpe_model_path=str(pathlib.Path.cwd() / "experiments" / "RMVPE" / "rmvpe.pt"),
+            rmvpe_model_path=self.global_settings.rmvpe_model_edit.text(),
+            phoneme_asr_model_path=self.global_settings.phoneme_asr_model_edit.text(),
         )
 
         self.log_edit.clear()

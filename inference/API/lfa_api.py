@@ -34,6 +34,23 @@ def _phoneme_tokens_to_romaji_moras(tokens):
         ("ch", "a"): "cha", ("ch", "i"): "chi", ("ch", "u"): "chu", ("ch", "e"): "che", ("ch", "o"): "cho",
         ("j", "a"): "ja", ("j", "i"): "ji", ("j", "u"): "ju", ("j", "e"): "je", ("j", "o"): "jo",
         ("ts", "u"): "tsu",
+        # Canonical Japanese romaji for CV combinations that should not surface as
+        # raw phoneme concatenations like "nyi / ryi / hyi / myi".
+        ("k", "i"): "ki", ("g", "i"): "gi",
+        ("s", "i"): "shi", ("z", "i"): "ji",
+        ("t", "i"): "ti", ("d", "i"): "di",
+        ("n", "i"): "ni", ("h", "i"): "hi",
+        ("b", "i"): "bi", ("p", "i"): "pi",
+        ("m", "i"): "mi", ("r", "i"): "ri",
+        ("f", "u"): "fu",
+        # Palatal-series + i are usually represented by their base i-row kana.
+        ("ky", "i"): "ki", ("gy", "i"): "gi",
+        ("ny", "i"): "ni", ("hy", "i"): "hi",
+        ("my", "i"): "mi", ("ry", "i"): "ri",
+        ("by", "i"): "bi", ("py", "i"): "pi",
+        # Less common but useful canonicalizations.
+        ("ty", "i"): "chi", ("ty", "u"): "chu", ("ty", "o"): "cho",
+        ("dy", "i"): "ji", ("dy", "u"): "ju", ("dy", "o"): "jo",
     }
     consonants = {
         "b", "by", "ch", "d", "dy", "f", "fy", "g", "gw", "gy", "h", "hy", "j", "k", "kw", "ky",
@@ -76,6 +93,33 @@ def _phoneme_tokens_to_romaji_moras(tokens):
         i += 1
 
     return out
+
+
+def _align_direct_phoneme_moras_with_matcher(language, lyric_output_mode, matcher, romaji_moras):
+    """Try to snap direct phoneme-ASR mora output to the provided reference lyrics."""
+    if not matcher or not romaji_moras:
+        return None
+
+    # AP/EP are not part of lyric pronunciations and hurt sequence matching.
+    asr_phonetic = [t for t in romaji_moras if t not in {"AP", "EP"}]
+    if not asr_phonetic:
+        return None
+
+    matched_text, matched_phonetic, reason = matcher.align_lyric_with_asr(
+        asr_phonetic=asr_phonetic,
+        lyric_text=matcher.lyric_text_list,
+        lyric_phonetic=matcher.lyric_phonetic_list,
+    )
+    if not matched_phonetic:
+        return None
+
+    chars = _select_matched_display_tokens(language, lyric_output_mode, matched_text, matched_phonetic)
+    return {
+        "matched_text": matched_text,
+        "matched_phonetic": matched_phonetic,
+        "reason": reason or "",
+        "chars": chars,
+    }
 
 
 def _normalize_lyric_output_mode(language, lyric_output_mode):
@@ -194,9 +238,23 @@ def process_asr_to_phonemes(all_results, chunk_indices, temp_dir_path, language,
         match_status = "No original lyrics provided"
         if direct_phoneme_tokens:
             romaji_moras = _phoneme_tokens_to_romaji_moras(direct_phoneme_tokens)
-            pinyin_str = " ".join(romaji_moras or direct_phoneme_tokens)
-            chars = romaji_moras or direct_phoneme_tokens
-            match_status = "Direct phoneme ASR -> Romaji moras"
+            matched_direct = _align_direct_phoneme_moras_with_matcher(
+                language,
+                lyric_output_mode,
+                matcher,
+                romaji_moras,
+            )
+            if matched_direct:
+                pinyin_str = matched_direct["matched_phonetic"]
+                chars = matched_direct["chars"]
+                matched_lyric_text = matched_direct["matched_text"]
+                matched_lyric_phonetic = matched_direct["matched_phonetic"]
+                match_reason = matched_direct["reason"]
+                match_status = "Direct phoneme ASR -> Matched original lyrics"
+            else:
+                pinyin_str = " ".join(romaji_moras or direct_phoneme_tokens)
+                chars = romaji_moras or direct_phoneme_tokens
+                match_status = "Direct phoneme ASR -> Romaji moras"
         elif matcher:
             asr_text_list, asr_phonetic_list = matcher.process_asr_content(text)
             if asr_phonetic_list:

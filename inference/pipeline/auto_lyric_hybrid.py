@@ -133,6 +133,7 @@ def auto_lyric_hybrid_pipeline(
     output_pitch_curve: bool = False,
     debug_mode: bool = False,
     rmvpe_model_path: str = "",
+    phoneme_asr_model_path: str = "",
     cancel_checker=None,
 ):
     """Auto Lyric Hybrid (PyTorch + ONNX-GPU) Pipeline"""
@@ -195,10 +196,19 @@ def auto_lyric_hybrid_pipeline(
         chars_dict = {}
 
         if output_lyrics:
-            use_phoneme_asr = (language == "ja" and (lyric_output_mode or "").lower() == "romaji")
+            use_phoneme_asr = (
+                language == "ja"
+                and (lyric_output_mode or "").lower() == "romaji"
+                and matcher is not None
+            )
             if use_phoneme_asr:
                 print("\n--- Stage 1/3: Running phoneme ASR for Japanese romaji mode ---")
-                phoneme_asr_path = str(PHONEME_ASR_DEFAULT_CKPT) if PHONEME_ASR_DEFAULT_CKPT.exists() else asr_model_path
+                if phoneme_asr_model_path:
+                    phoneme_asr_path = phoneme_asr_model_path
+                elif PHONEME_ASR_DEFAULT_CKPT.exists():
+                    phoneme_asr_path = str(PHONEME_ASR_DEFAULT_CKPT)
+                else:
+                    phoneme_asr_path = asr_model_path
                 chars_dict, chunk_logs = run_phoneme_asr_and_fa(
                     chunks,
                     sr,
@@ -211,6 +221,11 @@ def auto_lyric_hybrid_pipeline(
                     cancel_checker=cancel_checker,
                 )
             else:
+                if language == "ja" and (lyric_output_mode or "").lower() == "romaji":
+                    print(
+                        "\n--- Stage 1/3: No reference lyrics provided; "
+                        "fallback to text ASR + Japanese G2P for romaji mode ---"
+                    )
                 chars_dict, chunk_logs = run_qwen_asr_and_fa(
                     chunks,
                     sr,
