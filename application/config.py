@@ -48,6 +48,7 @@ class PipelineConfig:
     output_lyrics: bool = True
     rmvpe_model_path: str = ""
     phoneme_asr_model_path: str = ""
+    use_phoneme_asr_for_ja_without_lyrics: bool = False
     output_pitch_curve: bool = False
     debug_mode: bool = False
     cancel_checker: Optional[Callable[[], bool]] = None
@@ -81,6 +82,7 @@ class PipelineConfig:
             "output_lyrics": self.output_lyrics,
             "rmvpe_model_path": self.rmvpe_model_path,
             "phoneme_asr_model_path": self.phoneme_asr_model_path,
+            "use_phoneme_asr_for_ja_without_lyrics": self.use_phoneme_asr_for_ja_without_lyrics,
             "output_pitch_curve": self.output_pitch_curve,
             "debug_mode": self.debug_mode,
             "cancel_checker": self.cancel_checker,

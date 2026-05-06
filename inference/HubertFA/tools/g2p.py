@@ -47,6 +47,93 @@ class PhonemeG2P(BaseG2P):
         return _ph_seq, _word_seq, _ph_idx_to_word_idx
 
 
+class JapanesePhonemeMoraG2P(BaseG2P):
+    """Parse raw Japanese phoneme tokens into mora words while keeping phoneme-level FA."""
+
+    _VOWEL_MAP = {"a": "a", "i": "i", "u": "u", "e": "e", "o": "o", "I": "i", "U": "u"}
+    _JOIN_MAP = {
+        ("sh", "a"): "sha", ("sh", "i"): "shi", ("sh", "u"): "shu", ("sh", "e"): "she", ("sh", "o"): "sho",
+        ("ch", "a"): "cha", ("ch", "i"): "chi", ("ch", "u"): "chu", ("ch", "e"): "che", ("ch", "o"): "cho",
+        ("j", "a"): "ja", ("j", "i"): "ji", ("j", "u"): "ju", ("j", "e"): "je", ("j", "o"): "jo",
+        ("ts", "u"): "tsu",
+        ("k", "i"): "ki", ("g", "i"): "gi",
+        ("s", "i"): "shi", ("z", "i"): "ji",
+        ("n", "i"): "ni", ("h", "i"): "hi",
+        ("b", "i"): "bi", ("p", "i"): "pi",
+        ("m", "i"): "mi", ("r", "i"): "ri",
+        ("f", "u"): "fu",
+        ("ky", "i"): "ki", ("gy", "i"): "gi",
+        ("ny", "i"): "ni", ("hy", "i"): "hi",
+        ("my", "i"): "mi", ("ry", "i"): "ri",
+        ("by", "i"): "bi", ("py", "i"): "pi",
+        ("ty", "i"): "chi", ("ty", "u"): "chu", ("ty", "o"): "cho",
+        ("dy", "i"): "ji", ("dy", "u"): "ju", ("dy", "o"): "jo",
+    }
+    _CONSONANTS = {
+        "b", "by", "ch", "d", "dy", "f", "fy", "g", "gw", "gy", "h", "hy", "j", "k", "kw", "ky",
+        "m", "my", "n", "ny", "p", "py", "r", "ry", "s", "sh", "t", "ts", "ty", "v", "w", "y", "z"
+    }
+    _IGNORE = {"AP", "EP"}
+
+    def __init__(self, language):
+        super().__init__(language)
+
+    @classmethod
+    def _parse_groups(cls, input_text):
+        tokens = [t.strip() for t in input_text.strip().split(" ") if t.strip()]
+        groups = []
+        i = 0
+        while i < len(tokens):
+            t = tokens[i]
+            if t == "SP":
+                i += 1
+                continue
+            if t in cls._IGNORE:
+                i += 1
+                continue
+            if t == "N":
+                groups.append(("n", ["N"]))
+                i += 1
+                continue
+            if t == "cl":
+                groups.append(("cl", ["cl"]))
+                i += 1
+                continue
+            if t in cls._VOWEL_MAP:
+                # Canonicalize phone symbol as well (e.g. I/U -> i/u),
+                # otherwise it may miss vocab entries after language prefixing.
+                v = cls._VOWEL_MAP[t]
+                groups.append((v, [v]))
+                i += 1
+                continue
+            if i + 1 < len(tokens) and t in cls._CONSONANTS and tokens[i + 1] in cls._VOWEL_MAP:
+                v_raw = tokens[i + 1]
+                v = cls._VOWEL_MAP[v_raw]
+                groups.append((cls._JOIN_MAP.get((t, v), f"{t}{v}"), [t, v]))
+                i += 2
+                continue
+            groups.append((t.lower(), [t]))
+            i += 1
+        return groups
+
+    def _g2p(self, input_text):
+        groups = self._parse_groups(input_text)
+        _word_seq = []
+        _ph_seq = ["SP"]
+        _ph_idx_to_word_idx = [-1]
+
+        for word_idx, (mora_text, phones) in enumerate(groups):
+            _word_seq.append(mora_text)
+            for ph in phones:
+                _ph_seq.append(ph)
+                _ph_idx_to_word_idx.append(word_idx)
+            if _ph_seq[-1] != "SP":
+                _ph_seq.append("SP")
+                _ph_idx_to_word_idx.append(-1)
+
+        return _ph_seq, _word_seq, _ph_idx_to_word_idx
+
+
 class DictionaryG2P(BaseG2P):
     def __init__(self, language, dict_path: str | pathlib.Path):
         super().__init__(language)

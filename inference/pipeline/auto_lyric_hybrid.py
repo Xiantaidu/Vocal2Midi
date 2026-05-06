@@ -86,6 +86,7 @@ def run_phoneme_asr_and_fa(
     language="ja",
     lyric_output_mode=None,
     cancel_checker=None,
+    write_asr_phoneme_lab=False,
 ):
     all_results, chunk_indices = batch_transcribe_phoneme_asr(
         chunks,
@@ -103,6 +104,7 @@ def run_phoneme_asr_and_fa(
         matcher,
         lyric_output_mode=lyric_output_mode,
         use_asr_phonemes=True,
+        write_asr_phoneme_lab=write_asr_phoneme_lab,
     )
 
 def auto_lyric_hybrid_pipeline(
@@ -134,6 +136,7 @@ def auto_lyric_hybrid_pipeline(
     debug_mode: bool = False,
     rmvpe_model_path: str = "",
     phoneme_asr_model_path: str = "",
+    use_phoneme_asr_for_ja_without_lyrics: bool = False,
     cancel_checker=None,
 ):
     """Auto Lyric Hybrid (PyTorch + ONNX-GPU) Pipeline"""
@@ -194,15 +197,19 @@ def auto_lyric_hybrid_pipeline(
 
         pred_dict = {}
         chars_dict = {}
+        hfa_use_phoneme_g2p = False
 
         if output_lyrics:
             use_phoneme_asr = (
                 language == "ja"
                 and (lyric_output_mode or "").lower() == "romaji"
-                and matcher is not None
+                and (matcher is not None or use_phoneme_asr_for_ja_without_lyrics)
             )
             if use_phoneme_asr:
-                print("\n--- Stage 1/3: Running phoneme ASR for Japanese romaji mode ---")
+                if matcher is not None:
+                    print("\n--- Stage 1/3: Running phoneme ASR for Japanese romaji mode ---")
+                else:
+                    print("\n--- Stage 1/3: Running phoneme ASR for Japanese phoneme-lab mode (no reference lyrics) ---")
                 if phoneme_asr_model_path:
                     phoneme_asr_path = phoneme_asr_model_path
                 elif PHONEME_ASR_DEFAULT_CKPT.exists():
@@ -219,7 +226,9 @@ def auto_lyric_hybrid_pipeline(
                     language=language,
                     lyric_output_mode=lyric_output_mode,
                     cancel_checker=cancel_checker,
+                    write_asr_phoneme_lab=(matcher is None),
                 )
+                hfa_use_phoneme_g2p = (matcher is None)
             else:
                 if language == "ja" and (lyric_output_mode or "").lower() == "romaji":
                     print(
@@ -258,7 +267,7 @@ def auto_lyric_hybrid_pipeline(
                 temp_dir_path,
                 language=language,
                 cancel_checker=cancel_checker,
-                use_phoneme_g2p=False,
+                use_phoneme_g2p=hfa_use_phoneme_g2p,
             )
             _check_cancel()
 
