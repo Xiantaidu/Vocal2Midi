@@ -122,8 +122,11 @@ def run_hubert_fa(hfa_model, temp_dir, language="zh", cancel_checker=None, use_p
     dict_path = hfa_model.vocab_folder / dict_file
 
     if use_phoneme_g2p:
-        # 输入 .lab 已经是音素 token（如 sh a N ...），直接按音素模式喂给 HFA
-        hfa_model.get_dataset(wav_folder=temp_dir, language=language, g2p="phoneme", dictionary_path=None)
+        # 输入 .lab 已经是音素 token。
+        # 对日语额外做一层 "音素 -> mora词边界" 解析，这样 HFA 仍然按音素对齐，
+        # 但 word 层级不再是单个 phoneme，而是更接近日语拍(mora)。
+        g2p_mode = "ja_mora_phoneme" if language == "ja" else "phoneme"
+        hfa_model.get_dataset(wav_folder=temp_dir, language=language, g2p=g2p_mode, dictionary_path=None)
     else:
         hfa_model.get_dataset(wav_folder=temp_dir, language=language, g2p="dictionary", dictionary_path=dict_path)
     if cancel_checker and cancel_checker():

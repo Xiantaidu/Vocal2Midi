@@ -384,6 +384,7 @@ class AutoLyricInterface(ScrollArea):
             asr_batch_size=self.global_settings.asr_batch_spin.value(),
             rmvpe_model_path=self.global_settings.rmvpe_model_edit.text(),
             phoneme_asr_model_path=self.global_settings.phoneme_asr_model_edit.text(),
+            use_phoneme_asr_for_ja_without_lyrics=self.global_settings.cb_ja_no_lyrics_phoneme.isChecked(),
         )
 
         self.log_edit.clear()

@@ -10,7 +10,7 @@ from tqdm import tqdm
 from .align_word import WordList, Word, Phoneme
 from .decoder import AlignmentDecoder, NonLexicalDecoder
 from .export_tool import Exporter
-from .g2p import DictionaryG2P, PhonemeG2P
+from .g2p import DictionaryG2P, PhonemeG2P, JapanesePhonemeMoraG2P
 
 
 def find_all_duplicate_phonemes(ph_list):
@@ -159,8 +159,10 @@ class InferenceBase:
             g2p = DictionaryG2P(language, dictionary_path)
         elif g2p == "phoneme":
             g2p = PhonemeG2P(language)
+        elif g2p == "ja_mora_phoneme":
+            g2p = JapanesePhonemeMoraG2P(language)
         else:
-            raise f"g2p - {g2p} is not supported, which should be 'dictionary' or 'phoneme'."
+            raise f"g2p - {g2p} is not supported, which should be 'dictionary', 'phoneme' or 'ja_mora_phoneme'."
 
         wav_paths = pathlib.Path(wav_folder).rglob("*.wav")
         for wav_path in wav_paths:

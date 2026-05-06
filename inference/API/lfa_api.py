@@ -191,7 +191,16 @@ def create_lyric_matcher(language, original_lyrics):
         matcher.lyric_phonetic_list = processor.get_phonetic_list(matcher.lyric_text_list)
     return matcher
 
-def process_asr_to_phonemes(all_results, chunk_indices, temp_dir_path, language, matcher, lyric_output_mode=None, use_asr_phonemes=False):
+def process_asr_to_phonemes(
+    all_results,
+    chunk_indices,
+    temp_dir_path,
+    language,
+    matcher,
+    lyric_output_mode=None,
+    use_asr_phonemes=False,
+    write_asr_phoneme_lab=False,
+):
     """
     Processes batched ASR text, aligns with original lyrics if available, 
     and generates .lab phoneme files.
@@ -252,9 +261,13 @@ def process_asr_to_phonemes(all_results, chunk_indices, temp_dir_path, language,
                 match_reason = matched_direct["reason"]
                 match_status = "Direct phoneme ASR -> Matched original lyrics"
             else:
-                pinyin_str = " ".join(romaji_moras or direct_phoneme_tokens)
+                if write_asr_phoneme_lab:
+                    pinyin_str = " ".join(direct_phoneme_tokens)
+                    match_status = "Direct phoneme ASR -> Raw phoneme lab"
+                else:
+                    pinyin_str = " ".join(romaji_moras or direct_phoneme_tokens)
+                    match_status = "Direct phoneme ASR -> Romaji moras"
                 chars = romaji_moras or direct_phoneme_tokens
-                match_status = "Direct phoneme ASR -> Romaji moras"
         elif matcher:
             asr_text_list, asr_phonetic_list = matcher.process_asr_content(text)
             if asr_phonetic_list:

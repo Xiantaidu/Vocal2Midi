@@ -39,6 +39,7 @@ class GlobalSettingsInterface(ScrollArea):
             "debug_txt": False,
             "debug_csv": False,
             "debug_chunks": False,
+            "debug_use_phoneme_asr_ja_no_lyrics": False,
             "output_lyrics": True,
             "enable_lyrics_match": False,
             "pitch_format": "name",
@@ -242,6 +243,22 @@ class GlobalSettingsInterface(ScrollArea):
         debug_grid.addWidget(self.cb_chunks)
         debug_grid.addSpacing(20)
 
+        debug_grid.addWidget(BodyLabel("日语无歌词时强制走音素ASR→HFA:", self))
+        self.cb_ja_no_lyrics_phoneme = SwitchButton("On", self, self)
+        self.cb_ja_no_lyrics_phoneme.setOffText("Off")
+        self.cb_ja_no_lyrics_phoneme.setChecked(
+            self.settings.value(
+                "debug_use_phoneme_asr_ja_no_lyrics",
+                self.default_values["debug_use_phoneme_asr_ja_no_lyrics"],
+                type=bool,
+            )
+        )
+        self.cb_ja_no_lyrics_phoneme.checkedChanged.connect(
+            lambda v: self.settings.setValue("debug_use_phoneme_asr_ja_no_lyrics", v)
+        )
+        debug_grid.addWidget(self.cb_ja_no_lyrics_phoneme)
+        debug_grid.addSpacing(20)
+
         debug_grid.addWidget(BodyLabel("音高格式:", self))
         self.pitch_combo = ComboBox(self)
         self.pitch_combo.addItems(["name", "number"])
@@ -281,6 +298,7 @@ class GlobalSettingsInterface(ScrollArea):
         self.cb_txt.setChecked(self.default_values["debug_txt"])
         self.cb_csv.setChecked(self.default_values["debug_csv"])
         self.cb_chunks.setChecked(self.default_values["debug_chunks"])
+        self.cb_ja_no_lyrics_phoneme.setChecked(self.default_values["debug_use_phoneme_asr_ja_no_lyrics"])
         self.cb_match_lyrics.setChecked(self.default_values["enable_lyrics_match"])
         self.pitch_combo.setCurrentText(self.default_values["pitch_format"])
         self.cb_round.setChecked(self.default_values["round_pitch"])
