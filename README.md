@@ -86,6 +86,35 @@ start.bat
 python app_fluent.py
 ```
 
+### 命令行批处理：切片 + Qwen3-ASR
+
+如果你只需要“输入一个包含 `.wav` 的文件夹 → 自动切片 → Qwen3-ASR → 输出切片 wav 和 `.lab` 纯文本”，可以直接用：
+
+```bash
+python scripts/slice_asr_cli.py <input_dir> <output_dir> \
+  --asr-model <Qwen3-ASR模型路径或ID> \
+  --device cuda \
+  --language zh \
+  --slicing-method 默认切片 \
+  --asr-batch-size 4 \
+  --file-batch-size 1
+```
+
+输出结构：
+
+```text
+output_dir/
+  slices/<音频名>/...wav
+  labs/<音频名>/...lab
+```
+
+说明：
+
+- `.lab` 文件内容是 ASR 识别出的纯文本
+- 支持多文件批处理：`--file-batch-size`
+- 支持 ASR batch：`--asr-batch-size`
+- 切片策略沿用项目现有的 `inference/API/slicer_api.py`
+
 ---
 
 ## 安装指南

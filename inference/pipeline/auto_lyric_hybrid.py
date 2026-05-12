@@ -1,30 +1,70 @@
-import os
 import pathlib
-import tempfile
-import librosa
-import numpy as np
-import warnings
 import sys
+import tempfile
+
+import librosa
 import torch
-import traceback
 
 # Allow running this script directly from anywhere
-ROOT_DIR = pathlib.Path(__file__).parent.parent
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from inference.API.slicer_api import slice_audio
 from inference.io.note_io import _save_midi, _save_text
 from inference.quant.quantization import quantize_notes, should_apply_quantization
 
 from inference.API.asr_api import batch_transcribe_asr, batch_transcribe_phoneme_asr
-from inference.API.lfa_api import create_lyric_matcher, process_asr_to_phonemes
+from inference.API.lfa_api import create_lyric_matcher, process_asr_to_phonemes, _normalize_lyric_output_mode
 from inference.API.hfa_api import load_hfa_model, run_hubert_fa, export_hfa_artifacts
 from inference.API.game_api import load_game_model, extract_pitches_and_align_torch, extract_pitches_only_torch
 from inference.API.rmvpe_api import RmvpeTranscriber
 from inference.API.ustx_api import save_ustx
 
 PHONEME_ASR_DEFAULT_CKPT = pathlib.Path(__file__).resolve().parent.parent / "phonemeASR" / "checkpoints" / "exp1" / "best" / "model.safetensors"
+
+
+def _normalize_output_formats(output_formats) -> list[str]:
+    if output_formats is None:
+        return []
+    if isinstance(output_formats, str):
+        return [output_formats.lower()]
+    return [str(fmt).lower() for fmt in output_formats if fmt]
+
+
+def _resolve_output_key(output_filename: str, audio_path: str) -> str:
+    source_name = output_filename or pathlib.Path(audio_path).name
+    output_key = pathlib.Path(source_name).stem
+    if not output_key:
+        raise ValueError("输出文件名不能为空")
+    return output_key
+
+
+def _select_phoneme_asr_path(phoneme_asr_model_path: str) -> str | None:
+    if phoneme_asr_model_path:
+        return phoneme_asr_model_path
+    if PHONEME_ASR_DEFAULT_CKPT.exists():
+        return str(PHONEME_ASR_DEFAULT_CKPT)
+    return None
+
+
+def _validate_runtime_options(tempo: float, batch_size: int, asr_batch_size: int) -> None:
+    if tempo <= 0:
+        raise ValueError(f"tempo 必须大于 0，当前为 {tempo}")
+    if batch_size <= 0:
+        raise ValueError(f"batch_size 必须大于 0，当前为 {batch_size}")
+    if asr_batch_size <= 0:
+        raise ValueError(f"asr_batch_size 必须大于 0，当前为 {asr_batch_size}")
+
+
+def _export_chunk_wavs(chunks, sr: int, output_key: str, output_dir: pathlib.Path, cancel_checker=None) -> None:
+    import soundfile as sf
+
+    for chunk_idx, chunk in enumerate(chunks):
+        if cancel_checker and cancel_checker():
+            raise InterruptedError("切片导出任务已取消")
+        sf.write(output_dir / f"{output_key}_{chunk_idx:03d}.wav", chunk["waveform"], sr)
+
 
 def _resolve_rmvpe_path(model_path: str) -> str:
     """解析 RMVPE 模型路径"""
@@ -140,7 +180,14 @@ def auto_lyric_hybrid_pipeline(
     cancel_checker=None,
 ):
     """Auto Lyric Hybrid (PyTorch + ONNX-GPU) Pipeline"""
-    output_key = pathlib.Path(output_filename).stem
+    _validate_runtime_options(tempo, batch_size, asr_batch_size)
+    output_key = _resolve_output_key(output_filename, audio_path)
+    output_formats = _normalize_output_formats(output_formats)
+    output_format_set = set(output_formats)
+    output_dir = pathlib.Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    language = (language or "zh").lower()
+    lyric_output_mode = _normalize_lyric_output_mode(language, lyric_output_mode)
     print(f"\n[Hybrid Pipeline] Processing audio: {audio_path}")
 
     def _check_cancel():
@@ -152,14 +199,17 @@ def auto_lyric_hybrid_pipeline(
     waveform, sr = librosa.load(audio_path, sr=sr, mono=True)
     _check_cancel()
 
-    output_format_set = set(output_formats or [])
     rmvpe_result = None
     if "ustx" in output_format_set and output_pitch_curve:
         rmvpe_model = _resolve_rmvpe_path(rmvpe_model_path)
         print(f"[Hybrid Pipeline] Running RMVPE from: {rmvpe_model}")
         rmvpe = RmvpeTranscriber(rmvpe_model, device=device)
-        rmvpe_result = rmvpe.infer(waveform, sr, cancel_checker=cancel_checker)
-        print(f"[Hybrid Pipeline] RMVPE done. Frames={len(rmvpe_result.midi_pitch)} step={rmvpe_result.time_step_seconds:.4f}s")
+        try:
+            rmvpe_result = rmvpe.infer(waveform, sr, cancel_checker=cancel_checker)
+            print(f"[Hybrid Pipeline] RMVPE done. Frames={len(rmvpe_result.midi_pitch)} step={rmvpe_result.time_step_seconds:.4f}s")
+        finally:
+            del rmvpe
+            free_memory()
 
     rmvpe_voiced_mask = None
     rmvpe_step = None
@@ -175,22 +225,21 @@ def auto_lyric_hybrid_pipeline(
         rmvpe_time_step_seconds=rmvpe_step,
     )
     _check_cancel()
+    if not chunks:
+        raise RuntimeError("切片阶段未生成任何音频片段，已中断后续处理。")
 
     if output_lyrics:
         matcher = create_lyric_matcher(language, original_lyrics)
         _check_cancel()
-
-        print("\n--- Stage 1/3: Running ASR in subprocess isolation mode ---")
-                                        
         free_memory()
         _check_cancel()
-        print("-----------------------------------------------------------\n")
     else:
         matcher = None
         print("\n--- No-Lyrics Mode: 跳过 ASR/HFA，仅执行 GAME 提取音高 ---\n")
     
     all_notes = []
     chunk_logs = []
+    run_lyric_alignment = output_lyrics
 
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir_path = pathlib.Path(temp_dir)
@@ -199,23 +248,24 @@ def auto_lyric_hybrid_pipeline(
         chars_dict = {}
         hfa_use_phoneme_g2p = False
 
-        if output_lyrics:
-            use_phoneme_asr = (
-                language == "ja"
-                and (lyric_output_mode or "").lower() == "romaji"
-                and (matcher is not None or use_phoneme_asr_for_ja_without_lyrics)
+        if run_lyric_alignment:
+            use_phoneme_asr = language == "ja" and lyric_output_mode == "romaji" and (
+                matcher is not None or use_phoneme_asr_for_ja_without_lyrics
             )
             if use_phoneme_asr:
                 if matcher is not None:
                     print("\n--- Stage 1/3: Running phoneme ASR for Japanese romaji mode ---")
                 else:
                     print("\n--- Stage 1/3: Running phoneme ASR for Japanese phoneme-lab mode (no reference lyrics) ---")
-                if phoneme_asr_model_path:
-                    phoneme_asr_path = phoneme_asr_model_path
-                elif PHONEME_ASR_DEFAULT_CKPT.exists():
-                    phoneme_asr_path = str(PHONEME_ASR_DEFAULT_CKPT)
-                else:
-                    phoneme_asr_path = asr_model_path
+                phoneme_asr_path = _select_phoneme_asr_path(phoneme_asr_model_path)
+                if phoneme_asr_path is None:
+                    print(
+                        "[Warning] Phoneme ASR checkpoint not found; "
+                        "falling back to text ASR + Japanese G2P."
+                    )
+                    use_phoneme_asr = False
+
+            if use_phoneme_asr:
                 chars_dict, chunk_logs = run_phoneme_asr_and_fa(
                     chunks,
                     sr,
@@ -230,11 +280,11 @@ def auto_lyric_hybrid_pipeline(
                 )
                 hfa_use_phoneme_g2p = (matcher is None)
             else:
-                if language == "ja" and (lyric_output_mode or "").lower() == "romaji":
-                    print(
-                        "\n--- Stage 1/3: No reference lyrics provided; "
-                        "fallback to text ASR + Japanese G2P for romaji mode ---"
-                    )
+                if language == "ja" and lyric_output_mode == "romaji":
+                    reason = "No reference lyrics provided" if matcher is None else "Phoneme ASR unavailable"
+                    print(f"\n--- Stage 1/3: {reason}; fallback to text ASR + Japanese G2P for romaji mode ---")
+                else:
+                    print("\n--- Stage 1/3: Running ASR in subprocess isolation mode ---")
                 chars_dict, chunk_logs = run_qwen_asr_and_fa(
                     chunks,
                     sr,
@@ -250,64 +300,113 @@ def auto_lyric_hybrid_pipeline(
             _check_cancel()
 
             if not chars_dict:
-                raise RuntimeError(
-                    "ASR 阶段未生成任何有效文本（可能为模型调用失败或返回为空）。"
-                    "已中断后续 HFA/GAME，避免生成空结果。"
+                print(
+                    "[Warning] ASR did not produce valid text for any chunk; "
+                    "falling back to GAME pitch-only extraction."
                 )
+                run_lyric_alignment = False
 
             free_memory()
 
-            print("\n--- Stage 2/3: Loading HubertFA model ---")
-            hfa_model = load_hfa_model(hfa_model_dir, device=device)
-            _check_cancel()
-            print("------------------------------------------\n")
+            if run_lyric_alignment:
+                print("\n--- Stage 2/3: Loading HubertFA model ---")
+                hfa_model = load_hfa_model(hfa_model_dir, device=device)
+                try:
+                    _check_cancel()
+                    print("------------------------------------------\n")
 
-            pred_dict = run_hubert_fa(
-                hfa_model,
-                temp_dir_path,
-                language=language,
-                cancel_checker=cancel_checker,
-                use_phoneme_g2p=hfa_use_phoneme_g2p,
-            )
-            _check_cancel()
+                    pred_dict = run_hubert_fa(
+                        hfa_model,
+                        temp_dir_path,
+                        language=language,
+                        cancel_checker=cancel_checker,
+                        use_phoneme_g2p=hfa_use_phoneme_g2p,
+                    )
+                    _check_cancel()
+                    if not pred_dict:
+                        print(
+                            "[Warning] HFA did not produce alignment for any chunk; "
+                            "falling back to GAME pitch-only extraction."
+                        )
+                        run_lyric_alignment = False
+                    else:
+                        missing_hfa = sorted(set(chars_dict) - set(pred_dict))
+                        if missing_hfa:
+                            preview = ", ".join(missing_hfa[:8])
+                            suffix = " ..." if len(missing_hfa) > 8 else ""
+                            print(
+                                f"[Warning] HFA missing {len(missing_hfa)} chunk(s) "
+                                f"({preview}{suffix}); those chunks will use pitch-only fallback."
+                            )
 
-            export_hfa_artifacts(
-                chunks,
-                temp_dir_path,
-                hfa_model,
-                output_key,
-                output_dir,
-                output_formats,
-                cancel_checker=cancel_checker,
-            )
+                        export_hfa_artifacts(
+                            chunks,
+                            temp_dir_path,
+                            hfa_model,
+                            output_key,
+                            output_dir,
+                            output_formats,
+                            cancel_checker=cancel_checker,
+                        )
+                finally:
+                    del hfa_model
+                    free_memory()
 
-            del hfa_model
-            free_memory()
-
-            print("\n--- Stage 3/3: Loading GAME model ---")
+            if run_lyric_alignment:
+                print("\n--- Stage 3/3: Loading GAME model ---")
+            else:
+                if "chunks" in output_format_set:
+                    _export_chunk_wavs(chunks, sr, output_key, output_dir, cancel_checker=cancel_checker)
+                print("\n--- Fallback: Loading GAME model (pitch-only mode) ---")
         else:
+            if "chunks" in output_format_set:
+                _export_chunk_wavs(chunks, sr, output_key, output_dir, cancel_checker=cancel_checker)
             print("\n--- Stage 1/1: Loading GAME model (No-Lyrics Mode) ---")
         game_model = load_game_model(game_model_dir, device=device)
-        _check_cancel()
-        print("--------------------------------------\n")
+        try:
+            _check_cancel()
+            print("--------------------------------------\n")
 
-        if output_lyrics:
-            all_notes = extract_pitches_and_align_torch(
-                chunks, sr, pred_dict, chars_dict, game_model, device, ts,
-                seg_threshold, seg_radius, est_threshold, batch_size,
-                debug_mode=debug_mode,
-                cancel_checker=cancel_checker,
-            )
-        else:
-            all_notes = extract_pitches_only_torch(
-                chunks, sr, game_model, device, ts,
-                seg_threshold, seg_radius, est_threshold, batch_size,
-                debug_mode=debug_mode,
-                cancel_checker=cancel_checker,
-            )
-        _check_cancel()
-        del game_model
-        free_memory()
+            if run_lyric_alignment:
+                aligned_result = extract_pitches_and_align_torch(
+                    chunks, sr, pred_dict, chars_dict, game_model, device, ts,
+                    seg_threshold, seg_radius, est_threshold, batch_size,
+                    debug_mode=debug_mode,
+                    cancel_checker=cancel_checker,
+                )
+                if isinstance(aligned_result, tuple):
+                    all_notes, processed_aligned_chunks = aligned_result
+                else:
+                    all_notes = aligned_result
+                    processed_aligned_chunks = set()
+                fallback_chunks = []
+                for chunk_idx, chunk in enumerate(chunks):
+                    if chunk_idx not in processed_aligned_chunks:
+                        fallback_chunks.append(chunk)
+                if fallback_chunks:
+                    print(
+                        f"[Warning] Running pitch-only GAME fallback for "
+                        f"{len(fallback_chunks)} chunk(s) without usable lyric alignment."
+                    )
+                    all_notes.extend(
+                        extract_pitches_only_torch(
+                            fallback_chunks, sr, game_model, device, ts,
+                            seg_threshold, seg_radius, est_threshold, batch_size,
+                            debug_mode=debug_mode,
+                            cancel_checker=cancel_checker,
+                        )
+                    )
+            else:
+                all_notes = extract_pitches_only_torch(
+                    chunks, sr, game_model, device, ts,
+                    seg_threshold, seg_radius, est_threshold, batch_size,
+                    debug_mode=debug_mode,
+                    cancel_checker=cancel_checker,
+                )
+            _check_cancel()
+        finally:
+            del game_model
+            free_memory()
 
     all_notes.sort(key=lambda x: x.onset)
     
@@ -320,15 +419,16 @@ def auto_lyric_hybrid_pipeline(
     if should_apply_quantization(quantization_mode, quantization_step):
         quantize_notes(all_notes, tempo, quantization_step, mode=quantization_mode)
     
-    print(f"Extracted {len(all_notes)} notes with lyrics.")
+    lyric_status = "with lyrics" if run_lyric_alignment else "without lyrics"
+    print(f"Extracted {len(all_notes)} notes {lyric_status}.")
 
-    if "mid" in output_formats:
+    if "mid" in output_format_set:
         _save_midi(all_notes, output_dir / f"{output_key}.mid", int(tempo))
-    if "txt" in output_formats:
+    if "txt" in output_format_set:
         _save_text(all_notes, output_dir / f"{output_key}.txt", "txt", pitch_format, round_pitch)
-    if "csv" in output_formats:
+    if "csv" in output_format_set:
         _save_text(all_notes, output_dir / f"{output_key}.csv", "csv", pitch_format, round_pitch)
-    if "ustx" in output_formats:
+    if "ustx" in output_format_set:
         save_ustx(all_notes, output_dir / f"{output_key}.ustx", tempo=float(tempo), rmvpe_result=rmvpe_result)
 
 

@@ -26,6 +26,23 @@ def _to_ticks(seconds: float, tempo: float) -> int:
     return int(round(seconds * tempo * 8.0))
 
 
+def _finite_notes(notes: list[Any]) -> list[Any]:
+    valid_notes = []
+    skipped = 0
+    for note in notes:
+        vals = (getattr(note, "onset", np.nan), getattr(note, "offset", np.nan), getattr(note, "pitch", np.nan))
+        if not all(np.isfinite(v) for v in vals):
+            skipped += 1
+            continue
+        if note.offset <= note.onset:
+            skipped += 1
+            continue
+        valid_notes.append(note)
+    if skipped:
+        print(f"[Warning] Skipped {skipped} invalid note(s) during USTX export.")
+    return valid_notes
+
+
 def _median_filter(values: list[int], radius: int = 2) -> list[int]:
     if not values:
         return values
@@ -143,14 +160,14 @@ def _default_expressions() -> dict:
 
 
 def save_ustx(notes: list[Any], filepath: Path, tempo: float, rmvpe_result: RmvpeResult | None = None):
-    notes = sorted(notes, key=lambda n: n.onset)
+    notes = sorted(_finite_notes(notes), key=lambda n: n.onset)
     ustx_notes = []
     max_end_tick = 0
     for note in notes:
         pos = _to_ticks(note.onset, tempo)
         end = _to_ticks(note.offset, tempo)
         dur = max(10, end - pos)
-        tone = int(round(note.pitch))
+        tone = int(np.clip(round(note.pitch), 0, 127))
         max_end_tick = max(max_end_tick, pos + dur)
         ustx_notes.append(
             {

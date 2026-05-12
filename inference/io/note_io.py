@@ -16,6 +16,29 @@ class NoteInfo:
     lyric: str = ""
 
 
+def _finite_notes(notes: list[NoteInfo]) -> list[NoteInfo]:
+    valid_notes = []
+    skipped = 0
+    for note in notes:
+        vals = (note.onset, note.offset, note.pitch)
+        if not all(np.isfinite(v) for v in vals):
+            skipped += 1
+            continue
+        if note.offset <= note.onset:
+            skipped += 1
+            continue
+        valid_notes.append(note)
+    if skipped:
+        print(f"[Warning] Skipped {skipped} invalid note(s) during export.")
+    return valid_notes
+
+
+def _clamp_midi_pitch(pitch: float) -> int:
+    if not np.isfinite(pitch):
+        raise ValueError("pitch must be finite")
+    return int(np.clip(round(pitch), 0, 127))
+
+
 def pad_1d_arrays(arrays: list[np.ndarray], pad_value=0.0) -> np.ndarray:
     """Pad a list of 1D numpy arrays to the maximum length and stack them."""
     if not arrays:
@@ -35,7 +58,7 @@ def _save_midi(notes: list[NoteInfo], filepath: pathlib.Path, tempo: int = 120):
     track = mido.MidiTrack()
     track.append(mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(tempo), time=0))
 
-    sorted_notes = sorted(notes, key=lambda n: n.onset)
+    sorted_notes = sorted(_finite_notes(notes), key=lambda n: n.onset)
 
     last_abs_ticks = 0
     for note in sorted_notes:
@@ -48,7 +71,7 @@ def _save_midi(notes: list[NoteInfo], filepath: pathlib.Path, tempo: int = 120):
         if abs_offset_ticks <= abs_onset_ticks:
             abs_offset_ticks = abs_onset_ticks + 1
 
-        midi_pitch = round(note.pitch)
+        midi_pitch = _clamp_midi_pitch(note.pitch)
 
         delta_onset_ticks = abs_onset_ticks - last_abs_ticks
         note_duration_ticks = abs_offset_ticks - abs_onset_ticks
@@ -77,6 +100,7 @@ def _save_text(
     pitch_format: Literal["number", "name"],
     round_pitch: bool,
 ):
+    notes = _finite_notes(notes)
     onset_list = [f"{note.onset:.3f}" for note in notes]
     offset_list = [f"{note.offset:.3f}" for note in notes]
     pitch_list = []
@@ -84,7 +108,10 @@ def _save_text(
         pitch = note.pitch
         if round_pitch:
             pitch = round(pitch)
-        pitch_txt = librosa.midi_to_note(pitch, unicode=False, cents=not round_pitch) if pitch_format == "name" else f"{pitch:.3f}"
+        if pitch_format == "name":
+            pitch_txt = librosa.midi_to_note(float(np.clip(pitch, 0, 127)), unicode=False, cents=not round_pitch)
+        else:
+            pitch_txt = f"{pitch:.3f}"
         pitch_list.append(pitch_txt)
 
     filepath.parent.mkdir(parents=True, exist_ok=True)

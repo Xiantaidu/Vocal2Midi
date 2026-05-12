@@ -241,6 +241,7 @@ def process_asr_to_phonemes(
                     if nt:
                         direct_phoneme_tokens.append(nt)
         if not text.strip():
+            print(f"[Warning] {stem}: ASR output empty or failed; skipping this chunk for lyric alignment.")
             chunk_logs.append(f"[{stem}]\nASR Output: [Empty or Failed]\nStatus: Ignored\n")
             continue
 

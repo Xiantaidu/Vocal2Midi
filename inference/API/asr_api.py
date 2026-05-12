@@ -50,6 +50,10 @@ def clear_qwen_model_cache():
     """Clears in-process Qwen ASR model cache."""
     with _QWEN_MODEL_CACHE_LOCK:
         _QWEN_MODEL_CACHE.clear()
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 def load_phoneme_asr_model(ckpt_dir, device="cuda", use_cache=True):
@@ -101,6 +105,10 @@ def load_phoneme_asr_model(ckpt_dir, device="cuda", use_cache=True):
 def clear_phoneme_model_cache():
     with _PHONEME_MODEL_CACHE_LOCK:
         _PHONEME_MODEL_CACHE.clear()
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 def _greedy_decode_ctc(logits, id2phone, blank=0):
@@ -179,20 +187,21 @@ def _init_worker(model_path, device):
     print(f"ASR worker ({proc_name}) initialized.")
 
 
-def _transcribe_task(paths, asr_lang):
-    """The actual transcription task executed by a worker process."""
-    if _WORKER_ASR_MODEL is None:
+def _transcribe_task(paths, asr_lang, model=None):
+    """The actual transcription task executed by a worker process or in-process."""
+    m = model if model is not None else _WORKER_ASR_MODEL
+    if m is None:
         return RuntimeError("ASR worker model not initialized.")
 
     try:
         # Use autocast for performance on CUDA devices
-        use_cuda = torch.cuda.is_available() and "cuda" in str(_WORKER_ASR_MODEL.device)
+        use_cuda = torch.cuda.is_available() and "cuda" in str(m.device)
         with torch.inference_mode():
             if use_cuda:
                 with torch.amp.autocast("cuda"):
-                    results = _WORKER_ASR_MODEL.transcribe(audio=paths, language=asr_lang)
+                    results = m.transcribe(audio=paths, language=asr_lang)
             else:
-                results = _WORKER_ASR_MODEL.transcribe(audio=paths, language=asr_lang)
+                results = m.transcribe(audio=paths, language=asr_lang)
         return results
     except Exception as e:
         # Propagate exceptions back to the main process
@@ -278,7 +287,9 @@ def batch_transcribe_asr(
                         all_results.extend(batch_result)
                 except mp.TimeoutError:
                     print(f"  ASR batch {batch_no}/{total_batches} timed out after {asr_timeout_sec}s.")
-                    all_results.extend([None] * len(batches[i]))
+                    pool.terminate()
+                    pool.join()
+                    raise TimeoutError(f"ASR batch {batch_no}/{total_batches} timed out after {asr_timeout_sec}s")
 
     else:
         # Fallback to the original in-process method
@@ -293,7 +304,7 @@ def batch_transcribe_asr(
             print(f"  Processing ASR batch {batch_no}/{total_batches} (size={len(batch)})...")
             try:
                 batch_start = time.perf_counter()
-                results = _transcribe_task(batch, asr_lang)
+                results = _transcribe_task(batch, asr_lang, model=asr_model)
                 cost = time.perf_counter() - batch_start
                 print(f"  ASR batch {batch_no}/{total_batches} done in {cost:.2f}s")
                 all_results.extend(results)

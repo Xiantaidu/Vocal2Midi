@@ -11,12 +11,15 @@ from application.exceptions import (
 
 def _validate_model_paths(cfg: PipelineConfig) -> None:
     """Validate that required model paths exist before starting the pipeline."""
+    required_paths = [("GAME 模型目录", cfg.game_model_dir)]
+    if cfg.output_lyrics:
+        required_paths.extend([
+            ("HubertFA 模型目录", cfg.hfa_model_dir),
+            ("ASR 模型路径", cfg.asr_model_path),
+        ])
+
     errors = []
-    for label, path in [
-        ("GAME 模型目录", cfg.game_model_dir),
-        ("HubertFA 模型目录", cfg.hfa_model_dir),
-        ("ASR 模型路径", cfg.asr_model_path),
-    ]:
+    for label, path in required_paths:
         if not path or not os.path.exists(path):
             errors.append(f"{label}不存在或无效: {path}")
     if errors:
