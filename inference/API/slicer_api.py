@@ -13,12 +13,85 @@ def _concat_waveforms(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return np.concatenate([a, b], axis=axis)
 
 
-def _merge_segments(left: dict, right: dict) -> dict:
-    """Merge two consecutive segments into one."""
+def _silence_like(waveform: np.ndarray, samples: int) -> np.ndarray:
+    if samples <= 0:
+        return waveform[..., :0] if waveform.ndim > 1 else waveform[:0]
+
+    shape = list(waveform.shape)
+    shape[-1] = samples
+    return np.zeros(shape, dtype=waveform.dtype)
+
+
+def _segment_duration_sec(segment: dict, sr: int) -> float:
+    return segment["waveform"].shape[-1] / sr
+
+
+def _merged_duration_sec(left: dict, right: dict, sr: int) -> float:
+    left_end = left["offset"] + _segment_duration_sec(left, sr)
+    gap = max(0.0, right["offset"] - left_end)
+    return _segment_duration_sec(left, sr) + gap + _segment_duration_sec(right, sr)
+
+
+def _merge_segments(left: dict, right: dict, sr: int) -> dict:
+    """Merge two consecutive segments while preserving the original timeline."""
+    left_end = left["offset"] + _segment_duration_sec(left, sr)
+    gap_samples = max(0, int(round((right["offset"] - left_end) * sr)))
+    gap = _silence_like(left["waveform"], gap_samples)
     return {
         'offset': left['offset'],
-        'waveform': _concat_waveforms(left['waveform'], right['waveform'])
+        'waveform': _concat_waveforms(_concat_waveforms(left['waveform'], gap), right['waveform'])
     }
+
+
+def _merge_short_segments(chunks: list, sr: int, min_len_sec: float, max_len_sec: float) -> list:
+    """Greedily merge adjacent short segments to approach min_len_sec target.
+
+    合并策略：
+    1. 按 offset 排序
+    2. 从左到右扫描，如果当前片段 < min_len_sec 且与下一个合并后 ≤ max_len_sec，则合并
+    3. 重复直到无法再合并或所有片段都 ≥ min_len_sec
+    """
+    if not chunks:
+        return chunks
+
+    merged = [dict(chunks[0])]  # shallow copy
+    for i in range(1, len(chunks)):
+        cur = merged[-1]
+        cur_dur = _segment_duration_sec(cur, sr)
+        nxt = chunks[i]
+        nxt_dur = _segment_duration_sec(nxt, sr)
+        combined_dur = _merged_duration_sec(cur, nxt, sr)
+
+        # 如果当前片段太短且合并后不超过最大允许时长，则合并
+        if cur_dur < min_len_sec and combined_dur <= max_len_sec:
+            print(f"  Merging short segment at {nxt['offset']:.2f}s ({nxt_dur:.2f}s) "
+                  f"→ combined {combined_dur:.2f}s")
+            merged[-1] = _merge_segments(cur, nxt, sr)
+        else:
+            merged.append(dict(nxt))
+
+    # 尾部也可能留一个短片段，尝试反向与前一个合并
+    if len(merged) >= 2:
+        last = merged[-1]
+        last_dur = _segment_duration_sec(last, sr)
+        if last_dur < min_len_sec - 2.0:  # 明显过短才反向合并
+            prev = merged[-2]
+            combined_dur = _merged_duration_sec(prev, last, sr)
+            if combined_dur <= max_len_sec:
+                print(
+                    f"  Reverse-merging tail fragment at {last['offset']:.2f}s "
+                    f"({last_dur:.2f}s) -> combined {combined_dur:.2f}s"
+                )
+                merged[-2] = _merge_segments(prev, last, sr)
+                merged.pop()
+
+    # 递归：合并后可能仍有短片段需要进一步合并
+    any_short = any(_segment_duration_sec(c, sr) < min_len_sec for c in merged)
+    if any_short and len(merged) < len(chunks):
+        # 有一定合并进展则继续
+        merged = _merge_short_segments(merged, sr, min_len_sec, max_len_sec)
+
+    return merged
 
 
 def _merge_tiny_chunks(chunks: list, sr: int, tiny_sec: float = 0.35) -> list:
@@ -35,18 +108,18 @@ def _merge_tiny_chunks(chunks: list, sr: int, tiny_sec: float = 0.35) -> list:
         if seg_dur < tiny_sec:
             if merged:
                 print(f"  Merging tiny segment at {seg['offset']:.2f}s ({seg_dur:.2f}s) into previous chunk")
-                merged[-1] = _merge_segments(merged[-1], seg)
+                merged[-1] = _merge_segments(merged[-1], seg, sr)
             else:
                 if pending_head is None:
                     pending_head = seg
                 else:
-                    pending_head = _merge_segments(pending_head, seg)
+                    pending_head = _merge_segments(pending_head, seg, sr)
             continue
 
         if pending_head is not None:
             pdur = len(pending_head['waveform']) / sr
             print(f"  Merging leading tiny segment at {pending_head['offset']:.2f}s ({pdur:.2f}s) into next chunk")
-            seg = _merge_segments(pending_head, seg)
+            seg = _merge_segments(pending_head, seg, sr)
             pending_head = None
 
         merged.append(seg)
@@ -251,8 +324,8 @@ def grid_search_slice(
 def heuristic_slice(
     waveform: np.ndarray,
     sr: int,
-    min_len_sec: float = 4.0,
-    max_len_sec: float = 12.0,
+    min_len_sec: float = 8.0,
+    max_len_sec: float = 22.0,
     silence_removal_threshold_db: float = -40.0,
     min_silence_len_ms: int = 800,
     split_threshold_db: float = -30.0,
@@ -300,6 +373,19 @@ def heuristic_slice(
 
     final_chunks.sort(key=lambda x: x['offset'])
     final_chunks = _merge_tiny_chunks(final_chunks, sr=sr, tiny_sec=ultra_short_sec)
+
+    # Stage 3: 合并过短相邻片段，趋近目标时长范围
+    if final_chunks:
+        merge_before = len(final_chunks)
+        durations_before = [len(c["waveform"]) / sr for c in final_chunks]
+        print(f"\nStage 3: Merging short segments towards target [{min_len_sec:.1f}s, {max_len_sec:.1f}s]...")
+        print(f"  Before merge: {merge_before} chunks, durations: min={min(durations_before):.2f}s, "
+              f"max={max(durations_before):.2f}s, avg={sum(durations_before)/len(durations_before):.2f}s")
+        final_chunks = _merge_short_segments(final_chunks, sr, min_len_sec, max_len_sec)
+        durations_after = [len(c["waveform"]) / sr for c in final_chunks]
+        print(f"  After merge:  {len(final_chunks)} chunks, durations: min={min(durations_after):.2f}s, "
+              f"max={max(durations_after):.2f}s, avg={sum(durations_after)/len(durations_after):.2f}s")
+
     return final_chunks
 
 def _split_wrapper(segment, slicer_func):
@@ -416,8 +502,8 @@ def _pitch_based_split(
 def pitch_based_slice(
     waveform: np.ndarray,
     sr: int,
-    min_len_sec: float = 4.0,
-    max_len_sec: float = 12.0,
+    min_len_sec: float = 8.0,
+    max_len_sec: float = 22.0,
     silence_removal_threshold_db: float = -40.0,
     min_silence_len_ms: int = 800,
     ultra_short_sec: float = 0.35,
@@ -487,6 +573,19 @@ def pitch_based_slice(
         final_chunks = short_segments
 
     final_chunks = _merge_tiny_chunks(final_chunks, sr=sr, tiny_sec=ultra_short_sec)
+
+    # Stage 3: 合并过短相邻片段，趋近目标时长范围
+    if final_chunks:
+        merge_before = len(final_chunks)
+        durations_before = [len(c["waveform"]) / sr for c in final_chunks]
+        print(f"\nStage 3: Merging short segments towards target [{min_len_sec:.1f}s, {max_len_sec:.1f}s]...")
+        print(f"  Before merge: {merge_before} chunks, durations: min={min(durations_before):.2f}s, "
+              f"max={max(durations_before):.2f}s, avg={sum(durations_before)/len(durations_before):.2f}s")
+        final_chunks = _merge_short_segments(final_chunks, sr, min_len_sec, max_len_sec)
+        durations_after = [len(c["waveform"]) / sr for c in final_chunks]
+        print(f"  After merge:  {len(final_chunks)} chunks, durations: min={min(durations_after):.2f}s, "
+              f"max={max(durations_after):.2f}s, avg={sum(durations_after)/len(durations_after):.2f}s")
+
     return final_chunks
 
 def default_slice(waveform, sr):

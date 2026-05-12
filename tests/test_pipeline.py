@@ -74,6 +74,15 @@ class TestValidateModelPaths:
         with pytest.raises(ModelNotFoundError):
             _validate_model_paths(base_cfg)
 
+    def test_no_lyrics_mode_only_requires_game_model(self, base_cfg, tmp_path):
+        """No-lyrics mode should not require ASR or HFA models."""
+        base_cfg.output_lyrics = False
+        base_cfg.game_model_dir = str(tmp_path)
+        base_cfg.hfa_model_dir = "/does/not/exist/hfa"
+        base_cfg.asr_model_path = "/does/not/exist/asr"
+
+        _validate_model_paths(base_cfg)
+
 
 class TestRunAutoLyricJob:
     """Tests for run_auto_lyric_job."""

@@ -5,6 +5,7 @@ import traceback
 from PyQt5.QtCore import QThread, pyqtSignal as Signal
 
 from application.config import PipelineConfig
+from application.exceptions import CancellationError
 
 
 # Import the hybrid pipeline
@@ -69,7 +70,6 @@ class WorkerThread(QThread):
                 self.config.cancel_checker = lambda: (
                     not self._is_running
                 ) or self.isInterruptionRequested()
-                self.config.debug_mode = True
 
                 run_auto_lyric_job(self.config)
 
@@ -78,7 +78,7 @@ class WorkerThread(QThread):
             else:
                 self.error_signal.emit("任务已被取消。")
 
-        except InterruptedError:
+        except (InterruptedError, CancellationError):
             self.error_signal.emit("任务已被强制停止。")
         except Exception:
             self.error_signal.emit(f"发生错误:\n{traceback.format_exc()}")

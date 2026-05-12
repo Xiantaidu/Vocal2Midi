@@ -116,21 +116,28 @@ def extract_pitches_and_align_torch(chunks, sr, pred_dict, chars_dict, game_mode
     
     all_notes = []
     batch_infos = []
+    processed_chunk_indices = set()
 
     for chunk_idx, chunk in enumerate(chunks):
         if cancel_checker and cancel_checker():
             raise InterruptedError("GAME 任务已取消")
         stem = f"chunk_{chunk_idx}"
         if stem not in pred_dict:
+            print(f"[Warning] {stem}: missing HFA prediction; skipping lyric-aligned GAME for this chunk.")
             continue
         
         _, _, result_word = pred_dict[stem]
         if not result_word:
+            print(f"[Warning] {stem}: empty HFA word result; skipping lyric-aligned GAME for this chunk.")
             continue
 
         word_durs, word_vuvs, lyrics = extract_vowel_boundaries(result_word, chars_dict.get(stem, []))
+        if not word_durs:
+            print(f"[Warning] {stem}: no usable word durations; skipping lyric-aligned GAME for this chunk.")
+            continue
         
         batch_infos.append({
+            "chunk_idx": chunk_idx,
             "waveform": chunk["waveform"],
             "waveform_duration": len(chunk["waveform"]) / sr,
             "word_durs": word_durs,
@@ -188,7 +195,7 @@ def extract_pitches_and_align_torch(chunks, sr, pred_dict, chars_dict, game_mode
             except Exception:
                 print(f"Error during GAME model inference batch:")
                 traceback.print_exc()
-                continue
+                raise
 
         for k, info in enumerate(batch):
             c_durations, c_presence, c_scores = durations[k], presence[k], scores[k]
@@ -196,6 +203,9 @@ def extract_pitches_and_align_torch(chunks, sr, pred_dict, chars_dict, game_mode
             note_dur = c_durations[c_durations > 0].tolist()
             valid_presence = c_presence[c_durations > 0]
             valid_scores = c_scores[c_durations > 0]
+            if not note_dur:
+                print(f"[Warning] GAME returned no note durations for chunk at {info['offset']:.2f}s; skipping.")
+                continue
             
             note_seq = [
                 librosa.midi_to_note(m, unicode=False, cents=True) if v else "rest"
@@ -246,10 +256,11 @@ def extract_pitches_and_align_torch(chunks, sr, pred_dict, chars_dict, game_mode
                             pitch=pitch,
                             lyric=lyric_to_assign
                         ))
-                
+
                 current_onset += n_dur
+            processed_chunk_indices.add(info["chunk_idx"])
                 
-    return all_notes
+    return all_notes, processed_chunk_indices
 
 
 def extract_pitches_only_torch(
@@ -328,7 +339,7 @@ def extract_pitches_only_torch(
             except Exception:
                 print("Error during GAME model inference batch (no-lyrics):")
                 traceback.print_exc()
-                continue
+                raise
 
         for k, info in enumerate(batch):
             c_durations, c_presence, c_scores = durations[k], presence[k], scores[k]
@@ -337,6 +348,9 @@ def extract_pitches_only_torch(
             note_dur = c_durations[valid].tolist()
             note_presence = c_presence[valid].tolist()
             note_scores = c_scores[valid].tolist()
+            if not note_dur:
+                print(f"[Warning] GAME returned no note durations for chunk at {info['offset']:.2f}s; skipping.")
+                continue
 
             current_onset = info["offset"]
             for n_dur, n_presence, n_score in zip(note_dur, note_presence, note_scores):
