@@ -1,12 +1,15 @@
 """Batch slice + Qwen3-ASR CLI.
 
-输入一个包含 .wav / .m4a 的目录，先切片，再对切片做 Qwen3-ASR，
+输入一个包含 .wav / .m4a 的目录，默认先切片，再对切片做 Qwen3-ASR，
 最后把切片 wav 和对应的 .lab 纯文本输出到指定目录。
+
+加上 --no-slice 时，会直接把整段音频当成一个 chunk 送入 ASR。
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -30,6 +33,7 @@ from inference.API.slicer_api import slice_audio
 
 DEFAULT_RMVPE_MODEL = ROOT_DIR / "experiments" / "RMVPE" / "rmvpe.pt"
 INPUT_AUDIO_EXTENSIONS = (".wav", ".m4a")
+SOURCE_INDEX_NAME = "_source_index.json"
 
 
 def batch_iter(items: List[Path], batch_size: int) -> Iterable[List[Path]]:
@@ -93,6 +97,19 @@ def safe_stem(path: Path) -> str:
     return path.stem.replace(" ", "_")
 
 
+def file_md5(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.md5()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(chunk_size), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def source_key(audio_path: Path, source_md5: Optional[str] = None) -> str:
+    md5 = source_md5 or file_md5(audio_path)
+    return f"{safe_stem(audio_path)}_{md5[:8]}"
+
+
 def free_torch_memory():
     import gc
     import torch
@@ -106,8 +123,8 @@ def should_use_rmvpe_for_slicing(slicing_method: str, rmvpe_model_path: Optional
     return slicing_method == "智能切片" and bool(rmvpe_model_path)
 
 
-def has_existing_outputs(audio_path: Path, output_dir: Path, recursive_output: bool = True) -> bool:
-    stem = safe_stem(audio_path)
+def has_existing_outputs(audio_path: Path, output_dir: Path, source_md5: str, recursive_output: bool = True) -> bool:
+    stem = source_key(audio_path, source_md5)
     lab_dir = output_dir / "labs"
     slice_dir = output_dir / "slices"
     if recursive_output:
@@ -124,7 +141,62 @@ def has_existing_outputs(audio_path: Path, output_dir: Path, recursive_output: b
     return False
 
 
-def save_timestamps_json(json_dir: Path, source_stem: str, chunks, results, chunk_indices, sr: int):
+def source_index_path(output_dir: Path) -> Path:
+    return output_dir / "jsons" / SOURCE_INDEX_NAME
+
+
+def load_source_index(output_dir: Path) -> dict:
+    path = source_index_path(output_dir)
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_source_index(output_dir: Path, index: dict) -> None:
+    path = source_index_path(output_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def index_has_completed_output(index: dict, source_md5: str, output_dir: Path) -> Optional[str]:
+    rec = index.get(source_md5)
+    if not isinstance(rec, dict):
+        return None
+    key = rec.get("output_key")
+    if not key:
+        return None
+    json_path = output_dir / "jsons" / f"{key}.json"
+    lab_dir = output_dir / "labs" / key
+    slice_dir = output_dir / "slices" / key
+    if json_path.is_file() or (lab_dir.is_dir() and any(lab_dir.glob("*.lab"))) or (slice_dir.is_dir() and any(slice_dir.glob("*.wav"))):
+        return str(key)
+    return None
+
+
+def update_source_index(index: dict, audio_path: Path, output_key: str, source_md5: str, chunks: int, labs: int) -> None:
+    index[source_md5] = {
+        "output_key": output_key,
+        "source_name": audio_path.name,
+        "source_path": str(audio_path.resolve()),
+        "chunks": chunks,
+        "labs": labs,
+    }
+
+
+def save_timestamps_json(
+    json_dir: Path,
+    source_stem: str,
+    chunks,
+    results,
+    chunk_indices,
+    sr: int,
+    source_audio: Optional[Path] = None,
+    source_md5: Optional[str] = None,
+):
     """将切片的精确时间戳和 ASR 转写结果保存为 JSON 文件。
 
     每个 chunk 的记录包含：
@@ -151,7 +223,14 @@ def save_timestamps_json(json_dir: Path, source_stem: str, chunks, results, chun
     # 按 offset 排序保证时间顺序
     records.sort(key=lambda r: r["offset"])
     json_path = json_dir / f"{source_stem}.json"
-    json_path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+    payload = {
+        "source": {
+            "path": str(source_audio.resolve()) if source_audio is not None else None,
+            "md5": source_md5,
+        },
+        "chunks": records,
+    }
+    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"  Timestamps saved: {json_path}")
     return json_path
 
@@ -175,7 +254,8 @@ def slice_audio_from_json(
     if not source_audio.is_file():
         raise FileNotFoundError(f"音频文件不存在: {source_audio}")
 
-    records = json.loads(json_path.read_text(encoding="utf-8"))
+    loaded = json.loads(json_path.read_text(encoding="utf-8"))
+    records = loaded.get("chunks", []) if isinstance(loaded, dict) else loaded
     if not records:
         print(f"[SKIP] JSON 文件为空: {json_path}")
         return 0
@@ -243,22 +323,25 @@ def process_one_file(
     asr_batch_size: int,
     recursive_output: bool = True,
     save_json: bool = False,
+    no_slice: bool = False,
     asr_model=None,
     rmvpe_model_path: Optional[str] = None,
     rmvpe_batch_size: int = 8,
     rmvpe_model: Optional[RmvpeTranscriber] = None,
+    source_md5: Optional[str] = None,
 ):
     """处理单个音频文件：切片 → ASR → 输出 .wav + .lab。
 
     当 asr_model 不为 None 时，直接在主进程中使用持久化模型进行转写（跳过子进程），
     避免每个文件重复加载模型到 VRAM。
     """
+    output_stem = source_key(audio_path, source_md5)
     wav_out_dir = output_dir / "slices"
     lab_out_dir = output_dir / "labs"
     json_out_dir = output_dir / "jsons"
     if recursive_output:
-        wav_out_dir = wav_out_dir / safe_stem(audio_path)
-        lab_out_dir = lab_out_dir / safe_stem(audio_path)
+        wav_out_dir = wav_out_dir / output_stem
+        lab_out_dir = lab_out_dir / output_stem
 
     sr = 44100
     waveform, sr = load_audio(audio_path, sr=sr)
@@ -270,7 +353,10 @@ def process_one_file(
 
     rmvpe_voiced_mask = None
     rmvpe_step = None
-    if should_use_rmvpe_for_slicing(slicing_method, rmvpe_model_path):
+    if no_slice:
+        print("  [NO-SLICE] Skipping slicer; using the full audio as a single chunk.")
+        chunks = [{"offset": 0.0, "waveform": waveform}]
+    elif should_use_rmvpe_for_slicing(slicing_method, rmvpe_model_path):
         own_rmvpe_model = rmvpe_model is None
         if own_rmvpe_model:
             print(f"  [RMVPE] Loading model for smart slicing: {rmvpe_model_path}")
@@ -286,20 +372,28 @@ def process_one_file(
                 del rmvpe_model
                 free_torch_memory()
 
-    chunks = slice_audio(
-        waveform,
-        sr,
-        slicing_method,
-        rmvpe_voiced_mask=rmvpe_voiced_mask,
-        rmvpe_time_step_seconds=rmvpe_step,
-    )
+        chunks = slice_audio(
+            waveform,
+            sr,
+            slicing_method,
+            rmvpe_voiced_mask=rmvpe_voiced_mask,
+            rmvpe_time_step_seconds=rmvpe_step,
+        )
+    else:
+        chunks = slice_audio(
+            waveform,
+            sr,
+            slicing_method,
+            rmvpe_voiced_mask=rmvpe_voiced_mask,
+            rmvpe_time_step_seconds=rmvpe_step,
+        )
     if not chunks:
         print("  No chunks generated, skipping.")
         return 0, 0
 
-    with tempfile.TemporaryDirectory(prefix=f"vocal2midi_{safe_stem(audio_path)}_") as tmp_dir:
+    with tempfile.TemporaryDirectory(prefix=f"vocal2midi_{output_stem}_") as tmp_dir:
         tmp_path = Path(tmp_dir)
-        save_chunks(wav_out_dir, safe_stem(audio_path), chunks, sr)
+        save_chunks(wav_out_dir, output_stem, chunks, sr)
 
         if asr_model is not None:
             # 持久化模型模式：主进程内直接推理，避免反复加载/卸载模型
@@ -338,13 +432,22 @@ def process_one_file(
             chunk = chunks[chunk_idx]
             offset = float(chunk.get("offset", 0.0))
             lab_text = extract_text(res).strip()
-            lab_name = f"{safe_stem(audio_path)}_chunk{chunk_idx:04d}_off{offset:08.2f}s.lab"
+            lab_name = f"{output_stem}_chunk{chunk_idx:04d}_off{offset:08.2f}s.lab"
             (lab_out_dir / lab_name).write_text(lab_text, encoding="utf-8")
             written += 1
 
         # 保存精确时间戳 JSON
         if save_json:
-            save_timestamps_json(json_out_dir, safe_stem(audio_path), chunks, results, chunk_indices, sr)
+            save_timestamps_json(
+                json_out_dir,
+                output_stem,
+                chunks,
+                results,
+                chunk_indices,
+                sr,
+                source_audio=audio_path,
+                source_md5=source_md5,
+            )
 
     print(f"  chunks: {len(chunks)}, labs: {written}")
     return len(chunks), written
@@ -363,7 +466,12 @@ def build_argparser() -> argparse.ArgumentParser:
         "--slicing-method",
         default="默认切片",
         choices=["默认切片", "智能切片", "启发式切片", "网格搜索切片"],
-        help="切片策略；默认切片 = default_slice()（Slicer(threshold=-30, min_length=5000, max_sil_kept=500)）",
+        help="切片策略；--no-slice 时忽略；默认切片 = default_slice()（Slicer(threshold=-30, min_length=5000, max_sil_kept=500)）",
+    )
+    parser.add_argument(
+        "--no-slice",
+        action="store_true",
+        help="不进行切片，整段音频直接作为一个 chunk 送入 ASR",
     )
     parser.add_argument("--asr-batch-size", type=int, default=4, help="ASR 批大小")
     parser.add_argument(
@@ -435,13 +543,16 @@ def main():
         return 0
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    source_index = load_source_index(output_dir)
     total_chunks = 0
     total_labs = 0
     skipped_existing = 0
     skipped_failed = 0
 
     use_rmvpe_for_slicing = should_use_rmvpe_for_slicing(args.slicing_method, rmvpe_model_path)
-    if args.keep_rmvpe and not use_rmvpe_for_slicing:
+    if args.keep_rmvpe and args.no_slice:
+        print("[Keep-RMVPE] Ignored: --no-slice bypasses slicing entirely.")
+    elif args.keep_rmvpe and not use_rmvpe_for_slicing:
         print("[Keep-RMVPE] Ignored: RMVPE is only used with --slicing-method 智能切片 and a non-empty --rmvpe-model.")
 
     # 持久化模型：主进程中一次性加载，所有文件共享
@@ -461,10 +572,25 @@ def main():
         for batch_no, file_batch in enumerate(batch_iter(audio_files, args.file_batch_size), start=1):
             print(f"\n=== File batch {batch_no} / {(len(audio_files) + args.file_batch_size - 1) // args.file_batch_size} ===")
             for audio_path in file_batch:
-                if not args.no_skip_existing and has_existing_outputs(audio_path, output_dir):
-                    skipped_existing += 1
-                    print(f"\n[SKIP existing] {audio_path.name}")
+                try:
+                    source_md5 = file_md5(audio_path)
+                except Exception as exc:
+                    skipped_failed += 1
+                    print(f"\n[SKIP failed] {audio_path}")
+                    print(f"  MD5 {type(exc).__name__}: {exc}")
                     continue
+
+                output_key = source_key(audio_path, source_md5)
+                if not args.no_skip_existing:
+                    indexed_key = index_has_completed_output(source_index, source_md5, output_dir)
+                    if indexed_key is not None:
+                        skipped_existing += 1
+                        print(f"\n[SKIP existing] {audio_path.name} -> {indexed_key} (md5 index)")
+                        continue
+                    if has_existing_outputs(audio_path, output_dir, source_md5):
+                        skipped_existing += 1
+                        print(f"\n[SKIP existing] {audio_path.name} -> {output_key}")
+                        continue
 
                 try:
                     chunks, labs = process_one_file(
@@ -476,16 +602,20 @@ def main():
                         slicing_method=args.slicing_method,
                         asr_batch_size=args.asr_batch_size,
                         save_json=args.save_json,
+                        no_slice=args.no_slice,
                         asr_model=asr_model,
                         rmvpe_model_path=rmvpe_model_path,
                         rmvpe_batch_size=args.rmvpe_batch_size,
                         rmvpe_model=rmvpe_model,
+                        source_md5=source_md5,
                     )
                 except Exception as exc:
                     skipped_failed += 1
                     print(f"\n[SKIP failed] {audio_path}")
                     print(f"  {type(exc).__name__}: {exc}")
                     continue
+                update_source_index(source_index, audio_path, output_key, source_md5, chunks, labs)
+                save_source_index(output_dir, source_index)
                 total_chunks += chunks
                 total_labs += labs
     finally:

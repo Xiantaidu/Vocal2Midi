@@ -265,6 +265,9 @@ def process_asr_to_phonemes(
                 if write_asr_phoneme_lab:
                     pinyin_str = " ".join(direct_phoneme_tokens)
                     match_status = "Direct phoneme ASR -> Raw phoneme lab"
+                elif use_asr_phonemes and language == "ja":
+                    pinyin_str = " ".join(direct_phoneme_tokens)
+                    match_status = "Direct phoneme ASR -> Japanese phoneme lab"
                 else:
                     pinyin_str = " ".join(romaji_moras or direct_phoneme_tokens)
                     match_status = "Direct phoneme ASR -> Romaji moras"

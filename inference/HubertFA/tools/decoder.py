@@ -38,6 +38,13 @@ class AlignmentDecoder:
                ):
         ph_frame_logits = ph_frame_logits[0]  # [vocab_size, T]
         ph_edge_logits = ph_edge_logits[0]  # [T]
+        missing_phonemes = [ph for ph in ph_seq if ph not in self.vocab["vocab"]]
+        if missing_phonemes:
+            unique_missing = sorted(set(missing_phonemes))
+            raise KeyError(
+                f"Phoneme(s) not found in HubertFA vocab: {unique_missing}. "
+                f"Full ph_seq={ph_seq}"
+            )
         ph_seq_id = np.array([self.vocab["vocab"][ph] for ph in ph_seq])
         self.ph_seq_id = ph_seq_id
 

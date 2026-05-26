@@ -73,6 +73,7 @@ class JapanesePhonemeMoraG2P(BaseG2P):
         "b", "by", "ch", "d", "dy", "f", "fy", "g", "gw", "gy", "h", "hy", "j", "k", "kw", "ky",
         "m", "my", "n", "ny", "p", "py", "r", "ry", "s", "sh", "t", "ts", "ty", "v", "w", "y", "z"
     }
+    _MORA_ONSETS = sorted(_CONSONANTS, key=len, reverse=True)
     _IGNORE = {"AP", "EP"}
 
     def __init__(self, language):
@@ -99,6 +100,12 @@ class JapanesePhonemeMoraG2P(BaseG2P):
                 groups.append(("cl", ["cl"]))
                 i += 1
                 continue
+            mora_token = t.lower()
+            mora_phones = cls._split_mora_token(mora_token)
+            if mora_phones:
+                groups.append((mora_token, mora_phones))
+                i += 1
+                continue
             if t in cls._VOWEL_MAP:
                 # Canonicalize phone symbol as well (e.g. I/U -> i/u),
                 # otherwise it may miss vocab entries after language prefixing.
@@ -115,6 +122,39 @@ class JapanesePhonemeMoraG2P(BaseG2P):
             groups.append((t.lower(), [t]))
             i += 1
         return groups
+
+    @classmethod
+    def _split_mora_token(cls, token):
+        vowels = set("aiueo")
+        if token in cls._VOWEL_MAP:
+            return [cls._VOWEL_MAP[token]]
+        if token == "n":
+            return ["N"]
+        if token == "hu":
+            return ["h", "u"]
+        if token == "fy":
+            return ["f", "y"]
+        if token.startswith("fy") and len(token) > 2 and all(ch in vowels for ch in token[2:]):
+            return ["f", "y", *token[2:]]
+
+        for onset in cls._MORA_ONSETS:
+            if token == onset:
+                return [onset]
+            if token.startswith(onset):
+                rest = token[len(onset):]
+                if rest and all(ch in vowels for ch in rest):
+                    return [onset, *rest]
+
+        # Fallback for rare mora spellings whose palatal onset is not in the
+        # HubertFA vocab, e.g. fyu -> f y u.
+        if len(token) >= 2 and token[-1] in vowels:
+            onset = token[:-1]
+            vowel = token[-1]
+            if onset.endswith("y") and onset[:-1] in cls._CONSONANTS:
+                return [onset[:-1], "y", vowel]
+            if len(onset) == 1 and onset in cls._CONSONANTS:
+                return [onset, vowel]
+        return None
 
     def _g2p(self, input_text):
         groups = self._parse_groups(input_text)
