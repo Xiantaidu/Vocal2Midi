@@ -72,7 +72,7 @@ def load_phoneme_asr_model(ckpt_dir, device="cuda", use_cache=True):
             print(f"Reusing cached phoneme ASR model from '{ckpt_dir}' on {device}.")
             return cached
 
-    from transformers import HubertForCTC
+    from transformers import HubertConfig, HubertForCTC
 
     vocab_path = ckpt_path / "phoneme_vocab.json"
     if not vocab_path.exists():
@@ -88,7 +88,33 @@ def load_phoneme_asr_model(ckpt_dir, device="cuda", use_cache=True):
     blank_id = vocab.get("<blank>", vocab.get("PAD", 0))
 
     print(f"Loading phoneme ASR model from '{ckpt_dir}' on {device}...")
-    model = HubertForCTC.from_pretrained(ckpt_dir).to(device)
+    try:
+        model = HubertForCTC.from_pretrained(ckpt_dir).to(device)
+    except ValueError as e:
+        if "torch.load" not in str(e) or "v2.6" not in str(e):
+            raise
+
+        bin_path = ckpt_path / "pytorch_model.bin"
+        if not bin_path.exists():
+            raise
+
+        print(
+            "Transformers blocked pytorch_model.bin loading because torch < 2.6; "
+            "loading local trusted checkpoint manually."
+        )
+        config = HubertConfig.from_pretrained(ckpt_dir)
+        model = HubertForCTC(config)
+        try:
+            state_dict = torch.load(str(bin_path), map_location="cpu", weights_only=True)
+        except TypeError:
+            state_dict = torch.load(str(bin_path), map_location="cpu")
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        if missing or unexpected:
+            raise RuntimeError(
+                "Phoneme ASR checkpoint mismatch. "
+                f"missing={missing[:20]} unexpected={unexpected[:20]}"
+            )
+        model = model.to(device)
     model.eval()
 
     payload = {
