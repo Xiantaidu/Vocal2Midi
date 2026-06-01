@@ -1,44 +1,49 @@
 import multiprocessing as mp
+import queue
 import threading
 import time
-import json
-from pathlib import Path
 
-import torch
 import soundfile as sf
+
+from inference.device_utils import normalize_runtime_device
+from inference.qwen3asr_dml.runtime import Qwen3ASRDmlModel
+from inference.romaji_asr.runtime import RomajiASROnnxModel, resolve_model_dir
 
 # --- Qwen Model Loading ---
 _QWEN_MODEL_CACHE = {}
 _QWEN_MODEL_CACHE_LOCK = threading.Lock()
-_PHONEME_MODEL_CACHE = {}
-_PHONEME_MODEL_CACHE_LOCK = threading.Lock()
+_ROMAJI_MODEL_CACHE = {}
+_ROMAJI_MODEL_CACHE_LOCK = threading.Lock()
+_PHONEME_MODEL_CACHE = _ROMAJI_MODEL_CACHE
+_PHONEME_MODEL_CACHE_LOCK = _ROMAJI_MODEL_CACHE_LOCK
 
 
-def load_qwen_model(model_path, device="cuda", use_cache=True):
+def load_qwen_model(model_path, device="dml", use_cache=True):
     """
-    Loads the Qwen ASR model using PyTorch.
+    Loads the Qwen ASR model using the DML encoder + CPU decoder runtime.
     Caches model in-process to avoid repeated loading.
     """
-    cache_key = (str(model_path), str(device))
+    requested_device = normalize_runtime_device(device)
+    cache_key = (str(model_path), requested_device)
     if use_cache:
         with _QWEN_MODEL_CACHE_LOCK:
             cached_model = _QWEN_MODEL_CACHE.get(cache_key)
         if cached_model is not None:
-            print(f"Reusing cached Qwen ASR model from '{model_path}' on {device}.")
+            print(f"Reusing cached Qwen ASR model from '{model_path}' on {requested_device}.")
             return cached_model
 
-    print(f"Loading Qwen ASR PyTorch model from '{model_path}' on {device}...")
-    from qwen_asr import Qwen3ASRModel
-
     try:
-        # Use fp16 for lower VRAM usage and better performance
-        model = Qwen3ASRModel.from_pretrained(
+        print(f"Loading Qwen ASR DML+CPU runtime from '{model_path}' (requested device: {requested_device})...")
+        model = Qwen3ASRDmlModel.from_model_path(
             model_path,
-            dtype=torch.float16,
-            device_map=device,
+            device=requested_device,
+            verbose=False,
         )
     except Exception as e:
-        raise RuntimeError(f"Error loading Qwen ASR model: {e}\nPlease ensure you have run 'pip install -U qwen-asr'.")
+        raise RuntimeError(
+            f"Error loading Qwen ASR DML runtime: {e}\n"
+            "Please ensure the DML model files are present and required dependencies are installed."
+        )
 
     if use_cache:
         with _QWEN_MODEL_CACHE_LOCK:
@@ -49,153 +54,111 @@ def load_qwen_model(model_path, device="cuda", use_cache=True):
 def clear_qwen_model_cache():
     """Clears in-process Qwen ASR model cache."""
     with _QWEN_MODEL_CACHE_LOCK:
+        cached_models = list(_QWEN_MODEL_CACHE.values())
         _QWEN_MODEL_CACHE.clear()
+    for model in cached_models:
+        shutdown = getattr(model, "shutdown", None)
+        if callable(shutdown):
+            shutdown()
     import gc
+
     gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
 
 
-def load_phoneme_asr_model(ckpt_dir, device="cuda", use_cache=True):
-    """Load HuBERT-CTC phoneme ASR model + vocab from checkpoint directory."""
-    ckpt_dir = str(ckpt_dir)
-    ckpt_path = Path(ckpt_dir)
-    if ckpt_path.is_file():
-        # e.g. .../best/model.safetensors -> use .../best as from_pretrained directory
-        ckpt_path = ckpt_path.parent
-        ckpt_dir = str(ckpt_path)
-    cache_key = (ckpt_dir, str(device))
+def load_romaji_asr_model(model_dir, device="dml", use_cache=True):
+    """Load the Japanese romaji ASR ONNX runtime from a model directory."""
+    resolved_dir = str(resolve_model_dir(model_dir))
+    requested_device = normalize_runtime_device(device)
+    cache_key = (resolved_dir, requested_device)
     if use_cache:
-        with _PHONEME_MODEL_CACHE_LOCK:
-            cached = _PHONEME_MODEL_CACHE.get(cache_key)
+        with _ROMAJI_MODEL_CACHE_LOCK:
+            cached = _ROMAJI_MODEL_CACHE.get(cache_key)
         if cached is not None:
-            print(f"Reusing cached phoneme ASR model from '{ckpt_dir}' on {device}.")
+            print(f"Reusing cached romaji ASR model from '{resolved_dir}' on {requested_device}.")
             return cached
 
-    from transformers import HubertConfig, HubertForCTC
-
-    vocab_path = ckpt_path / "phoneme_vocab.json"
-    if not vocab_path.exists():
-        fallback_vocab = Path(__file__).resolve().parent.parent / "phonemeASR" / "data" / "phoneme_vocab.json"
-        if fallback_vocab.exists():
-            vocab_path = fallback_vocab
-    if not vocab_path.exists():
-        raise FileNotFoundError(f"phoneme_vocab.json not found in checkpoint dir: {ckpt_dir}")
-
-    with vocab_path.open("r", encoding="utf-8") as f:
-        vocab = json.load(f)
-    id2phone = {int(v): k for k, v in vocab.items()}
-    blank_id = vocab.get("<blank>", vocab.get("PAD", 0))
-
-    print(f"Loading phoneme ASR model from '{ckpt_dir}' on {device}...")
-    try:
-        model = HubertForCTC.from_pretrained(ckpt_dir).to(device)
-    except ValueError as e:
-        if "torch.load" not in str(e) or "v2.6" not in str(e):
-            raise
-
-        bin_path = ckpt_path / "pytorch_model.bin"
-        if not bin_path.exists():
-            raise
-
-        print(
-            "Transformers blocked pytorch_model.bin loading because torch < 2.6; "
-            "loading local trusted checkpoint manually."
-        )
-        config = HubertConfig.from_pretrained(ckpt_dir)
-        model = HubertForCTC(config)
-        try:
-            state_dict = torch.load(str(bin_path), map_location="cpu", weights_only=True)
-        except TypeError:
-            state_dict = torch.load(str(bin_path), map_location="cpu")
-        missing, unexpected = model.load_state_dict(state_dict, strict=False)
-        if missing or unexpected:
-            raise RuntimeError(
-                "Phoneme ASR checkpoint mismatch. "
-                f"missing={missing[:20]} unexpected={unexpected[:20]}"
-            )
-        model = model.to(device)
-    model.eval()
+    print(f"Loading romaji ASR ONNX model from '{resolved_dir}' on {requested_device}...")
+    model = RomajiASROnnxModel.from_model_path(resolved_dir, device=requested_device, verbose=True)
 
     payload = {
         "model": model,
-        "id2phone": id2phone,
-        "blank_id": int(blank_id),
+        "sample_rate": int(model.sample_rate),
+        "provider": model.provider,
     }
     if use_cache:
-        with _PHONEME_MODEL_CACHE_LOCK:
-            _PHONEME_MODEL_CACHE[cache_key] = payload
+        with _ROMAJI_MODEL_CACHE_LOCK:
+            _ROMAJI_MODEL_CACHE[cache_key] = payload
     return payload
 
 
-def clear_phoneme_model_cache():
-    with _PHONEME_MODEL_CACHE_LOCK:
-        _PHONEME_MODEL_CACHE.clear()
+def clear_romaji_model_cache():
+    with _ROMAJI_MODEL_CACHE_LOCK:
+        _ROMAJI_MODEL_CACHE.clear()
     import gc
+
     gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
 
 
-def _greedy_decode_ctc(logits, id2phone, blank=0):
-    pred = logits.argmax(-1).tolist()
-    out = []
-    prev = -1
-    for p in pred:
-        if p != prev and p != blank:
-            out.append(id2phone.get(p, "<unk>"))
-        prev = p
-    return out
+def batch_transcribe_romaji_asr(
+    chunks,
+    sr,
+    temp_dir_path,
+    model_dir,
+    device="dml",
+    asr_batch_size=1,
+    cancel_checker=None,
+):
+    """Run romaji ASR directly and return token lists per chunk."""
+    print("[ASR API] Running romaji ASR (ONNX Runtime) for Japanese lyric mode...")
+    asr = load_romaji_asr_model(model_dir, device=device, use_cache=True)
+    model = asr["model"]
+
+    audio_paths = []
+    chunk_indices = []
+    for chunk_idx, chunk in enumerate(chunks):
+        if cancel_checker and cancel_checker():
+            raise InterruptedError("ASR task cancelled")
+        chunk_path = temp_dir_path / f"chunk_{chunk_idx}.wav"
+        sf.write(chunk_path, chunk["waveform"], sr)
+        audio_paths.append(str(chunk_path))
+        chunk_indices.append(chunk_idx)
+
+    if not audio_paths:
+        return [], []
+
+    all_results = model.transcribe(audio_paths, batch_size=max(1, int(asr_batch_size)))
+    return all_results, chunk_indices
+
+
+# Compatibility aliases so higher layers can keep the old kwargs/field names
+# while the implementation has switched from Torch phoneme ASR to romaji ASR.
+def load_phoneme_asr_model(model_dir, device="dml", use_cache=True):
+    return load_romaji_asr_model(model_dir, device=device, use_cache=use_cache)
+
+
+def clear_phoneme_model_cache():
+    clear_romaji_model_cache()
 
 
 def batch_transcribe_phoneme_asr(
+    chunks,
+    sr,
+    temp_dir_path,
+    phoneme_ckpt_dir,
+    device="dml",
+    asr_batch_size=1,
+    cancel_checker=None,
+):
+    results, chunk_indices = batch_transcribe_romaji_asr(
         chunks,
         sr,
-        temp_dir_path,
-        phoneme_ckpt_dir,
-        device="cuda",
-        cancel_checker=None,
-):
-    """Run phoneme ASR directly and return token lists per chunk."""
-    print("[ASR API] Running phoneme ASR (HuBERT-CTC) for Japanese romaji mode...")
-    asr = load_phoneme_asr_model(phoneme_ckpt_dir, device=device, use_cache=True)
-    model = asr["model"]
-    id2phone = asr["id2phone"]
-    blank_id = asr["blank_id"]
-
-    all_results = []
-    chunk_indices = []
-    target_sr = 16000
-
-    for chunk_idx, chunk in enumerate(chunks):
-        if cancel_checker and cancel_checker():
-            raise InterruptedError("ASR 任务已取消")
-
-        stem = f"chunk_{chunk_idx}"
-        chunk_path = temp_dir_path / f"{stem}.wav"
-        sf.write(chunk_path, chunk["waveform"], sr)
-
-        waveform, wav_sr = sf.read(str(chunk_path), dtype="float32", always_2d=True)
-        waveform = waveform.mean(axis=1)  # mono
-
-        wav_t = torch.from_numpy(waveform).unsqueeze(0)
-        if wav_sr != target_sr:
-            wav_t = torch.nn.functional.interpolate(
-                wav_t.unsqueeze(1),
-                size=int(wav_t.shape[-1] * target_sr / wav_sr),
-                mode="linear",
-                align_corners=False,
-            ).squeeze(1)
-
-        wav_t = wav_t.to(device)
-        with torch.inference_mode():
-            logits = model(wav_t).logits[0]
-        phones = _greedy_decode_ctc(logits, id2phone, blank=blank_id)
-
-        all_results.append({"phonemes": phones, "text": " ".join(phones)})
-        chunk_indices.append(chunk_idx)
-
-    return all_results, chunk_indices
+        temp_dir_path=temp_dir_path,
+        model_dir=phoneme_ckpt_dir,
+        device=device,
+        asr_batch_size=asr_batch_size,
+        cancel_checker=cancel_checker,
+    )
+    return results, chunk_indices, {}
 
 
 # --- Process Pool Worker ---
@@ -207,8 +170,6 @@ def _init_worker(model_path, device):
     global _WORKER_ASR_MODEL
     proc_name = mp.current_process().name
     print(f"Initializing ASR worker ({proc_name}) with model '{model_path}' on {device}...")
-    # Each worker loads its own copy of the model. `use_cache=False` is fine here
-    # as this function is only called once per worker.
     _WORKER_ASR_MODEL = load_qwen_model(model_path, device, use_cache=False)
     print(f"ASR worker ({proc_name}) initialized.")
 
@@ -220,39 +181,120 @@ def _transcribe_task(paths, asr_lang, model=None):
         return RuntimeError("ASR worker model not initialized.")
 
     try:
-        # Use autocast for performance on CUDA devices
-        use_cuda = torch.cuda.is_available() and "cuda" in str(m.device)
-        with torch.inference_mode():
-            if use_cuda:
-                with torch.amp.autocast("cuda"):
-                    results = m.transcribe(audio=paths, language=asr_lang)
-            else:
-                results = m.transcribe(audio=paths, language=asr_lang)
-        return results
+        return m.transcribe(audio=paths, language=asr_lang)
     except Exception as e:
-        # Propagate exceptions back to the main process
         return e
+
+
+def _asr_worker_main(model_path, device, task_queue, result_queue):
+    """Runs a single non-daemon ASR worker process for Qwen DML+CPU inference."""
+    model = None
+    try:
+        proc_name = mp.current_process().name
+        print(f"Initializing ASR worker ({proc_name}) with model '{model_path}' on {device}...")
+        model = load_qwen_model(model_path, device, use_cache=False)
+        print(f"ASR worker ({proc_name}) initialized.")
+        result_queue.put({"type": "ready"})
+
+        while True:
+            message = task_queue.get()
+            if message.get("type") == "stop":
+                break
+            if message.get("type") != "transcribe":
+                continue
+
+            task_id = int(message["task_id"])
+            batch = list(message["paths"])
+            asr_lang = str(message["asr_lang"])
+            batch_result = _transcribe_task(batch, asr_lang, model=model)
+            if isinstance(batch_result, Exception):
+                result_queue.put(
+                    {
+                        "type": "result",
+                        "task_id": task_id,
+                        "error": str(batch_result),
+                    }
+                )
+            else:
+                result_queue.put(
+                    {
+                        "type": "result",
+                        "task_id": task_id,
+                        "result": batch_result,
+                    }
+                )
+    except Exception as e:
+        result_queue.put({"type": "startup_error", "error": str(e)})
+    finally:
+        if model is not None:
+            shutdown = getattr(model, "shutdown", None)
+            if callable(shutdown):
+                shutdown()
+
+
+def _shutdown_asr_worker(worker, task_queue, *, terminate=False):
+    if worker is None:
+        return
+
+    if terminate:
+        if worker.is_alive():
+            worker.terminate()
+        worker.join()
+        return
+
+    if worker.is_alive():
+        try:
+            task_queue.put({"type": "stop"})
+        except Exception:
+            worker.terminate()
+            worker.join()
+            return
+        worker.join(timeout=5)
+        if worker.is_alive():
+            worker.terminate()
+            worker.join()
+
+
+def _wait_for_worker_message(result_queue, worker, *, timeout_sec, cancel_checker=None, on_cancel=None):
+    deadline = None if timeout_sec is None else time.perf_counter() + max(float(timeout_sec), 0.0)
+    while True:
+        if cancel_checker and cancel_checker():
+            if on_cancel is not None:
+                on_cancel()
+            raise InterruptedError("ASR task cancelled")
+
+        if deadline is not None and time.perf_counter() >= deadline:
+            raise mp.TimeoutError
+
+        poll_timeout = 0.2
+        if deadline is not None:
+            poll_timeout = max(0.01, min(0.2, deadline - time.perf_counter()))
+        try:
+            return result_queue.get(timeout=poll_timeout)
+        except queue.Empty:
+            if worker is not None and not worker.is_alive():
+                raise RuntimeError("ASR worker exited unexpectedly.")
+            continue
 
 
 # --- Main ASR API ---
 def batch_transcribe_asr(
-        chunks,
-        sr,
-        asr_model,  # This is for in-process, will be None for pooled
-        temp_dir_path,
-        asr_batch_size,
-        language,
-        cancel_checker=None,
-        asr_model_path=None,
-        device="cuda",
-        force_subprocess=False,  # If True, uses the new process pool
-        asr_timeout_sec=180,
+    chunks,
+    sr,
+    asr_model,
+    temp_dir_path,
+    asr_batch_size,
+    language,
+    cancel_checker=None,
+    asr_model_path=None,
+    device="dml",
+    force_subprocess=False,
+    asr_timeout_sec=180,
 ):
     """Saves chunks to temp_dir and runs batched ASR transcription."""
     asr_lang = "Japanese" if language == "ja" else "Chinese"
-    print(f"[ASR API] Running ASR with PyTorch Qwen (Batch Size: {asr_batch_size}, Language: {asr_lang})...")
+    print(f"[ASR API] Running ASR with Qwen DML+CPU runtime (Batch Size: {asr_batch_size}, Language: {asr_lang})...")
 
-    # 1. Prepare audio files
     audio_paths = []
     chunk_indices = []
     for chunk_idx, chunk in enumerate(chunks):
@@ -265,66 +307,81 @@ def batch_transcribe_asr(
     if not audio_paths:
         return [], []
 
-    # 2. Group paths into batches for processing
     batches = [audio_paths[i:i + asr_batch_size] for i in range(0, len(audio_paths), asr_batch_size)]
     total_batches = len(batches)
     all_results = []
 
-    # 3. Choose execution strategy: Process Pool vs. In-Process
     if force_subprocess:
         if not asr_model_path:
             raise ValueError("asr_model_path is required when force_subprocess=True")
 
-        # Use a managed process pool
-        # Using 'spawn' is safer for CUDA applications
         ctx = mp.get_context("spawn")
-        # Limit to 1 worker to ensure only one model is loaded into VRAM
-        with ctx.Pool(processes=1, initializer=_init_worker, initargs=(asr_model_path, device)) as pool:
-            print(f"ASR Process Pool created with 1 worker for {total_batches} batches.")
-            # Map tasks to the pool
-            async_results = [pool.apply_async(_transcribe_task, args=(batch, asr_lang)) for batch in batches]
+        task_queue = ctx.Queue()
+        result_queue = ctx.Queue()
+        worker = ctx.Process(
+            target=_asr_worker_main,
+            args=(asr_model_path, device, task_queue, result_queue),
+            daemon=False,
+        )
+        worker.start()
+        try:
+            startup_message = _wait_for_worker_message(
+                result_queue,
+                worker,
+                timeout_sec=asr_timeout_sec,
+                cancel_checker=cancel_checker,
+                on_cancel=lambda: _shutdown_asr_worker(worker, task_queue, terminate=True),
+            )
+            if startup_message.get("type") == "startup_error":
+                raise RuntimeError(f"ASR worker failed to start: {startup_message.get('error', 'unknown error')}")
+            if startup_message.get("type") != "ready":
+                raise RuntimeError(f"Unexpected ASR worker startup message: {startup_message!r}")
 
-            # Collect results with progress
-            for i, res in enumerate(async_results):
+            print(f"ASR subprocess worker created for {total_batches} batch(es).")
+            for i, batch in enumerate(batches):
                 batch_no = i + 1
+                task_queue.put(
+                    {
+                        "type": "transcribe",
+                        "task_id": i,
+                        "paths": batch,
+                        "asr_lang": asr_lang,
+                    }
+                )
                 print(f"  Waiting for ASR batch {batch_no}/{total_batches}...")
                 batch_start_time = time.perf_counter()
                 try:
-                    # Wait for result in short polling intervals so cancel can preempt quickly
-                    deadline = time.perf_counter() + asr_timeout_sec
-                    while not res.ready():
-                        if cancel_checker and cancel_checker():
-                            print("  ASR cancel requested. Terminating ASR pool...")
-                            pool.terminate()
-                            pool.join()
-                            raise InterruptedError("ASR 任务已取消")
-                        if time.perf_counter() >= deadline:
-                            raise mp.TimeoutError
-                        time.sleep(0.2)
-
-                    batch_result = res.get(timeout=1)
+                    message = _wait_for_worker_message(
+                        result_queue,
+                        worker,
+                        timeout_sec=asr_timeout_sec,
+                        cancel_checker=cancel_checker,
+                        on_cancel=lambda: _shutdown_asr_worker(worker, task_queue, terminate=True),
+                    )
                     cost = time.perf_counter() - batch_start_time
+                    if message.get("type") != "result" or int(message.get("task_id", -1)) != i:
+                        raise RuntimeError(f"Unexpected ASR worker message: {message!r}")
 
-                    if isinstance(batch_result, Exception):
-                        print(f"  ASR batch {batch_no}/{total_batches} failed with an error: {batch_result}")
-                        all_results.extend([None] * len(batches[i]))
+                    if message.get("error"):
+                        print(f"  ASR batch {batch_no}/{total_batches} failed with an error: {message['error']}")
+                        all_results.extend([None] * len(batch))
                     else:
                         print(f"  ASR batch {batch_no}/{total_batches} done in {cost:.2f}s")
-                        all_results.extend(batch_result)
+                        all_results.extend(message.get("result", []))
                 except mp.TimeoutError:
                     print(f"  ASR batch {batch_no}/{total_batches} timed out after {asr_timeout_sec}s.")
-                    pool.terminate()
-                    pool.join()
+                    _shutdown_asr_worker(worker, task_queue, terminate=True)
                     raise TimeoutError(f"ASR batch {batch_no}/{total_batches} timed out after {asr_timeout_sec}s")
+        finally:
+            _shutdown_asr_worker(worker, task_queue, terminate=False)
 
     else:
-        # Fallback to the original in-process method
         if asr_model is None:
             raise ValueError("asr_model is required when force_subprocess=False")
 
         for i, batch in enumerate(batches):
             if cancel_checker and cancel_checker():
-                raise InterruptedError("ASR 任务已取消")
+                raise InterruptedError("ASR task cancelled")
 
             batch_no = i + 1
             print(f"  Processing ASR batch {batch_no}/{total_batches} (size={len(batch)})...")

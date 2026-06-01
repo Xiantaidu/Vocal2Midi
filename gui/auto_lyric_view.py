@@ -19,10 +19,10 @@ from qfluentwidgets import (
     SubtitleLabel,
 )
 
-import torch
 from application.config import PipelineConfig
 from gui.fluent_utils import parse_quantization, parse_quantization_mode, t0_nstep_to_ts
 from gui.fluent_worker import WorkerThread, HYBRID_AVAILABLE
+from inference.device_utils import VISIBLE_RUNTIME_DEVICE_CHOICES, normalize_runtime_device
 
 
 class AutoLyricInterface(ScrollArea):
@@ -113,7 +113,7 @@ class AutoLyricInterface(ScrollArea):
         combo_row1.addWidget(dev_icon)
         combo_row1.addWidget(BodyLabel("计算设备", self))
         self.device_combo = ComboBox(self)
-        self.device_combo.addItems(["cuda", "cpu"])
+        self.device_combo.addItems(list(VISIBLE_RUNTIME_DEVICE_CHOICES))
         self.device_combo.currentTextChanged.connect(self.apply_device_batch_defaults)
         combo_row1.addWidget(self.device_combo)
 
@@ -354,7 +354,7 @@ class AutoLyricInterface(ScrollArea):
             self.global_settings.t0_spin.value(),
             int(self.global_settings.nsteps_spin.value()),
         )
-        ts_tensor = torch.tensor(ts_list, device=self.device_combo.currentText())
+        device = normalize_runtime_device(self.device_combo.currentText())
 
         config = PipelineConfig(
             audio_path="",  # set per-file in worker
@@ -363,9 +363,9 @@ class AutoLyricInterface(ScrollArea):
             game_model_dir=self.global_settings.game_model_edit.text(),
             hfa_model_dir=self.global_settings.hfa_model_edit.text(),
             asr_model_path=self.global_settings.asr_model_edit.text(),
-            device=self.device_combo.currentText(),
+            device=device,
             language=self.lang_combo.currentText(),
-            ts=ts_tensor,
+            ts=ts_list,
             lyric_output_mode=self.get_lyric_output_mode(),
             original_lyrics=self.lyrics_edit.toPlainText().strip() if self.global_settings.cb_match_lyrics.isChecked() else "",
             output_formats=output_formats,

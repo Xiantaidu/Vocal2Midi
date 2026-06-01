@@ -1,5 +1,6 @@
 import pathlib
 
+from inference.device_utils import resolve_onnx_providers
 from inference.HubertFA.onnx_infer import InferenceOnnx
 
 
@@ -95,24 +96,26 @@ def _repair_pred_dict_short_words(pred_dict) -> None:
     if total_repaired > 0:
         print(f"[HFA Repair] Total repaired short words: {total_repaired}")
 
-def load_hfa_model(model_dir, device="cuda"):
+def load_hfa_model(model_dir, device="dml"):
     """
-    Loads the HubertFA ONNX model ensuring it runs on the specified device (CUDA).
+    Load the HubertFA ONNX model on DirectML by default, with CPU fallback.
     """
-    print("Loading HubertFA ONNX model for GPU...")
+    print("Loading HubertFA ONNX model...")
     model = InferenceOnnx(onnx_path=pathlib.Path(model_dir) / 'model.onnx')
     model.load_config()
     model.init_decoder()
     import onnxruntime as ort
-    providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if device == 'cuda' else ['CPUExecutionProvider']
+    provider_name, providers = resolve_onnx_providers(device, label="HubertFA ONNX")
     options = ort.SessionOptions()
     options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    options.enable_mem_pattern = False
+    options.enable_cpu_mem_arena = False
     model.model = ort.InferenceSession(str(model.model_folder / 'model.onnx'), options, providers=providers)
-    print(f"HubertFA ONNX session created with providers: {model.model.get_providers()}")
+    print(f"HubertFA ONNX session created with provider={provider_name}: {model.model.get_providers()}")
     return model
 
 def run_hubert_fa(hfa_model, temp_dir, language="zh", cancel_checker=None, use_phoneme_g2p=False):
-    print("[Hybrid Pipeline] Running HubertFA forced alignment on GPU...")
+    print("[Hybrid Pipeline] Running HubertFA forced alignment...")
     if cancel_checker and cancel_checker():
         raise InterruptedError("HFA 任务已取消")
     hfa_model.dataset = []

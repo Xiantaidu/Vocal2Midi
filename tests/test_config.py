@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import pytest
-import torch
 
 from application.config import PipelineConfig
 
@@ -23,7 +22,7 @@ class TestPipelineConfig:
             "asr_model_path": "/models/asr",
             "device": "cpu",
             "language": "zh",
-            "ts": torch.tensor([0.0, 0.1, 0.2]),
+            "ts": [0.0, 0.1, 0.2],
         }
 
     def test_required_fields_only(self, base_kwargs):

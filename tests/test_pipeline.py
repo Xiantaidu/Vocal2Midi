@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import pytest
-import torch
 
 from application.config import PipelineConfig
 from application.pipeline import run_auto_lyric_job, _validate_model_paths
@@ -32,7 +31,7 @@ class TestValidateModelPaths:
             asr_model_path="/does/not/exist/asr",
             device="cpu",
             language="zh",
-            ts=torch.tensor([0.0]),
+            ts=[0.0],
         )
 
     def test_missing_all_paths_raises(self, base_cfg):
@@ -99,7 +98,7 @@ class TestRunAutoLyricJob:
             asr_model_path=str(tmp_path),
             device="cpu",
             language="zh",
-            ts=torch.tensor([0.0]),
+            ts=[0.0],
         )
 
     @patch("application.pipeline.auto_lyric_hybrid_pipeline")
