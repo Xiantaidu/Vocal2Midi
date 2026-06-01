@@ -1,217 +1,241 @@
-# Vocal2Midi 架构说明
+# Vocal2Midi Architecture
 
-本文档描述 Vocal2Midi 项目的分层职责、依赖方向与处理流程，用于降低模块耦合、提升代码可维护性。
+This document describes the current structure of the Vocal2Midi repository after the move toward ONNX-based inference.
 
----
+## Design goals
 
-## 1. 分层总览
+The codebase is organized to keep UI concerns, application orchestration, and inference runtimes separate:
 
-项目采用以下分层结构：
-
-```
-gui/                    界面层（PyQt5 + qfluentwidgets）
-application/            应用编排层（Use Case 入口，连接 GUI 与推理能力）
-inference/              推理与算法实现层
-  ├── pipeline/         流水线编排
-  ├── API/              各模型 API 封装
-  ├── io/               输入输出与格式导出
-  ├── slicer/           音频切片
-  └── quant/            音符量化
-modules/、lib/          模型/算法基础模块与通用底层工具（规划中）
-configs/                配置文件（规划中）
-deployment/             导出/部署相关能力（规划中）
-tools/                  离线工具脚本（规划中）
+```text
+gui -> application -> inference
 ```
 
----
+The intended dependency direction is one-way:
 
-## 2. 依赖方向（必须遵守）
+- `gui/` should not directly depend on low-level runtime details when an application-layer entrypoint exists.
+- `application/` coordinates jobs and validates configuration.
+- `inference/` owns the actual transcription, alignment, pitch extraction, slicing, and export logic.
 
-推荐依赖方向：
+## Top-level structure
 
-```
-gui → application → inference → modules/lib
-```
+```text
+application/
+  config.py
+  pipeline.py
 
-约束说明：
+gui/
+  fluent_main.py
+  auto_lyric_view.py
+  global_settings_view.py
+  fluent_worker.py
 
-1. **GUI 不直接 import** `inference.auto_lyric_hybrid` 等重流程模块
-2. GUI 通过 `application` 层调用稳定入口
-3. `inference` 不依赖 `gui`
-4. `tools/` 不作为运行期核心依赖
-5. 第三方源码应存放于 `third_party/`，与业务代码隔离
-
----
-
-## 3. 各层职责
-
-### 3.1 界面层 `gui/`
-
-| 文件 | 职责 |
-|------|------|
-| `gui/fluent_main.py` | 应用主窗口，初始化界面和导航 |
-| `gui/fluent_worker.py` | 后台工作线程，执行推理任务 |
-| `gui/fluent_views.py` | 主视图组件，含参数面板和日志输出 |
-| `gui/fluent_utils.py` | UI 工具函数 |
-| `gui/auto_lyric_view.py` | 自动歌词提取界面 |
-| `gui/global_settings_view.py` | 全局设置界面（模型路径等） |
-
-### 3.2 应用编排层 `application/`
-
-| 文件 | 职责 |
-|------|------|
-| `application/pipeline.py` | `run_auto_lyric_job()` 函数，作为 GUI 调用推理的统一入口 |
-
-**设计原则**：GUI 通过 `run_auto_lyric_job()` 间接调用推理管线，不直接依赖 `inference` 内部实现。便于未来替换管线实现而不影响界面代码。
-
-### 3.3 推理层 `inference/`
-
-#### 流水线编排
-
-| 文件 | 职责 |
-|------|------|
-| `inference/pipeline/auto_lyric_hybrid.py` | 主混合管线：串联 ASR → LyricFA → HubertFA → GAME → RMVPE → 导出 |
-
-#### API 模块
-
-| 文件 | 职责 |
-|------|------|
-| `inference/API/asr_api.py` | Qwen3-ASR 语音识别，通过子进程隔离运行 |
-| `inference/API/lfa_api.py` | LyricFA 歌词强制对齐与音素匹配 |
-| `inference/API/hfa_api.py` | HubertFA ONNX 模型音素级强制对齐 |
-| `inference/API/game_api.py` | GAME PyTorch 模型音符提取与歌词对齐 |
-| `inference/API/rmvpe_api.py` | RMVPE 歌声音高估计 |
-| `inference/API/slicer_api.py` | 音频切片策略（智能/启发式/网格搜索） |
-
-#### 输入输出
-
-| 文件 | 职责 |
-|------|------|
-| `inference/io/note_io.py` | `NoteInfo` dataclass 及 MIDI/TXT/CSV 格式导出 |
-
-#### 音频切片
-
-| 文件 | 职责 |
-|------|------|
-| `inference/slicer/slicer2.py` | 静音检测切片器 |
-
-#### 音符量化
-
-| 文件 | 职责 |
-|------|------|
-| `inference/quant/quantization.py` | 音符时序量化（简单/智能/动态规划模式） |
-
----
-
-## 4. 主处理流程
-
-```
-用户音频
-  │
-  ▼
-[1] 音频切片 (Slicer)
-  │   - 基于静音检测将音频切分为片段
-  │
-  ▼
-[2] ASR 语音识别 (Qwen3-ASR)
-  │   - 对每个片段进行语音识别，生成文本与音素序列
-  │
-  ▼
-[3] 歌词匹配 (LyricFA)  ← 可选
-  │   - 将 ASR 音素序列与用户提供的参考歌词匹配
-  │   - 修正 ASR 识别错误
-  │
-  ▼
-[4] 生成 .lab 音素标签
-  │
-  ▼
-[5] 强制对齐 (HubertFA)
-  │   - 将音素对齐到音频帧级别
-  │
-  ▼
-[6] 音符提取 (GAME)
-  │   - 从对齐的音素序列中提取音符起止时间和音高
-  │
-  ▼
-[7] 音高曲线提取 (RMVPE)  ← 可选
-  │   - 提取帧级音高曲线用于 USTX 导出
-  │
-  ▼
-[8] 音符对齐与量化
-  │   - 将音符与歌词单元对齐
-  │   - 量化音符时间到节拍网格
-  │
-  ▼
-[9] 格式导出
-      - .mid / .ustx / .txt / .csv / TextGrid
+inference/
+  API/
+  HubertFA/
+  LyricFA/
+  game/
+  io/
+  pipeline/
+  qwen3asr_dml/
+  quant/
+  romaji_asr/
+  slicer/
+  device_utils.py
 ```
 
----
+## Main runtime model
 
-## 5. 数据模型
+The current runtime split is:
 
-### NoteInfo
+- Qwen3-ASR encoder path: ONNX Runtime with DirectML when available
+- Qwen3-ASR decoder path: `llama.cpp` on CPU
+- Romaji ASR: ONNX Runtime
+- HubertFA: ONNX Runtime
+- GAME: ONNX Runtime
+- RMVPE: ONNX Runtime
 
-核心数据结构，定义在 `inference/io/note_io.py`：
+Device normalization is centralized in `inference/device_utils.py`.
 
-```python
-@dataclass
-class NoteInfo:
-    start_time: float   # 音符起始时间（秒）
-    end_time: float     # 音符结束时间（秒）
-    pitch: int          # MIDI 音高编号
-    lyric: str          # 歌词文本
-    phoneme: str        # 音素标注
-```
+The project accepts legacy `cuda` requests in some public interfaces, but those requests are normalized to `dml` in the current runtime path.
 
----
+## Main user entrypoints
 
-## 6. 线程模型
+### Desktop GUI
 
-```
-GUI 主线程
-  │
-  ├── GlobalSettingsInterface    # 全局设置
-  ├── AutoLyricInterface         # 自动歌词界面
-  │     │
-  │     ▼
-  │   WorkerThread (QThread)     # 后台推理线程
-  │     │
-  │     ├── 实时日志通过信号输出 (StreamRedirector)
-  │     ├── 支持 cancel_checker 安全中断
-  │     └── 完成后发送 finished_signal
-  │
-  └── 跨界面信号连接（歌词匹配开关影响自动歌词视图）
-```
+- `app_fluent.py`
+- `gui/fluent_main.py`
 
----
+The GUI is the primary interactive entrypoint. It collects user settings, launches worker threads, and routes work into the application layer.
 
-## 7. 已落地的架构调整
+### Application-layer job entry
 
-### 7.1 新增 application 层
-
-- `application/__init__.py`
 - `application/pipeline.py`
 
-其中 `run_auto_lyric_job(...)` 作为 GUI 调用主流程的统一入口，内部转发到 `inference.pipeline.auto_lyric_hybrid.auto_lyric_hybrid_pipeline(...)`。
+`run_auto_lyric_job()` is the main application-layer boundary used by the GUI. It validates required model paths and then dispatches into the hybrid inference pipeline.
 
-### 7.2 GUI 调用迁移
+### Hybrid pipeline
 
-- 文件：`gui/fluent_worker.py`
-- 变更：从直接调用 `inference.auto_lyric_hybrid_pipeline` 改为调用 `application.run_auto_lyric_job`
-- 结果：行为保持一致，但分层边界更清晰。
+- `inference/pipeline/auto_lyric_hybrid.py`
 
----
+`auto_lyric_hybrid_pipeline()` is the central end-to-end workflow for:
 
-## 8. 后续演进建议
+1. loading audio
+2. optional RMVPE pitch-curve extraction
+3. slicing
+4. ASR or romaji ASR
+5. lyric matching
+6. HubertFA forced alignment
+7. GAME note extraction
+8. export
 
-1. 将 `inference/pipeline/auto_lyric_hybrid.py` 按 stage 拆分：
-   - ASR Stage
-   - FA Stage
-   - Pitch/Note Stage
-   - Export Stage
-2. 统一取消机制、日志、异常封装
-3. 为各 stage 增加最小单元测试与 smoke test
-4. 考虑引入配置对象（dataclass）封装 30+ 个 pipeline 参数
-5. 创建 `third_party/` 目录存放第三方源码
-6. 添加 CI/CD 流水线
+## Key inference APIs
+
+### ASR
+
+- `inference/API/asr_api.py`
+
+Responsibilities:
+
+- load and cache the Qwen3-ASR DML runtime
+- load and cache the Japanese romaji ASR runtime
+- batch transcription for chunked audio
+- isolate Qwen subprocess work when needed
+
+Implementation backends:
+
+- `inference/qwen3asr_dml/`
+- `inference/romaji_asr/`
+
+### Lyric matching and G2P helpers
+
+- `inference/API/lfa_api.py`
+- `inference/LyricFA/`
+
+Responsibilities:
+
+- create lyric matchers
+- normalize ASR text or phoneme output
+- generate `.lab` alignment input
+- support Chinese and Japanese lyric display modes
+
+### Forced alignment
+
+- `inference/API/hfa_api.py`
+- `inference/HubertFA/`
+
+Responsibilities:
+
+- load the HubertFA ONNX model
+- build input datasets from chunk `.wav` and `.lab` pairs
+- run phoneme-level forced alignment
+- export TextGrid artifacts
+
+### Note extraction
+
+- `inference/API/game_api.py`
+- `inference/game/`
+
+Responsibilities:
+
+- load the GAME ONNX model set
+- run note extraction with or without lyric alignment
+- align GAME output to word durations when HFA output exists
+
+Some public function names still include `_torch` for compatibility, but the active implementation is ONNX-based.
+
+### RMVPE
+
+- `inference/API/rmvpe_api.py`
+
+Responsibilities:
+
+- load the RMVPE ONNX model
+- compute frame-level salience and F0
+- provide interpolated MIDI pitch curves for USTX export
+- optionally support smart slicing through voiced-mask information
+
+### Slicing
+
+- `inference/API/slicer_api.py`
+- `inference/slicer/`
+
+Responsibilities:
+
+- default slicing
+- heuristic or smart slicing paths
+- optional RMVPE-assisted voiced/unvoiced guidance
+
+## Data flow
+
+At a high level, the hybrid pipeline looks like this:
+
+```text
+audio
+  -> optional RMVPE
+  -> slicing
+  -> ASR / romaji ASR
+  -> lyric matching and .lab generation
+  -> HubertFA alignment
+  -> GAME note extraction
+  -> quantization
+  -> export
+```
+
+There is also a no-lyrics path:
+
+```text
+audio
+  -> optional RMVPE
+  -> slicing
+  -> GAME pitch-only extraction
+  -> export
+```
+
+## Export layer
+
+Relevant modules:
+
+- `inference/io/note_io.py`
+- `inference/API/ustx_api.py`
+
+The export layer is responsible for writing:
+
+- MIDI
+- USTX
+- TXT
+- CSV
+- TextGrid
+- chunk artifacts and logs when requested
+
+## Runtime and cancellation behavior
+
+The pipeline is built to support:
+
+- background execution from the GUI worker thread
+- cancellation via `cancel_checker`
+- chunk batching for ASR and GAME
+- runtime reuse for batch CLI flows
+
+Memory cleanup is currently lightweight and mostly centered on releasing cached model objects and running Python garbage collection.
+
+## Batch CLI path
+
+- `scripts/slice_asr_cli.py`
+
+The batch CLI provides a folder-oriented workflow that can:
+
+- scan audio files
+- slice them or bypass slicing
+- run Qwen3-ASR
+- save chunks and `.lab` files
+- optionally keep ASR and RMVPE runtimes alive across the batch
+
+## Current rough edges
+
+The repository is mid-migration, so a few historical details still remain:
+
+- some function names still mention Torch even though the backend changed
+- some UI strings are not yet normalized
+- `environment.yml` still reflects older dependency history more than the current runtime design
+
+Those issues do not change the intended architecture direction: ONNX-first inference, CPU `llama.cpp`, and stable application-layer entrypoints.
