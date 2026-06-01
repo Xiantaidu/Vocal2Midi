@@ -8,8 +8,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
-import torch
-
 
 @dataclass
 class PipelineConfig:
@@ -28,7 +26,7 @@ class PipelineConfig:
     asr_model_path: str
     device: str
     language: str
-    ts: torch.Tensor
+    ts: list[float]
 
     # ── Optional with defaults ────────────────────────────────
     lyric_output_mode: str = "auto"

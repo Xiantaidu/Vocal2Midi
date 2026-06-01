@@ -24,11 +24,11 @@ class GlobalSettingsInterface(ScrollArea):
         self.project_root = pathlib.Path(__file__).resolve().parent.parent
         self.settings = QSettings("GAME_Extractor", "Vocal2Midi")
         self.default_values = {
-            "game_model": "experiments/GAME-1.0-medium",
+            "game_model": "experiments/GAME-1.0.3-medium-onnx",
             "hfa_model": "experiments/1218_hfa_model_new_dict",
-            "asr_model": "experiments/Qwen3-ASR-1.7B",
-            "phoneme_asr_model": "inference/phonemeASR/checkpoints/exp1/best",
-            "rmvpe_model": "experiments/RMVPE/rmvpe.pt",
+            "asr_model": "experiments/Qwen3-ASR-1.7B-dml",
+            "phoneme_asr_model": "experiments/romajiASR",
+            "rmvpe_model": "experiments/RMVPE/rmvpe.onnx",
             "seg_thresh": 0.2,
             "seg_rad": 0.02,
             "est_thresh": 0.2,

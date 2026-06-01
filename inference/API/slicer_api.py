@@ -1,7 +1,6 @@
 import librosa
 import numpy as np
 import itertools
-import torch
 import functools
 from concurrent.futures import ProcessPoolExecutor
 

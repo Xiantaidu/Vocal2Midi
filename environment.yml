@@ -12,7 +12,6 @@ dependencies:
   - onnxruntime
   - pip
   - pip:
-    - qwen-asr[vllm]
     - lightning
     - librosa
     - soundfile

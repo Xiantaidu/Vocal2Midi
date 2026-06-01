@@ -1,6 +1,6 @@
-# It is recommended to install PyTorch manually.
-# PyTorch >= 2.0 is recommended, but 1.12 and 1.13 is compatible.
-# See instructions at https://pytorch.org/get-started/locally/
+# Runtime note:
+# - `llama.cpp` stays on CPU.
+# - The ONNX backends default to DirectML and fall back to CPU when DML is unavailable.
 
 click
 colorednoise
@@ -26,7 +26,6 @@ tensorboard
 tensorboardX
 torchmetrics
 onnxruntime
-qwen-asr[vllm]
 soundfile
 textgrid
 tqdm

@@ -1,10 +1,7 @@
-"""Batch slice + Qwen3-ASR CLI.
+﻿"""Batch slice + Qwen3-ASR CLI.
 
-输入一个包含 .wav / .m4a 的目录，默认先切片，再对切片做 Qwen3-ASR，
-最后把切片 wav 和对应的 .lab 纯文本输出到指定目录。
-
-加上 --no-slice 时，会直接把整段音频当成一个 chunk 送入 ASR。
-"""
+杈撳叆涓€涓寘鍚?.wav / .m4a 鐨勭洰褰曪紝榛樿鍏堝垏鐗囷紝鍐嶅鍒囩墖鍋?Qwen3-ASR锛?鏈€鍚庢妸鍒囩墖 wav 鍜屽搴旂殑 .lab 绾枃鏈緭鍑哄埌鎸囧畾鐩綍銆?
+鍔犱笂 --no-slice 鏃讹紝浼氱洿鎺ユ妸鏁存闊抽褰撴垚涓€涓?chunk 閫佸叆 ASR銆?"""
 
 from __future__ import annotations
 
@@ -29,10 +26,11 @@ if str(ROOT_DIR) not in sys.path:
 from inference.API.asr_api import batch_transcribe_asr, load_qwen_model, clear_qwen_model_cache
 from inference.API.rmvpe_api import RmvpeTranscriber
 from inference.API.slicer_api import slice_audio
+from inference.device_utils import RUNTIME_DEVICE_CHOICES, normalize_runtime_device
 
 
-DEFAULT_RMVPE_MODEL = ROOT_DIR / "experiments" / "RMVPE" / "rmvpe.pt"
-INPUT_AUDIO_EXTENSIONS = (".wav", ".m4a")
+DEFAULT_RMVPE_MODEL = ROOT_DIR / "experiments" / "RMVPE" / "rmvpe.onnx"
+INPUT_AUDIO_EXTENSIONS = (".wav", ".m4a", ".mp3")
 SOURCE_INDEX_NAME = "_source_index.json"
 
 
@@ -73,11 +71,11 @@ def load_audio(path: Path, sr: int = 44100):
         return librosa.load(str(path), sr=sr, mono=True)
     except Exception as exc:
         if path.suffix.lower() == ".m4a":
-            ffmpeg_status = "当前 PATH 中未找到 ffmpeg。" if shutil.which("ffmpeg") is None else "当前 PATH 中已找到 ffmpeg。"
+            ffmpeg_status = "ffmpeg was not found on PATH." if shutil.which("ffmpeg") is None else "ffmpeg was found on PATH."
             raise RuntimeError(
-                f"读取 M4A 失败: {path}\n"
+                f"Failed to read M4A file: {path}\n"
                 f"{ffmpeg_status}\n"
-                "请安装 FFmpeg 并加入 PATH，或把 ffmpeg.exe 放到项目的 _ffmpeg/bin/ 目录。"
+                "Install FFmpeg and add it to PATH, or place ffmpeg.exe under _ffmpeg/bin/."
             ) from exc
         raise
 
@@ -110,17 +108,14 @@ def source_key(audio_path: Path, source_md5: Optional[str] = None) -> str:
     return f"{safe_stem(audio_path)}_{md5[:8]}"
 
 
-def free_torch_memory():
+def free_runtime_memory():
     import gc
-    import torch
 
     gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
 
 
 def should_use_rmvpe_for_slicing(slicing_method: str, rmvpe_model_path: Optional[str]) -> bool:
-    return slicing_method == "智能切片" and bool(rmvpe_model_path)
+    return slicing_method == "鏅鸿兘鍒囩墖" and bool(rmvpe_model_path)
 
 
 def has_existing_outputs(audio_path: Path, output_dir: Path, source_md5: str, recursive_output: bool = True) -> bool:
@@ -197,14 +192,12 @@ def save_timestamps_json(
     source_audio: Optional[Path] = None,
     source_md5: Optional[str] = None,
 ):
-    """将切片的精确时间戳和 ASR 转写结果保存为 JSON 文件。
-
-    每个 chunk 的记录包含：
-        - index: 切片序号
-        - offset: 切片在原始音频中的起始时间 (秒)
-        - duration: 切片时长 (秒)
-        - text: ASR 转写文本（lab 内容）
-    """
+    """灏嗗垏鐗囩殑绮剧‘鏃堕棿鎴冲拰 ASR 杞啓缁撴灉淇濆瓨涓?JSON 鏂囦欢銆?
+    姣忎釜 chunk 鐨勮褰曞寘鍚細
+        - index: 鍒囩墖搴忓彿
+        - offset: 鍒囩墖鍦ㄥ師濮嬮煶棰戜腑鐨勮捣濮嬫椂闂?(绉?
+        - duration: 鍒囩墖鏃堕暱 (绉?
+        - text: ASR 杞啓鏂囨湰锛坙ab 鍐呭锛?    """
     json_dir.mkdir(parents=True, exist_ok=True)
     records = []
     for idx, res in enumerate(results):
@@ -220,7 +213,7 @@ def save_timestamps_json(
             "duration": round(dur, 6),
             "text": text,
         })
-    # 按 offset 排序保证时间顺序
+    # 鎸?offset 鎺掑簭淇濊瘉鏃堕棿椤哄簭
     records.sort(key=lambda r: r["offset"])
     json_path = json_dir / f"{source_stem}.json"
     payload = {
@@ -241,23 +234,22 @@ def slice_audio_from_json(
     output_dir: Path,
     sr: int = 44100,
 ) -> int:
-    """根据 JSON 中记录的精确时间戳对音频进行切分。
-
-    JSON 格式应为 save_timestamps_json 输出的格式：
+    """鏍规嵁 JSON 涓褰曠殑绮剧‘鏃堕棿鎴冲闊抽杩涜鍒囧垎銆?
+    JSON 鏍煎紡搴斾负 save_timestamps_json 杈撳嚭鐨勬牸寮忥細
         [{"index": 0, "offset": 0.0, "duration": 5.0, "text": "..."}, ...]
 
-    输出命名规则与原切片一致：
+    杈撳嚭鍛藉悕瑙勫垯涓庡師鍒囩墖涓€鑷达細
         {stem}_chunk{index:04d}_off{offset:08.2f}s_dur{duration:07.2f}s.wav
     """
     if not json_path.is_file():
-        raise FileNotFoundError(f"JSON 文件不存在: {json_path}")
+        raise FileNotFoundError(f"JSON 鏂囦欢涓嶅瓨鍦? {json_path}")
     if not source_audio.is_file():
-        raise FileNotFoundError(f"音频文件不存在: {source_audio}")
+        raise FileNotFoundError(f"闊抽鏂囦欢涓嶅瓨鍦? {source_audio}")
 
     loaded = json.loads(json_path.read_text(encoding="utf-8"))
     records = loaded.get("chunks", []) if isinstance(loaded, dict) else loaded
     if not records:
-        print(f"[SKIP] JSON 文件为空: {json_path}")
+        print(f"[SKIP] JSON 鏂囦欢涓虹┖: {json_path}")
         return 0
 
     stem = safe_stem(source_audio)
@@ -278,8 +270,7 @@ def slice_audio_from_json(
 
         start_sample = int(offset * actual_sr)
         end_sample = int((offset + dur) * actual_sr)
-        # 裁剪超出音频长度的部分
-        end_sample = min(end_sample, waveform.shape[-1])
+        # 瑁佸壀瓒呭嚭闊抽闀垮害鐨勯儴鍒?        end_sample = min(end_sample, waveform.shape[-1])
         if start_sample >= end_sample:
             print(f"  [SKIP] chunk {idx}: invalid range [{offset:.4f}s - {offset + dur:.4f}s]")
             continue
@@ -290,12 +281,12 @@ def slice_audio_from_json(
         sf.write(out_path, chunk_wav, actual_sr)
         written += 1
 
-        # 同时输出对应的 lab 文件
+        # 鍚屾椂杈撳嚭瀵瑰簲鐨?lab 鏂囦欢
         if text:
             lab_name = f"{stem}_chunk{idx:04d}_off{offset:08.2f}s.lab"
             (output_dir / lab_name).write_text(text, encoding="utf-8")
 
-    print(f"  Sliced {written}/{len(records)} chunks from JSON timestamps → {output_dir}")
+    print(f"  Sliced {written}/{len(records)} chunks from JSON timestamps 鈫?{output_dir}")
     return written
 
 
@@ -330,11 +321,8 @@ def process_one_file(
     rmvpe_model: Optional[RmvpeTranscriber] = None,
     source_md5: Optional[str] = None,
 ):
-    """处理单个音频文件：切片 → ASR → 输出 .wav + .lab。
-
-    当 asr_model 不为 None 时，直接在主进程中使用持久化模型进行转写（跳过子进程），
-    避免每个文件重复加载模型到 VRAM。
-    """
+    """澶勭悊鍗曚釜闊抽鏂囦欢锛氬垏鐗?鈫?ASR 鈫?杈撳嚭 .wav + .lab銆?
+    褰?asr_model 涓嶄负 None 鏃讹紝鐩存帴鍦ㄤ富杩涚▼涓娇鐢ㄦ寔涔呭寲 ASR 杩愯鏃惰繘琛岃浆鍐欙紙璺宠繃瀛愯繘绋嬶級锛?    閬垮厤姣忎釜鏂囦欢閲嶅鍒濆鍖?Qwen3 DML runtime銆?    """
     output_stem = source_key(audio_path, source_md5)
     wav_out_dir = output_dir / "slices"
     lab_out_dir = output_dir / "labs"
@@ -370,7 +358,7 @@ def process_one_file(
         finally:
             if own_rmvpe_model:
                 del rmvpe_model
-                free_torch_memory()
+                free_runtime_memory()
 
         chunks = slice_audio(
             waveform,
@@ -396,7 +384,7 @@ def process_one_file(
         save_chunks(wav_out_dir, output_stem, chunks, sr)
 
         if asr_model is not None:
-            # 持久化模型模式：主进程内直接推理，避免反复加载/卸载模型
+            # 鎸佷箙鍖栨ā鍨嬫ā寮忥細涓昏繘绋嬪唴鐩存帴鎺ㄧ悊锛岄伩鍏嶅弽澶嶅姞杞?鍗歌浇妯″瀷
             results, chunk_indices = batch_transcribe_asr(
                 chunks=chunks,
                 sr=sr,
@@ -410,7 +398,7 @@ def process_one_file(
                 asr_timeout_sec=180,
             )
         else:
-            # 子进程模式：每个文件创建一个新的子进程加载模型
+            # Subprocess mode: create a fresh ASR runtime for this file.
             results, chunk_indices = batch_transcribe_asr(
                 chunks=chunks,
                 sr=sr,
@@ -436,7 +424,7 @@ def process_one_file(
             (lab_out_dir / lab_name).write_text(lab_text, encoding="utf-8")
             written += 1
 
-        # 保存精确时间戳 JSON
+        # 淇濆瓨绮剧‘鏃堕棿鎴?JSON
         if save_json:
             save_timestamps_json(
                 json_out_dir,
@@ -455,56 +443,61 @@ def process_one_file(
 
 def build_argparser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Batch slice WAV/M4A files and run Qwen3-ASR to export .wav + .lab outputs."
+        description="Batch slice audio files and run the local Qwen3-ASR ONNX runtime."
     )
-    parser.add_argument("input_dir", type=Path, help="包含 .wav / .m4a 的输入文件夹")
-    parser.add_argument("output_dir", type=Path, help="切片与 .lab 输出目录")
-    parser.add_argument("--asr-model", required=True, help="Qwen3-ASR 模型路径或 HuggingFace ID")
-    parser.add_argument("--device", default="cuda", choices=["cuda", "cpu"], help="ASR 设备")
-    parser.add_argument("--language", default="zh", choices=["zh", "ja"], help="ASR 语言")
+    parser.add_argument("input_dir", type=Path, help="Input folder containing audio files")
+    parser.add_argument("output_dir", type=Path, help="Output folder for slices and lab files")
+    parser.add_argument("--asr-model", required=True, help="Local Qwen3-ASR DML model directory")
+    parser.add_argument(
+        "--device",
+        default="dml",
+        choices=list(RUNTIME_DEVICE_CHOICES),
+        help="Runtime device. Legacy 'cuda' is accepted and mapped to 'dml'.",
+    )
+    parser.add_argument("--language", default="zh", choices=["zh", "ja"], help="ASR language")
     parser.add_argument(
         "--slicing-method",
-        default="默认切片",
-        choices=["默认切片", "智能切片", "启发式切片", "网格搜索切片"],
-        help="切片策略；--no-slice 时忽略；默认切片 = default_slice()（Slicer(threshold=-30, min_length=5000, max_sil_kept=500)）",
+        default="榛樿鍒囩墖",
+        choices=["榛樿鍒囩墖", "鏅鸿兘鍒囩墖", "鍚彂寮忓垏鐗?", "缃戞牸鎼滅储鍒囩墖"],
+        help="Slicing strategy. Ignored when --no-slice is enabled.",
     )
     parser.add_argument(
         "--no-slice",
         action="store_true",
-        help="不进行切片，整段音频直接作为一个 chunk 送入 ASR",
+        help="Bypass slicing and send the whole file to ASR as a single chunk",
     )
-    parser.add_argument("--asr-batch-size", type=int, default=4, help="ASR 批大小")
+    parser.add_argument("--asr-batch-size", type=int, default=4, help="ASR batch size")
     parser.add_argument(
         "--rmvpe-model",
         default=str(DEFAULT_RMVPE_MODEL),
-        help="RMVPE 模型路径；智能切片时用于有声/无声检测。传空字符串可关闭 RMVPE 辅助切片",
+        help="RMVPE model path used by smart slicing. Pass an empty string to disable it.",
     )
-    parser.add_argument("--rmvpe-batch-size", type=int, default=8, help="RMVPE 推理批大小")
-    parser.add_argument("--file-batch-size", type=int, default=1, help="文件批大小（按文件分批处理）")
-    parser.add_argument("--no-recursive", action="store_true", help="只扫描输入目录第一层音频文件")
-    parser.add_argument("--no-skip-existing", action="store_true", help="不跳过已有输出，强制重新处理")
-    parser.add_argument("--save-json", action="store_true", help="保存每个文件的切片时间戳和 ASR 结果为 JSON")
+    parser.add_argument("--rmvpe-batch-size", type=int, default=8, help="RMVPE batch size")
+    parser.add_argument("--file-batch-size", type=int, default=1, help="Number of audio files to process per batch")
+    parser.add_argument("--no-recursive", action="store_true", help="Only scan the top level of the input directory")
+    parser.add_argument("--no-skip-existing", action="store_true", help="Reprocess files even if outputs already exist")
+    parser.add_argument("--save-json", action="store_true", help="Save slice timing and ASR outputs as JSON")
     parser.add_argument(
         "--from-json",
         type=Path,
         default=None,
-        help="从 JSON 时间戳文件对音频进行切分（需配合 --source-audio 和 --output-dir）",
+        help="Slice by an existing JSON timing file together with --source-audio and --output-dir",
     )
     parser.add_argument(
         "--source-audio",
         type=Path,
         default=None,
-        help="配合 --from-json 使用的源音频文件路径",
+        help="Source audio file used with --from-json",
     )
     parser.add_argument(
         "--keep-model",
         action="store_true",
-        help="ASR 模型持久驻留 VRAM，避免每个文件重复加载（显著节省批量处理时间）",
+        help="Reuse the ASR runtime in the current process across the whole batch",
     )
     parser.add_argument(
         "--keep-rmvpe",
         action="store_true",
-        help="智能切片时让 RMVPE 模型持久驻留 VRAM，避免每个文件重复加载",
+        help="Reuse the RMVPE runtime in the current process during smart slicing",
     )
     return parser
 
@@ -512,11 +505,12 @@ def build_argparser() -> argparse.ArgumentParser:
 def main():
     args = build_argparser().parse_args()
     ensure_ffmpeg_on_path()
+    args.device = normalize_runtime_device(args.device)
 
-    # ---- 从 JSON 切分的独立模式 ----
+    # ---- 浠?JSON 鍒囧垎鐨勭嫭绔嬫ā寮?----
     if args.from_json is not None:
         if args.source_audio is None:
-            raise ValueError("--from-json 模式需要同时指定 --source-audio")
+            raise ValueError("--from-json 妯″紡闇€瑕佸悓鏃舵寚瀹?--source-audio")
         json_path = args.from_json.resolve()
         source_audio = args.source_audio.resolve()
         output_dir = args.output_dir.resolve()
@@ -534,7 +528,7 @@ def main():
     rmvpe_model_path = str(args.rmvpe_model).strip()
 
     if not input_dir.exists() or not input_dir.is_dir():
-        raise FileNotFoundError(f"输入目录不存在: {input_dir}")
+        raise FileNotFoundError(f"杈撳叆鐩綍涓嶅瓨鍦? {input_dir}")
 
     audio_files = collect_audio_files(input_dir, recursive=not args.no_recursive)
     if not audio_files:
@@ -553,19 +547,18 @@ def main():
     if args.keep_rmvpe and args.no_slice:
         print("[Keep-RMVPE] Ignored: --no-slice bypasses slicing entirely.")
     elif args.keep_rmvpe and not use_rmvpe_for_slicing:
-        print("[Keep-RMVPE] Ignored: RMVPE is only used with --slicing-method 智能切片 and a non-empty --rmvpe-model.")
+        print("[Keep-RMVPE] Ignored: RMVPE is only used with --slicing-method 鏅鸿兘鍒囩墖 and a non-empty --rmvpe-model.")
 
-    # 持久化模型：主进程中一次性加载，所有文件共享
-    asr_model = None
+    # 鎸佷箙鍖栨ā鍨嬶細涓昏繘绋嬩腑涓€娆℃€у姞杞斤紝鎵€鏈夋枃浠跺叡浜?    asr_model = None
     rmvpe_model = None
     if args.keep_model:
-        print(f"[Keep-Model] Loading ASR model into VRAM once for all files: {args.asr_model}")
+        print(f"[Keep-Model] Loading ASR runtime once for all files: {args.asr_model}")
         asr_model = load_qwen_model(args.asr_model, args.device, use_cache=False)
-        print("[Keep-Model] Model loaded. Will remain in VRAM for the entire batch.")
+        print("[Keep-Model] Runtime loaded. It will be reused for the entire batch.")
     if args.keep_rmvpe and use_rmvpe_for_slicing:
-        print(f"[Keep-RMVPE] Loading RMVPE model into VRAM once for all files: {rmvpe_model_path}")
+        print(f"[Keep-RMVPE] Loading RMVPE runtime once for all files: {rmvpe_model_path}")
         rmvpe_model = RmvpeTranscriber(rmvpe_model_path, device=args.device, batch_size=args.rmvpe_batch_size)
-        print("[Keep-RMVPE] Model loaded. Will remain in VRAM for the entire batch.")
+        print("[Keep-RMVPE] Runtime loaded. It will be reused for the entire batch.")
 
     try:
         print(f"Found {len(audio_files)} audio files. Processing in file batches of {args.file_batch_size}...")
@@ -620,11 +613,11 @@ def main():
                 total_labs += labs
     finally:
         if rmvpe_model is not None:
-            print("\n[Keep-RMVPE] Releasing RMVPE model from VRAM...")
+            print("\n[Keep-RMVPE] Releasing cached RMVPE runtime...")
             del rmvpe_model
-            free_torch_memory()
+            free_runtime_memory()
         if asr_model is not None:
-            print("\n[Keep-Model] Releasing ASR model from VRAM...")
+            print("\n[Keep-Model] Releasing cached ASR runtime...")
             clear_qwen_model_cache()
             del asr_model
 
@@ -637,3 +630,6 @@ def main():
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+

@@ -3,7 +3,6 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-import torch
 
 from inference.io.note_io import NoteInfo
 from inference.pipeline import auto_lyric_hybrid as pipeline
@@ -17,7 +16,7 @@ def _base_kwargs(tmp_path: Path) -> dict:
         "device": "cpu",
         "hfa_model_dir": "hfa",
         "asr_model_path": "asr",
-        "ts": torch.tensor([0.0]),
+        "ts": [0.0],
         "language": "ja",
         "lyric_output_mode": "auto",
         "original_lyrics": "",
@@ -49,10 +48,10 @@ def _patch_common(monkeypatch):
 def test_ja_auto_mode_uses_phoneme_asr_when_enabled(monkeypatch, tmp_path):
     chunks = _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
-    monkeypatch.setattr(pipeline, "_select_phoneme_asr_path", lambda path: "phoneme")
+    monkeypatch.setattr(pipeline, "_select_romaji_asr_path", lambda path: "phoneme")
     run_phoneme = MagicMock(return_value=({"chunk_0": ["a"]}, ["log"]))
     run_qwen = MagicMock(return_value=({"chunk_0": ["a"]}, ["log"]))
-    monkeypatch.setattr(pipeline, "run_phoneme_asr_and_fa", run_phoneme)
+    monkeypatch.setattr(pipeline, "run_romaji_asr", run_phoneme)
     monkeypatch.setattr(pipeline, "run_qwen_asr_and_fa", run_qwen)
     monkeypatch.setattr(pipeline, "load_hfa_model", lambda *args, **kwargs: MagicMock())
     monkeypatch.setattr(pipeline, "run_hubert_fa", lambda *args, **kwargs: {"chunk_0": (None, None, [MagicMock()])})
@@ -74,13 +73,42 @@ def test_ja_auto_mode_uses_phoneme_asr_when_enabled(monkeypatch, tmp_path):
     assert run_phoneme.call_args.args[0] is chunks
 
 
+def test_ja_auto_mode_still_uses_hfa_after_romaji_asr(monkeypatch, tmp_path):
+    chunks = _patch_common(monkeypatch)
+    monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline, "_select_romaji_asr_path", lambda path: "phoneme")
+
+    run_phoneme = MagicMock(return_value=({"chunk_0": ["a"]}, ["log"]))
+    load_hfa = MagicMock(return_value=MagicMock())
+    run_hfa = MagicMock(return_value={"chunk_0": (None, None, [MagicMock()])})
+
+    monkeypatch.setattr(pipeline, "run_romaji_asr", run_phoneme)
+    monkeypatch.setattr(pipeline, "load_hfa_model", load_hfa)
+    monkeypatch.setattr(pipeline, "run_hubert_fa", run_hfa)
+    monkeypatch.setattr(pipeline, "export_hfa_artifacts", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        pipeline,
+        "extract_pitches_and_align_torch",
+        lambda *args, **kwargs: ([NoteInfo(0.0, 0.5, 60.0, "a")], {0}),
+    )
+
+    kwargs = _base_kwargs(tmp_path)
+    kwargs["use_phoneme_asr_for_ja_without_lyrics"] = True
+
+    pipeline.auto_lyric_hybrid_pipeline(**kwargs)
+
+    run_phoneme.assert_called_once()
+    load_hfa.assert_called_once()
+    run_hfa.assert_called_once()
+
+
 def test_no_lyrics_mode_skips_asr_and_hfa(monkeypatch, tmp_path):
     chunks = _patch_common(monkeypatch)
     run_qwen = MagicMock()
     run_phoneme = MagicMock()
     load_hfa = MagicMock()
     monkeypatch.setattr(pipeline, "run_qwen_asr_and_fa", run_qwen)
-    monkeypatch.setattr(pipeline, "run_phoneme_asr_and_fa", run_phoneme)
+    monkeypatch.setattr(pipeline, "run_romaji_asr", run_phoneme)
     monkeypatch.setattr(pipeline, "load_hfa_model", load_hfa)
     extract_only = MagicMock(return_value=[NoteInfo(0.0, 0.5, 60.0, "")])
     monkeypatch.setattr(pipeline, "extract_pitches_only_torch", extract_only)

@@ -1,6 +1,5 @@
 import numpy as np
 import pytest
-import torch
 
 from inference.API.game_api import extract_pitches_only_torch
 
@@ -8,7 +7,7 @@ from inference.API.game_api import extract_pitches_only_torch
 class _FailingGameModel:
     timestep = 0.01
 
-    def __call__(self, **kwargs):
+    def infer_batch(self, **kwargs):
         raise RuntimeError("GAME exploded")
 
 
@@ -21,7 +20,7 @@ def test_no_lyrics_game_inference_error_is_not_swallowed():
             sr=16000,
             game_model=_FailingGameModel(),
             device="cpu",
-            ts=torch.tensor([0.0]),
+            ts=[0.0],
             seg_threshold=0.2,
             seg_radius=0.02,
             est_threshold=0.2,

@@ -3,7 +3,6 @@ import sys
 import tempfile
 
 import librosa
-import torch
 
 # Allow running this script directly from anywhere
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -14,14 +13,15 @@ from inference.API.slicer_api import slice_audio
 from inference.io.note_io import _save_midi, _save_text
 from inference.quant.quantization import quantize_notes, should_apply_quantization
 
-from inference.API.asr_api import batch_transcribe_asr, batch_transcribe_phoneme_asr
+from inference.API.asr_api import batch_transcribe_asr, batch_transcribe_romaji_asr
 from inference.API.lfa_api import create_lyric_matcher, process_asr_to_phonemes, _normalize_lyric_output_mode
 from inference.API.hfa_api import load_hfa_model, run_hubert_fa, export_hfa_artifacts
 from inference.API.game_api import load_game_model, extract_pitches_and_align_torch, extract_pitches_only_torch
 from inference.API.rmvpe_api import RmvpeTranscriber
 from inference.API.ustx_api import save_ustx
+from inference.device_utils import RUNTIME_DEVICE_CHOICES, normalize_runtime_device
 
-PHONEME_ASR_DEFAULT_CKPT = pathlib.Path(__file__).resolve().parent.parent / "phonemeASR" / "checkpoints" / "exp1" / "best" / "model.safetensors"
+ROMAJI_ASR_DEFAULT_DIR = pathlib.Path(__file__).resolve().parents[2] / "experiments" / "romajiASR"
 
 
 def _normalize_output_formats(output_formats) -> list[str]:
@@ -40,12 +40,16 @@ def _resolve_output_key(output_filename: str, audio_path: str) -> str:
     return output_key
 
 
-def _select_phoneme_asr_path(phoneme_asr_model_path: str) -> str | None:
+def _select_romaji_asr_path(phoneme_asr_model_path: str) -> str | None:
     if phoneme_asr_model_path:
         return phoneme_asr_model_path
-    if PHONEME_ASR_DEFAULT_CKPT.exists():
-        return str(PHONEME_ASR_DEFAULT_CKPT)
+    if ROMAJI_ASR_DEFAULT_DIR.exists():
+        return str(ROMAJI_ASR_DEFAULT_DIR)
     return None
+
+
+def _select_phoneme_asr_path(phoneme_asr_model_path: str) -> str | None:
+    return _select_romaji_asr_path(phoneme_asr_model_path)
 
 
 def _validate_runtime_options(tempo: float, batch_size: int, asr_batch_size: int) -> None:
@@ -72,11 +76,10 @@ def _resolve_rmvpe_path(model_path: str) -> str:
         raise ValueError("RMVPE 模型路径不能为空")
     return model_path
 
+
 def free_memory():
     import gc
     gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
 
 def run_qwen_asr_and_fa(
     chunks,
@@ -91,7 +94,7 @@ def run_qwen_asr_and_fa(
     cancel_checker=None,
 ):
     """
-    Runs ASR using the PyTorch Qwen model with batching and prepares .lab files for HubertFA.
+    Runs ASR using the Qwen DML+CPU runtime with batching and prepares .lab files for HubertFA.
     """
     all_results, chunk_indices = batch_transcribe_asr(
         chunks,
@@ -116,7 +119,7 @@ def run_qwen_asr_and_fa(
     )
 
 
-def run_phoneme_asr_and_fa(
+def run_romaji_asr(
     chunks,
     sr,
     temp_dir_path,
@@ -125,18 +128,20 @@ def run_phoneme_asr_and_fa(
     device,
     language="ja",
     lyric_output_mode=None,
+    asr_batch_size=1,
     cancel_checker=None,
     write_asr_phoneme_lab=False,
 ):
-    all_results, chunk_indices = batch_transcribe_phoneme_asr(
+    all_results, chunk_indices = batch_transcribe_romaji_asr(
         chunks,
         sr,
         temp_dir_path=temp_dir_path,
-        phoneme_ckpt_dir=asr_model_path,
+        model_dir=asr_model_path,
         device=device,
+        asr_batch_size=asr_batch_size,
         cancel_checker=cancel_checker,
     )
-    return process_asr_to_phonemes(
+    chars_dict, chunk_logs = process_asr_to_phonemes(
         all_results,
         chunk_indices,
         temp_dir_path,
@@ -146,6 +151,11 @@ def run_phoneme_asr_and_fa(
         use_asr_phonemes=True,
         write_asr_phoneme_lab=write_asr_phoneme_lab,
     )
+    return chars_dict, chunk_logs
+
+
+def run_phoneme_asr_and_fa(*args, **kwargs):
+    return run_romaji_asr(*args, **kwargs)
 
 def auto_lyric_hybrid_pipeline(
     audio_path: str,
@@ -154,7 +164,7 @@ def auto_lyric_hybrid_pipeline(
     device: str,
     hfa_model_dir: str,
     asr_model_path: str,
-    ts: torch.Tensor,
+    ts: list[float],
     language: str,
     lyric_output_mode: str,
     original_lyrics: str,
@@ -179,7 +189,8 @@ def auto_lyric_hybrid_pipeline(
     use_phoneme_asr_for_ja_without_lyrics: bool = False,
     cancel_checker=None,
 ):
-    """Auto Lyric Hybrid (PyTorch + ONNX-GPU) Pipeline"""
+    """Auto Lyric Hybrid ONNX pipeline."""
+    device = normalize_runtime_device(device)
     _validate_runtime_options(tempo, batch_size, asr_batch_size)
     output_key = _resolve_output_key(output_filename, audio_path)
     output_formats = _normalize_output_formats(output_formats)
@@ -252,21 +263,22 @@ def auto_lyric_hybrid_pipeline(
             use_phoneme_asr = language == "ja" and lyric_output_mode == "romaji" and (
                 matcher is not None or use_phoneme_asr_for_ja_without_lyrics
             )
+            phoneme_asr_path = None
             if use_phoneme_asr:
                 if matcher is not None:
-                    print("\n--- Stage 1/3: Running phoneme ASR for Japanese romaji mode ---")
+                    print("\n--- Stage 1/3: Running romaji ASR for Japanese lyric mode ---")
                 else:
-                    print("\n--- Stage 1/3: Running phoneme ASR for Japanese phoneme-lab mode (no reference lyrics) ---")
-                phoneme_asr_path = _select_phoneme_asr_path(phoneme_asr_model_path)
+                    print("\n--- Stage 1/3: Running romaji ASR for Japanese token-lab mode (no reference lyrics) ---")
+                phoneme_asr_path = _select_romaji_asr_path(phoneme_asr_model_path)
                 if phoneme_asr_path is None:
                     print(
-                        "[Warning] Phoneme ASR checkpoint not found; "
+                        "[Warning] Romaji ASR model not found; "
                         "falling back to text ASR + Japanese G2P."
                     )
                     use_phoneme_asr = False
 
             if use_phoneme_asr:
-                chars_dict, chunk_logs = run_phoneme_asr_and_fa(
+                chars_dict, chunk_logs = run_romaji_asr(
                     chunks,
                     sr,
                     temp_dir_path,
@@ -275,13 +287,14 @@ def auto_lyric_hybrid_pipeline(
                     device=device,
                     language=language,
                     lyric_output_mode=lyric_output_mode,
+                    asr_batch_size=asr_batch_size,
                     cancel_checker=cancel_checker,
                     write_asr_phoneme_lab=(matcher is None),
                 )
                 hfa_use_phoneme_g2p = (matcher is None)
             else:
                 if language == "ja" and lyric_output_mode == "romaji":
-                    reason = "No reference lyrics provided" if matcher is None else "Phoneme ASR unavailable"
+                    reason = "No reference lyrics provided" if matcher is None else "Romaji ASR unavailable"
                     print(f"\n--- Stage 1/3: {reason}; fallback to text ASR + Japanese G2P for romaji mode ---")
                 else:
                     print("\n--- Stage 1/3: Running ASR in subprocess isolation mode ---")
@@ -373,6 +386,7 @@ def auto_lyric_hybrid_pipeline(
                     seg_threshold, seg_radius, est_threshold, batch_size,
                     debug_mode=debug_mode,
                     cancel_checker=cancel_checker,
+                    language=language,
                 )
                 if isinstance(aligned_result, tuple):
                     all_notes, processed_aligned_chunks = aligned_result
@@ -394,6 +408,7 @@ def auto_lyric_hybrid_pipeline(
                             seg_threshold, seg_radius, est_threshold, batch_size,
                             debug_mode=debug_mode,
                             cancel_checker=cancel_checker,
+                            language=language,
                         )
                     )
             else:
@@ -402,6 +417,7 @@ def auto_lyric_hybrid_pipeline(
                     seg_threshold, seg_radius, est_threshold, batch_size,
                     debug_mode=debug_mode,
                     cancel_checker=cancel_checker,
+                    language=language,
                 )
             _check_cancel()
         finally:
@@ -437,25 +453,26 @@ if __name__ == "__main__":
 
     @click.command()
     @click.argument("audio_path", type=click.Path(exists=True))
-    @click.option("--game-model", "-gm", required=True, type=click.Path(exists=True, file_okay=False), help="Path to GAME PyTorch model directory")
+    @click.option("--game-model", "-gm", required=True, type=click.Path(exists=True, file_okay=False), help="Path to GAME ONNX model directory")
     @click.option("--hfa-model", "-hm", required=True, type=click.Path(exists=True, file_okay=False), help="Path to HubertFA ONNX model directory")
-    @click.option("--asr-model", "-am", type=str, default="Qwen/Qwen3-ASR-1.7B", help="Path or ID for Qwen3-ASR model")
+    @click.option("--asr-model", "-am", type=str, default="experiments/Qwen3-ASR-1.7B-dml", help="Path for the local Qwen3-ASR DML model directory")
     @click.option("--output-dir", "-o", type=click.Path(), default=".", help="Directory to save the outputs")
     @click.option("--lyrics", "-l", type=str, default="", help="Original reference lyrics for alignment")
-    @click.option("--device", type=click.Choice(["cuda", "cpu"]), default="cuda", help="Device to run inference on")
+    @click.option("--device", type=click.Choice(list(RUNTIME_DEVICE_CHOICES)), default="dml", help="Runtime device (legacy 'cuda' maps to 'dml')")
     @click.option("--t0", type=float, default=0.0, help="D3PM starting t0")
     @click.option("--nsteps", type=int, default=8, help="D3PM sampling steps")
     @click.option("--debug", is_flag=True, help="Enable debug mode to print GAME inputs")
     def main(audio_path, game_model, hfa_model, asr_model, output_dir, lyrics, device, t0, nsteps, debug, **kwargs):
         """
-        Auto Lyric Hybrid Pipeline (PyTorch + ONNX-GPU)
+        Auto Lyric Hybrid ONNX pipeline
         """
         out_dir = pathlib.Path(output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
 
         step = (1 - t0) / nsteps
         ts_list = [t0 + i * step for i in range(nsteps)]
-        ts = torch.tensor(ts_list, device=device)
+        device = normalize_runtime_device(device)
+        ts = ts_list
         
         auto_lyric_hybrid_pipeline(
             audio_path=audio_path,

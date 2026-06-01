@@ -4,6 +4,7 @@ import pathlib
 import click
 import onnxruntime as ort
 
+from inference.device_utils import resolve_onnx_providers
 from .tools.config_utils import check_configs
 from .tools.infer_base import InferenceBase
 
@@ -50,7 +51,7 @@ class InferenceOnnx(InferenceBase):
 
     @staticmethod
     def create_session(onnx_path):
-        providers = ['CUDAExecutionProvider', 'DmlExecutionProvider', 'CPUExecutionProvider']
+        _, providers = resolve_onnx_providers("dml", label="HubertFA ONNX")
         options = ort.SessionOptions()
         options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         return ort.InferenceSession(str(onnx_path), options, providers=providers)

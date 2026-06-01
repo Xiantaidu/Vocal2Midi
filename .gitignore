@@ -27,3 +27,4 @@ inference/tempCodeRunnerFile.py
 /inference/phonemeASR/checkpoints
 /inference/phonemeASR/logs
 *.json
+*.dll
