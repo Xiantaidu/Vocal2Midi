@@ -626,3 +626,149 @@ def slice_audio(
     
     print(f"Sliced into {len(chunks)} chunks.")
     return chunks
+
+
+def _resolve_custom_slice_bounds(
+    min_len_sec: float | None,
+    max_len_sec: float | None,
+) -> tuple[float, float] | None:
+    if min_len_sec is None and max_len_sec is None:
+        return None
+    if min_len_sec is None or max_len_sec is None:
+        raise ValueError("min_len_sec and max_len_sec must be provided together")
+
+    resolved_min_sec = float(min_len_sec)
+    resolved_max_sec = float(max_len_sec)
+    if resolved_min_sec < 0:
+        raise ValueError("min_len_sec must be greater than or equal to 0 seconds")
+    if resolved_max_sec <= 0:
+        raise ValueError("max_len_sec must be greater than 0 seconds")
+    if resolved_min_sec > resolved_max_sec:
+        raise ValueError("min_len_sec must be less than or equal to max_len_sec")
+
+    return resolved_min_sec, resolved_max_sec
+
+
+def slice_audio_with_bounds(
+    waveform: np.ndarray,
+    sr: int,
+    method: str,
+    min_len_sec: float | None = None,
+    max_len_sec: float | None = None,
+    rmvpe_voiced_mask: np.ndarray | None = None,
+    rmvpe_time_step_seconds: float | None = None,
+):
+    """Top-level audio slicing API with optional custom duration bounds."""
+    return slice_audio_with_custom_bounds(
+        waveform,
+        sr,
+        method,
+        min_len_sec=min_len_sec,
+        max_len_sec=max_len_sec,
+        rmvpe_voiced_mask=rmvpe_voiced_mask,
+        rmvpe_time_step_seconds=rmvpe_time_step_seconds,
+    )
+
+    custom_bounds = _resolve_custom_slice_bounds(min_len_sec, max_len_sec)
+    if custom_bounds is None:
+        return slice_audio(
+            waveform,
+            sr,
+            method,
+            rmvpe_voiced_mask=rmvpe_voiced_mask,
+            rmvpe_time_step_seconds=rmvpe_time_step_seconds,
+        )
+
+    resolved_min_sec, resolved_max_sec = custom_bounds
+    print(f"Slicing audio with method: '{method}'")
+    print(f"Using custom slice bounds: min={resolved_min_sec:.1f}s max={resolved_max_sec:.1f}s")
+
+    if method == "鏅鸿兘鍒囩墖":
+        if rmvpe_voiced_mask is not None and rmvpe_time_step_seconds and rmvpe_time_step_seconds > 0:
+            print("Using RMVPE voiced mask for smart slicing (pyin fallback disabled for this run).")
+        chunks = pitch_based_slice(
+            waveform,
+            sr,
+            min_len_sec=resolved_min_sec,
+            max_len_sec=resolved_max_sec,
+            voiced_flag_override=rmvpe_voiced_mask,
+            voiced_flag_override_step_sec=rmvpe_time_step_seconds,
+        )
+    elif method == "缃戞牸鎼滅储鍒囩墖":
+        chunks = grid_search_slice(
+            waveform,
+            sr,
+            min_len_sec=resolved_min_sec,
+            max_len_sec=resolved_max_sec,
+        )
+    elif method == "榛樿鍒囩墖":
+        chunks = default_slice(waveform, sr)
+    else:
+        chunks = heuristic_slice(
+            waveform,
+            sr,
+            min_len_sec=resolved_min_sec,
+            max_len_sec=resolved_max_sec,
+        )
+
+    print(f"Sliced into {len(chunks)} chunks.")
+    return chunks
+
+
+def slice_audio_with_custom_bounds(
+    waveform: np.ndarray,
+    sr: int,
+    method: str,
+    min_len_sec: float | None = None,
+    max_len_sec: float | None = None,
+    rmvpe_voiced_mask: np.ndarray | None = None,
+    rmvpe_time_step_seconds: float | None = None,
+):
+    """Top-level audio slicing API with optional custom duration bounds."""
+    custom_bounds = _resolve_custom_slice_bounds(min_len_sec, max_len_sec)
+    if custom_bounds is None:
+        return slice_audio(
+            waveform,
+            sr,
+            method,
+            rmvpe_voiced_mask=rmvpe_voiced_mask,
+            rmvpe_time_step_seconds=rmvpe_time_step_seconds,
+        )
+
+    resolved_min_sec, resolved_max_sec = custom_bounds
+    print(f"Using custom slice bounds: min={resolved_min_sec:.1f}s max={resolved_max_sec:.1f}s")
+
+    original_pitch_based_slice = pitch_based_slice
+    original_heuristic_slice = heuristic_slice
+    original_grid_search_slice = grid_search_slice
+
+    def _pitch_based_slice_with_bounds(*args, **kwargs):
+        kwargs.setdefault("min_len_sec", resolved_min_sec)
+        kwargs.setdefault("max_len_sec", resolved_max_sec)
+        return original_pitch_based_slice(*args, **kwargs)
+
+    def _heuristic_slice_with_bounds(*args, **kwargs):
+        kwargs.setdefault("min_len_sec", resolved_min_sec)
+        kwargs.setdefault("max_len_sec", resolved_max_sec)
+        return original_heuristic_slice(*args, **kwargs)
+
+    def _grid_search_slice_with_bounds(*args, **kwargs):
+        kwargs.setdefault("min_len_sec", resolved_min_sec)
+        kwargs.setdefault("max_len_sec", resolved_max_sec)
+        return original_grid_search_slice(*args, **kwargs)
+
+    try:
+        globals()["pitch_based_slice"] = _pitch_based_slice_with_bounds
+        globals()["heuristic_slice"] = _heuristic_slice_with_bounds
+        globals()["grid_search_slice"] = _grid_search_slice_with_bounds
+        return slice_audio(
+            waveform,
+            sr,
+            method,
+            rmvpe_voiced_mask=rmvpe_voiced_mask,
+            rmvpe_time_step_seconds=rmvpe_time_step_seconds,
+        )
+    finally:
+        globals()["pitch_based_slice"] = original_pitch_based_slice
+        globals()["heuristic_slice"] = original_heuristic_slice
+        globals()["grid_search_slice"] = original_grid_search_slice

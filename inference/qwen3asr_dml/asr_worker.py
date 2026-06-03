@@ -7,7 +7,10 @@ from .schema import ASREngineConfig, MsgType, StreamingMessage
 
 
 def do_encode_task(msg: StreamingMessage, encoder: QwenAudioEncoder, from_enc_q) -> None:
-    audio_embd, encode_time = encoder.encode(msg.data)
+    if isinstance(msg.data, list):
+        audio_embd, encode_time = encoder.encode_batch(msg.data)
+    else:
+        audio_embd, encode_time = encoder.encode(msg.data)
     from_enc_q.put(
         StreamingMessage(
             msg_type=MsgType.MSG_EMBD,
@@ -29,7 +32,16 @@ def asr_helper_worker_proc(to_worker_q, from_enc_q, config: ASREngineConfig) -> 
             warmup_sec=min(float(config.chunk_size), 5.0),
             verbose=False,
         )
-        from_enc_q.put(StreamingMessage(MsgType.MSG_READY))
+        from_enc_q.put(
+            StreamingMessage(
+                MsgType.MSG_READY,
+                data={
+                    "encoder_provider": encoder.provider_name,
+                    "frontend_providers": list(encoder.frontend_providers),
+                    "backend_providers": list(encoder.backend_providers),
+                },
+            )
+        )
     except Exception as exc:
         logger.error(f"[ASRWorker] failed to initialize encoder:\n{exc}")
         from_enc_q.put(StreamingMessage(MsgType.MSG_ERROR, data=exc))

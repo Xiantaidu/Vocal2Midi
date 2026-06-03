@@ -153,6 +153,25 @@ llama_sampler_init_top_p = None
 llama_sampler_sample = None
 llama_sampler_free = None
 
+LLAMA_BACKEND_CPU = "cpu"
+LLAMA_BACKEND_VULKAN = "vulkan"
+LLAMA_BACKEND_AUTO = "auto"
+
+
+def _vulkan_backend_filename() -> str:
+    if sys.platform == "win32":
+        return "ggml-vulkan.dll"
+    if sys.platform == "darwin":
+        return "libggml-vulkan.dylib"
+    return "libggml-vulkan.so"
+
+
+def detect_available_llama_backend(lib_dir: str | Path | None = None) -> str:
+    base_dir = Path(lib_dir) if lib_dir is not None else Path(__file__).parent / "bin"
+    if (base_dir / _vulkan_backend_filename()).is_file():
+        return LLAMA_BACKEND_VULKAN
+    return LLAMA_BACKEND_CPU
+
 def init_llama_lib():
     """初始化 llama.cpp 库，支持跨平台加载"""
     global llama, ggml, ggml_base
@@ -401,6 +420,70 @@ def load_model(model_path: str):
         logger.error(f"模型加载失败: {model_path}")
         return None
 
+def load_model_with_backend(
+    model_path: str,
+    backend: str = LLAMA_BACKEND_AUTO,
+    n_gpu_layers: int | None = None,
+    quiet: bool = False,
+):
+    """Load a GGUF model with optional Vulkan offload and CPU fallback."""
+    lib_dir = Path(__file__).parent / "bin"
+    model_path = Path(model_path)
+    model_rel = Path(relpath(model_path, lib_dir))
+
+    original_cwd = Path.cwd()
+    os.chdir(lib_dir)
+    if hasattr(os, "add_dll_directory"):
+        os.add_dll_directory(os.getcwd())
+    os.environ["PATH"] = os.getcwd() + os.pathsep + os.environ["PATH"]
+    logger.info(f"Changed directory to: {Path.cwd()}")
+
+    init_llama_lib()
+    configure_logging(quiet=quiet)
+
+    requested_backend = (backend or LLAMA_BACKEND_AUTO).strip().lower()
+    if requested_backend not in {LLAMA_BACKEND_AUTO, LLAMA_BACKEND_CPU, LLAMA_BACKEND_VULKAN}:
+        logger.warning(f"Unknown llama backend '{backend}', falling back to auto.")
+        requested_backend = LLAMA_BACKEND_AUTO
+
+    detected_backend = detect_available_llama_backend(lib_dir)
+    selected_backend = detected_backend if requested_backend == LLAMA_BACKEND_AUTO else requested_backend
+    if selected_backend == LLAMA_BACKEND_VULKAN and detected_backend != LLAMA_BACKEND_VULKAN:
+        logger.warning("Requested Vulkan llama backend, but ggml-vulkan backend DLL is missing. Falling back to CPU.")
+        selected_backend = LLAMA_BACKEND_CPU
+
+    def _try_load(active_backend: str):
+        model_params = llama_model_default_params()
+        if active_backend == LLAMA_BACKEND_VULKAN:
+            model_params.n_gpu_layers = -1 if n_gpu_layers is None else int(n_gpu_layers)
+            logger.info(f"llama.cpp decoder is running with Vulkan offload (n_gpu_layers={model_params.n_gpu_layers}).")
+        else:
+            model_params.n_gpu_layers = 0
+            logger.info("llama.cpp decoder is running in CPU-only mode.")
+        return llama_model_load_from_file(
+            model_rel.as_posix().encode("utf-8"),
+            model_params,
+        )
+
+    model = _try_load(selected_backend)
+    active_backend = selected_backend
+    if not model and selected_backend == LLAMA_BACKEND_VULKAN:
+        logger.warning("Failed to load llama model with Vulkan offload; retrying in CPU-only mode.")
+        model = _try_load(LLAMA_BACKEND_CPU)
+        active_backend = LLAMA_BACKEND_CPU
+
+    if model:
+        os.chdir(original_cwd)
+        logger.info(f"Restored directory to: {Path.cwd()}")
+        return model, active_backend
+
+    logger.error(f"Current working directory: {Path.cwd()}")
+    logger.error(f"Model absolute path: {model_path.as_posix()}")
+    logger.error(f"Model accessible: {model_path.exists()}")
+    logger.error(f"Model load failed: {model_path}")
+    return None, active_backend
+
+
 def create_context(model, n_ctx=2048, n_batch=2048, n_ubatch=512, n_seq_max=1, 
                    embeddings=False, pooling_type=0, flash_attn=True, 
                    offload_kqv=True, no_perf=True, n_threads=None):
@@ -427,8 +510,8 @@ def create_context(model, n_ctx=2048, n_batch=2048, n_ubatch=512, n_seq_max=1,
 
 class LlamaModel:
     """模型的面向对象封装"""
-    def __init__(self, path):
-        self.ptr = load_model(path)
+    def __init__(self, path, backend: str = LLAMA_BACKEND_AUTO, quiet: bool = False):
+        self.ptr, self.backend = load_model_with_backend(path, backend=backend, quiet=quiet)
             
         self.vocab = llama_model_get_vocab(self.ptr)
         self.n_embd = llama_model_n_embd(self.ptr)
@@ -748,13 +831,13 @@ def python_log_callback(level, message, user_data):
         msg_str = message.decode('utf-8', errors='replace').strip()
         if not msg_str or msg_str in ['.', '\n']: return
         
-        if level == 2:
-            logger.error(f"[llama.cpp] {msg_str}")
-        elif level == 3:
-            logger.warning(f"[llama.cpp] {msg_str}")
-        elif level == 4:
+        if level == 1:
             logger.info(f"[llama.cpp] {msg_str}")
-        elif level >= 5:
+        elif level == 2:
+            logger.warning(f"[llama.cpp] {msg_str}")
+        elif level == 3:
+            logger.error(f"[llama.cpp] {msg_str}")
+        elif level >= 4:
             logger.debug(f"[llama.cpp] {msg_str}")
         else:
             logger.info(f"[llama.cpp] {msg_str}")
@@ -830,7 +913,7 @@ def _skip_gguf_value(mm, offs, v_type):
                 raise ValueError("Nested arrays or unknown type not supported in fast skip")
         return offs
 
-def get_token_embeddings_gguf(model_path, target_tensor="token_embd.weight"):
+def get_token_embeddings_gguf(model_path, target_tensor="token_embd.weight", quiet: bool = False):
     """
     超极速 GGUF Embedding 提取 (直接二进制寻址)
     避免加载整个模型、避免解析包含 15 万词条的 tokenizer 对象。耗时降至 < 50ms。
@@ -932,8 +1015,9 @@ def get_token_embeddings_gguf(model_path, target_tensor="token_embd.weight"):
         raw_data = raw_data.reshape(vocab_size, bytes_per_row)
         
     total_time = time.time() - t_start
-    logger.info(f"--- [QwenASR] 已极速载入 Embedding 视图 ({total_time*1000:.1f}ms) ---")
-    logger.info(f"    - 量化格式: {qtype.name} ({n_embd} dims, {vocab_size} tokens)")
+    if not quiet:
+        logger.info(f"--- [QwenASR] 已极速载入 Embedding 视图 ({total_time*1000:.1f}ms) ---")
+        logger.info(f"    - 量化格式: {qtype.name} ({n_embd} dims, {vocab_size} tokens)")
     
     return LlamaEmbeddingTable(raw_data, qtype)
 

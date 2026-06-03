@@ -26,10 +26,7 @@ def _normalize_ts(ts) -> list[float]:
 
 
 def _resolve_game_language_id(game_model: GameOnnxModel, language: str | None = None) -> int:
-    if language:
-        lang_map = game_model.languages or {}
-        if language in lang_map:
-            return int(lang_map[language])
+    del game_model, language
     return 0
 
 

@@ -75,6 +75,31 @@ class JapaneseProcessor(LanguageProcessor):
             return []
         return self.g2p.convert_list(text_list, include_tone=False, convert_number=True).split()
 
+    def build_reference_lyric(self, text: str) -> tuple[List[str], List[str]]:
+        """Prepare Japanese reference lyrics as kana moras plus romaji moras.
+
+        We explicitly run the reference lyrics through the pyopenjtalk-backed
+        frontend first to stabilize the kana mora sequence, then convert that
+        kana sequence to romaji for matching against mora ASR output.
+        """
+        if not text:
+            return [], []
+
+        kana_moras = [token for token in self.g2p.split_kana_no_regex(text) if token]
+        if not kana_moras:
+            return [], []
+
+        romaji_moras = [
+            token
+            for token in self.g2p.convert_list(
+                kana_moras,
+                include_tone=False,
+                convert_number=False,
+            ).split()
+            if token
+        ]
+        return kana_moras, romaji_moras
+
 
 @dataclass(frozen=True)
 class LyricData:

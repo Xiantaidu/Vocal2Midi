@@ -32,9 +32,16 @@ class LyricMatcher:
         except Exception as error:
             raise IOError(f"Cannot read lyric file {lyric_path}: {str(error)}")
 
+        return self.process_lyric_text(raw_text)
+
+    def process_lyric_text(self, raw_text: str) -> LyricData:
         cleaned_text = self.processor.clean_text(raw_text)
-        text_list = self.processor.split_text(cleaned_text)
-        phonetic_list = self.processor.get_phonetic_list(text_list)
+        build_reference_lyric = getattr(self.processor, "build_reference_lyric", None)
+        if callable(build_reference_lyric):
+            text_list, phonetic_list = build_reference_lyric(cleaned_text)
+        else:
+            text_list = self.processor.split_text(cleaned_text)
+            phonetic_list = self.processor.get_phonetic_list(text_list)
         return LyricData(text_list, phonetic_list, cleaned_text)
 
     def process_asr_content(self, lab_content: str) -> Tuple[List[str], List[str]]:

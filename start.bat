@@ -1,2 +1,0 @@
-conda activate vocal2midi_torch
-python app_fluent.py

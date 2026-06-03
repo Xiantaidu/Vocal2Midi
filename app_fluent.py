@@ -3,6 +3,8 @@
 The implementation is split into the `gui` package.
 """
 
+import onnxruntime  # Preload ORT before Qt to avoid DLL init conflicts in portable Python.
+
 from gui.fluent_main import run_app
 
 

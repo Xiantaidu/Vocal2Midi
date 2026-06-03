@@ -3,6 +3,13 @@ import pathlib
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFileDialog
 from PyQt5.QtCore import Qt, QSettings
 
+from application.config import (
+    DEFAULT_SLICE_MAX_SEC,
+    DEFAULT_SLICE_MIN_SEC,
+    SLICE_DURATION_MAX_SEC,
+    SLICE_DURATION_MIN_SEC,
+    validate_slice_bounds,
+)
 from qfluentwidgets import (
     ScrollArea,
     PushButton,
@@ -16,13 +23,20 @@ from qfluentwidgets import (
     FluentIcon,
     SubtitleLabel,
 )
+from gui.settings_utils import resolve_settings_path
 
 
 class GlobalSettingsInterface(ScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent=parent)
         self.project_root = pathlib.Path(__file__).resolve().parent.parent
-        self.settings = QSettings("GAME_Extractor", "Vocal2Midi")
+        settings_path = resolve_settings_path(self.project_root)
+        if settings_path is None:
+            self.settings = QSettings("GAME_Extractor", "Vocal2Midi")
+        else:
+            settings_path.parent.mkdir(parents=True, exist_ok=True)
+            self.settings = QSettings(str(settings_path), QSettings.IniFormat)
+            self.settings.setFallbacksEnabled(False)
         self.default_values = {
             "game_model": "experiments/GAME-1.0.3-medium-onnx",
             "hfa_model": "experiments/1218_hfa_model_new_dict",
@@ -36,15 +50,25 @@ class GlobalSettingsInterface(ScrollArea):
             "nsteps": 8,
             "batch_size": 2,
             "asr_batch": 2,
+            "slice_min_sec": DEFAULT_SLICE_MIN_SEC,
+            "slice_max_sec": DEFAULT_SLICE_MAX_SEC,
             "debug_txt": False,
             "debug_csv": False,
             "debug_chunks": False,
-            "debug_use_phoneme_asr_ja_no_lyrics": False,
             "output_lyrics": True,
             "enable_lyrics_match": False,
             "pitch_format": "name",
             "round_pitch": True,
         }
+        initial_slice_min = float(self.settings.value("slice_min_sec", self.default_values["slice_min_sec"]))
+        initial_slice_max = float(self.settings.value("slice_max_sec", self.default_values["slice_max_sec"]))
+        try:
+            validate_slice_bounds(initial_slice_min, initial_slice_max)
+        except ValueError:
+            initial_slice_min = self.default_values["slice_min_sec"]
+            initial_slice_max = self.default_values["slice_max_sec"]
+        self._slice_bounds_updating = False
+        self._last_valid_slice_bounds = (initial_slice_min, initial_slice_max)
 
         self.view = QWidget(self)
         self.vBoxLayout = QVBoxLayout(self.view)
@@ -208,6 +232,28 @@ class GlobalSettingsInterface(ScrollArea):
         adv_grid.addWidget(lbl8, 2, 2)
         adv_grid.addWidget(self.cb_match_lyrics, 2, 3, alignment=Qt.AlignLeft)
 
+        lbl9 = BodyLabel("Slice Min (s):", self)
+        self.slice_min_spin = DoubleSpinBox(self)
+        self.slice_min_spin.setRange(SLICE_DURATION_MIN_SEC, SLICE_DURATION_MAX_SEC)
+        self.slice_min_spin.setDecimals(1)
+        self.slice_min_spin.setSingleStep(0.5)
+        self.slice_min_spin.setValue(initial_slice_min)
+        adv_grid.addWidget(lbl9, 2, 4)
+        adv_grid.addWidget(self.slice_min_spin, 2, 5)
+
+        lbl10 = BodyLabel("Slice Max (s):", self)
+        self.slice_max_spin = DoubleSpinBox(self)
+        self.slice_max_spin.setRange(SLICE_DURATION_MIN_SEC, SLICE_DURATION_MAX_SEC)
+        self.slice_max_spin.setDecimals(1)
+        self.slice_max_spin.setSingleStep(0.5)
+        self.slice_max_spin.setValue(initial_slice_max)
+        adv_grid.addWidget(lbl10, 3, 0)
+        adv_grid.addWidget(self.slice_max_spin, 3, 1)
+
+        self.slice_min_spin.valueChanged.connect(self._on_slice_bounds_changed)
+        self.slice_max_spin.valueChanged.connect(self._on_slice_bounds_changed)
+        self._store_slice_bounds(initial_slice_min, initial_slice_max)
+
         adv_grid.setColumnStretch(6, 1)
         adv_layout.addLayout(adv_grid)
         self.vBoxLayout.addWidget(adv_card)
@@ -241,22 +287,6 @@ class GlobalSettingsInterface(ScrollArea):
         self.cb_chunks.setChecked(self.settings.value("debug_chunks", self.default_values["debug_chunks"], type=bool))
         self.cb_chunks.checkedChanged.connect(lambda v: self.settings.setValue("debug_chunks", v))
         debug_grid.addWidget(self.cb_chunks)
-        debug_grid.addSpacing(20)
-
-        debug_grid.addWidget(BodyLabel("日语无歌词时强制走音素ASR→HFA:", self))
-        self.cb_ja_no_lyrics_phoneme = SwitchButton("On", self, self)
-        self.cb_ja_no_lyrics_phoneme.setOffText("Off")
-        self.cb_ja_no_lyrics_phoneme.setChecked(
-            self.settings.value(
-                "debug_use_phoneme_asr_ja_no_lyrics",
-                self.default_values["debug_use_phoneme_asr_ja_no_lyrics"],
-                type=bool,
-            )
-        )
-        self.cb_ja_no_lyrics_phoneme.checkedChanged.connect(
-            lambda v: self.settings.setValue("debug_use_phoneme_asr_ja_no_lyrics", v)
-        )
-        debug_grid.addWidget(self.cb_ja_no_lyrics_phoneme)
         debug_grid.addSpacing(20)
 
         debug_grid.addWidget(BodyLabel("音高格式:", self))
@@ -295,10 +325,11 @@ class GlobalSettingsInterface(ScrollArea):
         self.nsteps_spin.setValue(self.default_values["nsteps"])
         self.batch_spin.setValue(self.default_values["batch_size"])
         self.asr_batch_spin.setValue(self.default_values["asr_batch"])
+        self._set_slice_bounds(self.default_values["slice_min_sec"], self.default_values["slice_max_sec"])
+        self._store_slice_bounds(self.default_values["slice_min_sec"], self.default_values["slice_max_sec"])
         self.cb_txt.setChecked(self.default_values["debug_txt"])
         self.cb_csv.setChecked(self.default_values["debug_csv"])
         self.cb_chunks.setChecked(self.default_values["debug_chunks"])
-        self.cb_ja_no_lyrics_phoneme.setChecked(self.default_values["debug_use_phoneme_asr_ja_no_lyrics"])
         self.cb_match_lyrics.setChecked(self.default_values["enable_lyrics_match"])
         self.pitch_combo.setCurrentText(self.default_values["pitch_format"])
         self.cb_round.setChecked(self.default_values["round_pitch"])
@@ -334,3 +365,36 @@ class GlobalSettingsInterface(ScrollArea):
 
         self.settings.setValue(key, value)
         return value
+
+    def get_slice_bounds(self) -> tuple[float, float]:
+        slice_min_sec = float(self.slice_min_spin.value())
+        slice_max_sec = float(self.slice_max_spin.value())
+        validate_slice_bounds(slice_min_sec, slice_max_sec)
+        return slice_min_sec, slice_max_sec
+
+    def _on_slice_bounds_changed(self, _value: float) -> None:
+        if self._slice_bounds_updating:
+            return
+
+        slice_min_sec = float(self.slice_min_spin.value())
+        slice_max_sec = float(self.slice_max_spin.value())
+        try:
+            validate_slice_bounds(slice_min_sec, slice_max_sec)
+        except ValueError:
+            self._set_slice_bounds(*self._last_valid_slice_bounds)
+            return
+
+        self._store_slice_bounds(slice_min_sec, slice_max_sec)
+
+    def _set_slice_bounds(self, slice_min_sec: float, slice_max_sec: float) -> None:
+        self._slice_bounds_updating = True
+        try:
+            self.slice_min_spin.setValue(slice_min_sec)
+            self.slice_max_spin.setValue(slice_max_sec)
+        finally:
+            self._slice_bounds_updating = False
+
+    def _store_slice_bounds(self, slice_min_sec: float, slice_max_sec: float) -> None:
+        self._last_valid_slice_bounds = (slice_min_sec, slice_max_sec)
+        self.settings.setValue("slice_min_sec", slice_min_sec)
+        self.settings.setValue("slice_max_sec", slice_max_sec)

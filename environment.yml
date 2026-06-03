@@ -26,7 +26,6 @@ dependencies:
     - einops>=0.7.0
     - h5py
     - loguru
-    - matplotlib
     - mido
     - omegaconf
     - onnx

@@ -41,13 +41,15 @@ class QwenASREngine:
         )
         self.helper_proc.start()
 
-        self.model = llama.LlamaModel(llm_gguf)
-        self.embedding_table = llama.get_token_embeddings_gguf(llm_gguf)
+        self.model = llama.LlamaModel(llm_gguf, backend=config.llama_backend, quiet=not self.verbose)
+        self.embedding_table = llama.get_token_embeddings_gguf(llm_gguf, quiet=not self.verbose)
         self.ctx = llama.LlamaContext(self.model, n_ctx=config.n_ctx, n_batch=4096, embeddings=False)
 
         msg = self.from_enc_q.get()
         if msg.msg_type == MsgType.MSG_ERROR:
             raise RuntimeError(f"worker failed to start:\n\n{msg.data}")
+        self.encoder_runtime = msg.data or {}
+        self.decoder_backend = getattr(self.model, "backend", "unknown")
         if msg.msg_type == MsgType.MSG_READY and self.verbose:
             print("--- [QwenASR] Worker is ready ---")
 
@@ -122,7 +124,7 @@ class QwenASREngine:
         seed = int(np.random.randint(0, 2**31 - 1))
         sampler = self.llama_mod.LlamaSampler(temperature=temperature, seed=seed)
         last_sampled_token = sampler.sample(self.ctx.ptr)
-        for _ in range(512):
+        for _ in range(self.config.max_decode_tokens):
             if last_sampled_token in [self.model.eos_token, self.ID_IM_END]:
                 break
             if self.ctx.decode_token(last_sampled_token) != 0:
@@ -227,6 +229,32 @@ class QwenASREngine:
             rollback_num=rollback_num,
         )
 
+    def transcribe_batch(
+        self,
+        audio_files: List[str],
+        language: Optional[str] = None,
+        context: Optional[str] = None,
+        start_second: float = 0.0,
+        duration: float = 0.0,
+        temperature: float = 0.4,
+        rollback_num: int = 5,
+    ) -> List[TranscribeResult]:
+        from .utils import load_audio
+
+        audios = [
+            load_audio(audio_file, start_second=start_second, duration=duration)
+            for audio_file in audio_files
+        ]
+        return self.asr_batch(
+            audios=audios,
+            context=context or "",
+            language=language,
+            chunk_size_sec=self.config.chunk_size,
+            memory_chunks=self.config.memory_num,
+            temperature=temperature,
+            rollback_num=rollback_num,
+        )
+
     def asr(
         self,
         audio: np.ndarray,
@@ -304,3 +332,108 @@ class QwenASREngine:
         if self.verbose:
             self._print_stats(stats, total_duration, total_time)
         return TranscribeResult(text=total_full_text, performance=stats)
+
+    def asr_batch(
+        self,
+        audios: List[np.ndarray],
+        context: Optional[str],
+        language: Optional[str],
+        chunk_size_sec: float = 40.0,
+        memory_chunks: int = 1,
+        temperature: float = 0.4,
+        rollback_num: int = 5,
+    ) -> List[TranscribeResult]:
+        if language:
+            language = normalize_language_name(language)
+            validate_language(language)
+
+        if not audios:
+            return []
+
+        sr = 16000
+        samples_per_chunk = int(chunk_size_sec * sr)
+        states = []
+        for audio in audios:
+            total_len = len(audio)
+            num_chunks = int(np.ceil(total_len / samples_per_chunk)) if total_len > 0 else 0
+            states.append(
+                {
+                    "audio": audio,
+                    "total_len": total_len,
+                    "total_duration": total_len / sr,
+                    "num_chunks": num_chunks,
+                    "memory": deque(maxlen=memory_chunks),
+                    "text": "",
+                    "stats": {
+                        "prefill_time": 0.0,
+                        "decode_time": 0.0,
+                        "prefill_tokens": 0,
+                        "decode_tokens": 0,
+                        "wait_time": 0.0,
+                        "encode_time": 0.0,
+                    },
+                }
+            )
+
+        max_rounds = max((state["num_chunks"] for state in states), default=0)
+        for round_idx in range(max_rounds):
+            active_indices = []
+            batch_audio = []
+            batch_is_last = []
+            for state_idx, state in enumerate(states):
+                if round_idx >= state["num_chunks"]:
+                    continue
+                start = round_idx * samples_per_chunk
+                end = min((round_idx + 1) * samples_per_chunk, state["total_len"])
+                data = state["audio"][start:end]
+                if len(data) < samples_per_chunk:
+                    data = np.pad(data, (0, samples_per_chunk - len(data)))
+                batch_audio.append(data)
+                active_indices.append(state_idx)
+                batch_is_last.append(round_idx == state["num_chunks"] - 1)
+
+            if not batch_audio:
+                continue
+
+            t_wait_start = time.time()
+            self.to_worker_q.put(StreamingMessage(MsgType.CMD_ENCODE, data=batch_audio))
+            msg = self.from_enc_q.get()
+            wait_time = time.time() - t_wait_start
+            if msg.msg_type == MsgType.MSG_ERROR:
+                raise RuntimeError(msg.data)
+
+            audio_features = list(msg.data)
+            encode_time = float(msg.encode_time)
+            shared_weight = 1.0 / len(active_indices)
+
+            for batch_idx, state_idx in enumerate(active_indices):
+                state = states[state_idx]
+                stats = state["stats"]
+                stats["wait_time"] += wait_time * shared_weight
+                stats["encode_time"] += encode_time * shared_weight
+
+                audio_feature = audio_features[batch_idx]
+                was_last = batch_is_last[batch_idx]
+                prefix_text = "".join(item[1] for item in state["memory"])
+                combined_audio = np.concatenate([item[0] for item in state["memory"]] + [audio_feature], axis=0)
+                full_embd = self._build_prompt_embd(combined_audio, prefix_text, context, language)
+                res = self._safe_decode(full_embd, rollback_num, was_last, temperature)
+
+                state["memory"].append((audio_feature, res.text))
+                state["text"] += res.text
+                stats["prefill_tokens"] += res.n_prefill
+                stats["prefill_time"] += res.t_prefill
+                stats["decode_tokens"] += res.n_generate
+                stats["decode_time"] += res.t_generate
+
+        results = []
+        for state in states:
+            if self.verbose and state["num_chunks"] > 0:
+                total_time = (
+                    state["stats"]["wait_time"]
+                    + state["stats"]["prefill_time"]
+                    + state["stats"]["decode_time"]
+                )
+                self._print_stats(state["stats"], state["total_duration"], total_time)
+            results.append(TranscribeResult(text=state["text"], performance=state["stats"]))
+        return results

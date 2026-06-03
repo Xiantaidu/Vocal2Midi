@@ -35,13 +35,15 @@ class DecodeResult:
 @dataclass
 class ASREngineConfig:
     model_dir: str
-    encoder_frontend_fn: str = "qwen3_asr_encoder_frontend.int4.onnx"
-    encoder_backend_fn: str = "qwen3_asr_encoder_backend.int4.onnx"
-    llm_fn: str = "qwen3_asr_llm.q4_k.gguf"
+    encoder_frontend_fn: str = "qwen3_asr_encoder_frontend.fp16.onnx"
+    encoder_backend_fn: str = "qwen3_asr_encoder_backend.fp16.onnx"
+    llm_fn: str = "qwen3_asr_llm.f16.gguf"
     use_dml: bool = True
     n_ctx: int = 2048
     chunk_size: float = 40.0
     memory_num: int = 1
+    max_decode_tokens: int = 256
+    llama_backend: str = "auto"
     verbose: bool = True
 
 
