@@ -20,7 +20,6 @@ class MainWindow(FluentWindow):
 
         self.globalSettingsInterface = GlobalSettingsInterface(self)
         self.autoLyricInterface = AutoLyricInterface(self.globalSettingsInterface, self)
-        self.globalSettingsInterface.cb_match_lyrics.checkedChanged.connect(self.autoLyricInterface.update_lyrics_visibility)
 
         self.initNavigation()
 

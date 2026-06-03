@@ -48,7 +48,7 @@ class GlobalSettingsInterface(ScrollArea):
             "est_thresh": 0.2,
             "t0": 0.0,
             "nsteps": 8,
-            "batch_size": 2,
+            "batch_size": 1,
             "asr_batch": 2,
             "slice_min_sec": DEFAULT_SLICE_MIN_SEC,
             "slice_max_sec": DEFAULT_SLICE_MAX_SEC,
@@ -223,23 +223,14 @@ class GlobalSettingsInterface(ScrollArea):
         adv_grid.addWidget(lbl7, 2, 0)
         adv_grid.addWidget(self.asr_batch_spin, 2, 1)
 
-        lbl8 = BodyLabel("启用歌词匹配:", self)
-        self.cb_match_lyrics = SwitchButton("On", self, self)
-        self.cb_match_lyrics.setOffText("Off")
-        self.cb_match_lyrics.setFixedWidth(75)
-        self.cb_match_lyrics.setChecked(self.settings.value("enable_lyrics_match", self.default_values["enable_lyrics_match"], type=bool))
-        self.cb_match_lyrics.checkedChanged.connect(lambda v: self.settings.setValue("enable_lyrics_match", v))
-        adv_grid.addWidget(lbl8, 2, 2)
-        adv_grid.addWidget(self.cb_match_lyrics, 2, 3, alignment=Qt.AlignLeft)
-
         lbl9 = BodyLabel("Slice Min (s):", self)
         self.slice_min_spin = DoubleSpinBox(self)
         self.slice_min_spin.setRange(SLICE_DURATION_MIN_SEC, SLICE_DURATION_MAX_SEC)
         self.slice_min_spin.setDecimals(1)
         self.slice_min_spin.setSingleStep(0.5)
         self.slice_min_spin.setValue(initial_slice_min)
-        adv_grid.addWidget(lbl9, 2, 4)
-        adv_grid.addWidget(self.slice_min_spin, 2, 5)
+        adv_grid.addWidget(lbl9, 2, 2)
+        adv_grid.addWidget(self.slice_min_spin, 2, 3)
 
         lbl10 = BodyLabel("Slice Max (s):", self)
         self.slice_max_spin = DoubleSpinBox(self)
@@ -330,7 +321,7 @@ class GlobalSettingsInterface(ScrollArea):
         self.cb_txt.setChecked(self.default_values["debug_txt"])
         self.cb_csv.setChecked(self.default_values["debug_csv"])
         self.cb_chunks.setChecked(self.default_values["debug_chunks"])
-        self.cb_match_lyrics.setChecked(self.default_values["enable_lyrics_match"])
+        self.settings.setValue("enable_lyrics_match", self.default_values["enable_lyrics_match"])
         self.pitch_combo.setCurrentText(self.default_values["pitch_format"])
         self.cb_round.setChecked(self.default_values["round_pitch"])
 

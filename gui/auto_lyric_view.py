@@ -20,7 +20,7 @@ from qfluentwidgets import (
 )
 
 from application.config import PipelineConfig, validate_slice_bounds
-from gui.fluent_utils import parse_quantization, parse_quantization_mode, t0_nstep_to_ts
+from gui.fluent_utils import t0_nstep_to_ts
 from gui.fluent_worker import WorkerThread, HYBRID_AVAILABLE
 from gui.settings_utils import default_output_dir
 from inference.device_utils import VISIBLE_RUNTIME_DEVICE_CHOICES, normalize_runtime_device
@@ -83,18 +83,12 @@ class AutoLyricInterface(ScrollArea):
         combo_layout = QVBoxLayout(combo_card)
 
         combo_row1 = QHBoxLayout()
-        slice_icon = IconWidget(FluentIcon.CUT, self)
-        slice_icon.setFixedSize(16, 16)
-        combo_row1.addWidget(slice_icon)
         combo_row1.addWidget(BodyLabel("音频切片方法", self))
         self.slicing_combo = ComboBox(self)
         self.slicing_combo.addItems(["智能切片", "启发式切片", "默认切片", "网格搜索切片"])
         combo_row1.addWidget(self.slicing_combo)
 
-        lang_icon = IconWidget(FluentIcon.LANGUAGE, self)
-        lang_icon.setFixedSize(16, 16)
         combo_row1.addSpacing(28)
-        combo_row1.addWidget(lang_icon)
         combo_row1.addWidget(BodyLabel("目标语言", self))
         self.lang_combo = ComboBox(self)
         self.lang_combo.addItems(["zh", "ja"])
@@ -109,9 +103,6 @@ class AutoLyricInterface(ScrollArea):
         combo_row1.addWidget(self.lyric_output_combo)
 
         combo_row1.addSpacing(28)
-        dev_icon = IconWidget(FluentIcon.SETTING, self)
-        dev_icon.setFixedSize(16, 16)
-        combo_row1.addWidget(dev_icon)
         combo_row1.addWidget(BodyLabel("计算设备", self))
         self.device_combo = ComboBox(self)
         self.device_combo.addItems(list(VISIBLE_RUNTIME_DEVICE_CHOICES))
@@ -122,13 +113,16 @@ class AutoLyricInterface(ScrollArea):
         combo_layout.addLayout(combo_row1)
 
         combo_row2 = QHBoxLayout()
-        # 对齐第一行：补一个与切片图标等宽的占位
-        icon_placeholder = QWidget(self)
-        icon_placeholder.setFixedSize(16, 16)
-        combo_row2.addWidget(icon_placeholder)
-
-        combo_row2.addWidget(BodyLabel("输出歌词", self))
+        combo_row2.addWidget(BodyLabel("启用歌词匹配", self))
         from qfluentwidgets import SwitchButton
+        self.cb_match_lyrics = SwitchButton("On", self, self)
+        self.cb_match_lyrics.setOffText("Off")
+        self.cb_match_lyrics.setChecked(self.global_settings.settings.value("enable_lyrics_match", False, type=bool))
+        self.cb_match_lyrics.checkedChanged.connect(self.on_match_lyrics_changed)
+        combo_row2.addWidget(self.cb_match_lyrics)
+
+        combo_row2.addSpacing(28)
+        combo_row2.addWidget(BodyLabel("输出歌词", self))
         self.cb_output_lyrics = SwitchButton("On", self, self)
         self.cb_output_lyrics.setOffText("Off")
         self.cb_output_lyrics.setChecked(self.global_settings.settings.value("output_lyrics", True, type=bool))
@@ -136,7 +130,7 @@ class AutoLyricInterface(ScrollArea):
         combo_row2.addWidget(self.cb_output_lyrics)
 
         combo_row2.addSpacing(28)
-        combo_row2.addWidget(BodyLabel("导出 USTX (.ustx)", self))
+        combo_row2.addWidget(BodyLabel("导出 USTX", self))
         self.cb_ustx = SwitchButton("On", self, self)
         self.cb_ustx.setOffText("Off")
         self.cb_ustx.setChecked(self.global_settings.settings.value("debug_ustx", False, type=bool))
@@ -164,7 +158,7 @@ class AutoLyricInterface(ScrollArea):
         output_layout.addWidget(output_title)
 
         opts_layout = QHBoxLayout()
-        opts_layout.addWidget(BodyLabel("曲速 (Tempo BPM):", self))
+        opts_layout.addWidget(BodyLabel("Tempo BPM:", self))
         self.tempo_spin = DoubleSpinBox(self)
         self.tempo_spin.setRange(10, 300)
         self.tempo_spin.setValue(120)
@@ -173,23 +167,16 @@ class AutoLyricInterface(ScrollArea):
         opts_layout.addWidget(BodyLabel("MIDI 量化精度:", self))
         self.quantize_combo = ComboBox(self)
         self.quantize_combo.addItems(["不量化", "1/4 音符 (1拍)", "1/8 音符 (1/2拍)", "1/16 音符 (1/4拍)", "1/32 音符 (1/8拍)", "1/64 音符 (1/16拍)"])
+        self.quantize_combo.setCurrentIndex(0)
+        self.quantize_combo.setEnabled(False)
         opts_layout.addWidget(self.quantize_combo)
 
         opts_layout.addSpacing(20)
         opts_layout.addWidget(BodyLabel("量化算法:", self))
         self.quantize_mode_combo = ComboBox(self)
-        self.quantize_mode_combo.addItems([
-            "简单量化（传统）",
-            "智能量化（扒谱风格）",
-            "SV拟合量化（推荐）",
-            "DP量化（SVP迁移版，作用于MIDI）",
-        ])
-        self.quantize_mode_combo.setCurrentText(
-            self.global_settings.settings.value("quantization_mode_ui", "SV拟合量化（推荐）")
-        )
-        self.quantize_mode_combo.currentTextChanged.connect(
-            lambda t: self.global_settings.settings.setValue("quantization_mode_ui", t)
-        )
+        self.quantize_mode_combo.addItem("开发中")
+        self.quantize_mode_combo.setCurrentIndex(0)
+        self.quantize_mode_combo.setEnabled(False)
         opts_layout.addWidget(self.quantize_mode_combo)
 
         opts_layout.addStretch(1)
@@ -235,15 +222,11 @@ class AutoLyricInterface(ScrollArea):
         self.on_ustx_changed(self.cb_ustx.isChecked())
 
     def apply_device_batch_defaults(self, device: str):
-        if device == "cpu":
-            self.global_settings.batch_spin.setValue(1)
-            self.global_settings.asr_batch_spin.setValue(1)
-        else:
-            self.global_settings.batch_spin.setValue(2)
-            self.global_settings.asr_batch_spin.setValue(2)
+        self.global_settings.batch_spin.setValue(1)
+        self.global_settings.asr_batch_spin.setValue(2)
 
     def update_lyrics_visibility(self):
-        enabled = self.global_settings.cb_match_lyrics.isChecked()
+        enabled = self.cb_match_lyrics.isChecked()
         self.lyric_card.setVisible(enabled)
         self.lyric_title.setVisible(enabled)
         self.lyrics_edit.setVisible(enabled)
@@ -267,6 +250,10 @@ class AutoLyricInterface(ScrollArea):
     def on_output_lyrics_changed(self, enabled: bool):
         self.global_settings.settings.setValue("output_lyrics", enabled)
         self.update_lyric_output_enabled_state()
+
+    def on_match_lyrics_changed(self, enabled: bool):
+        self.global_settings.settings.setValue("enable_lyrics_match", enabled)
+        self.update_lyrics_visibility()
 
     def on_ustx_changed(self, enabled: bool):
         self.global_settings.settings.setValue("debug_ustx", enabled)
@@ -378,7 +365,7 @@ class AutoLyricInterface(ScrollArea):
             language=self.lang_combo.currentText(),
             ts=ts_list,
             lyric_output_mode=self.get_lyric_output_mode(),
-            original_lyrics=self.lyrics_edit.toPlainText().strip() if self.global_settings.cb_match_lyrics.isChecked() else "",
+            original_lyrics=self.lyrics_edit.toPlainText().strip() if self.cb_match_lyrics.isChecked() else "",
             output_formats=output_formats,
             output_lyrics=self.cb_output_lyrics.isChecked(),
             output_pitch_curve=self.cb_pitch_curve.isChecked() if self.cb_ustx.isChecked() else False,
@@ -386,8 +373,8 @@ class AutoLyricInterface(ScrollArea):
             slice_min_sec=slice_min_sec,
             slice_max_sec=slice_max_sec,
             tempo=self.tempo_spin.value(),
-            quantization_step=parse_quantization(self.quantize_combo.currentText()),
-            quantization_mode=parse_quantization_mode(self.quantize_mode_combo.currentText()),
+            quantization_step=0,
+            quantization_mode="simple",
             pitch_format=self.global_settings.pitch_combo.currentText(),
             round_pitch=self.global_settings.cb_round.isChecked(),
             seg_threshold=self.global_settings.seg_thresh_spin.value(),
