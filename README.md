@@ -56,24 +56,53 @@ The GUI currently defaults to these local paths:
 
 ## Running the GUI
 
-The simplest entrypoint is:
-
-```bat
-start.bat
-```
-
-That launcher currently runs:
-
-```bat
-conda activate vocal2midi_torch
-python app_fluent.py
-```
-
-You can also start the GUI directly:
+For a local developer environment, start the GUI with:
 
 ```bash
 python app_fluent.py
 ```
+
+For the installer-style Windows portable flow added in this repository, use:
+
+```bat
+安装环境.bat
+启动GUI.bat
+```
+
+## Portable distribution
+
+If you want a sharable folder with a bundled Python runtime instead of an `.exe`, use:
+
+```bash
+python scripts/build_portable.py --clean
+```
+
+By default, the builder copies the current Python runtime (`sys.prefix`) into `dist/Vocal2Midi-portable/` and bundles the active ONNX/GGUF models used by the GUI.
+
+If the runtime source is a conda environment, a more relocatable build is:
+
+```bash
+python scripts/build_portable.py --runtime-mode conda-pack --clean
+```
+
+The generated folder includes:
+
+- `Run Vocal2Midi.bat`
+- `Run Slice ASR CLI.bat`
+- `Open Portable Shell.bat`
+- a bundled `python/` runtime
+- bundled model assets under `experiments/`
+
+Portable mode also stores GUI settings locally in `settings/vocal2midi.ini` and defaults output files to `outputs/`.
+
+## Windows setup scripts
+
+For a lighter distribution flow where the user installs the bundled runtime on first launch instead of receiving a prebuilt `python/` folder, the repository also includes:
+
+- `安装环境.bat`: download embeddable Python, install `pip`, and install `requirements.txt`
+- `启动GUI.bat`: start the GUI with portable-mode environment variables
+
+This route keeps the upload smaller, but it requires network access on the end user's machine during setup.
 
 ## Batch slice + ASR CLI
 

@@ -3,29 +3,15 @@
 # - The ONNX backends default to DirectML and fall back to CPU when DML is unavailable.
 
 click
-colorednoise
-dask
-einops>=0.7.0
-h5py
 librosa
-lightning
-loguru
-matplotlib
 mido
 numpy<2.0.0
-omegaconf
-onnx
-onnxscript
-onnxslim
-pydantic>=2.11,<3.0
+PyQt5
+PyQt-Fluent-Widgets
 PyYAML
-resampy
 scipy>=1.10.0
-sympy
-tensorboard
-tensorboardX
-torchmetrics
-onnxruntime
+onnxruntime-directml
 soundfile
 textgrid
 tqdm
+pyopenjtalk

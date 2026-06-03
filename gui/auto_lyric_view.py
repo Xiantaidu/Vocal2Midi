@@ -19,9 +19,10 @@ from qfluentwidgets import (
     SubtitleLabel,
 )
 
-from application.config import PipelineConfig
+from application.config import PipelineConfig, validate_slice_bounds
 from gui.fluent_utils import parse_quantization, parse_quantization_mode, t0_nstep_to_ts
 from gui.fluent_worker import WorkerThread, HYBRID_AVAILABLE
+from gui.settings_utils import default_output_dir
 from inference.device_utils import VISIBLE_RUNTIME_DEVICE_CHOICES, normalize_runtime_device
 
 
@@ -180,10 +181,11 @@ class AutoLyricInterface(ScrollArea):
         self.quantize_mode_combo.addItems([
             "简单量化（传统）",
             "智能量化（扒谱风格）",
+            "SV拟合量化（推荐）",
             "DP量化（SVP迁移版，作用于MIDI）",
         ])
         self.quantize_mode_combo.setCurrentText(
-            self.global_settings.settings.value("quantization_mode_ui", "智能量化（扒谱风格）")
+            self.global_settings.settings.value("quantization_mode_ui", "SV拟合量化（推荐）")
         )
         self.quantize_mode_combo.currentTextChanged.connect(
             lambda t: self.global_settings.settings.setValue("quantization_mode_ui", t)
@@ -196,7 +198,9 @@ class AutoLyricInterface(ScrollArea):
         save_layout = QHBoxLayout()
         save_layout.addWidget(BodyLabel("保存目录:", self))
         self.save_dir_edit = LineEdit(self)
-        self.save_dir_edit.setText(self.global_settings.settings.value("save_dir", str(pathlib.Path.home() / "Desktop")))
+        self.save_dir_edit.setText(
+            self.global_settings.settings.value("save_dir", str(default_output_dir(self.global_settings.project_root)))
+        )
         self.save_dir_edit.textChanged.connect(lambda t: self.global_settings.settings.setValue("save_dir", t))
         save_layout.addWidget(self.save_dir_edit, 1)
         btn_browse_save = PushButton("浏览", self, FluentIcon.FOLDER)
@@ -355,6 +359,13 @@ class AutoLyricInterface(ScrollArea):
             int(self.global_settings.nsteps_spin.value()),
         )
         device = normalize_runtime_device(self.device_combo.currentText())
+        slice_min_sec = float(self.global_settings.slice_min_spin.value())
+        slice_max_sec = float(self.global_settings.slice_max_spin.value())
+        try:
+            validate_slice_bounds(slice_min_sec, slice_max_sec)
+        except ValueError as exc:
+            self.log_msg(f"Error: invalid slice duration settings: {exc}")
+            return
 
         config = PipelineConfig(
             audio_path="",  # set per-file in worker
@@ -372,6 +383,8 @@ class AutoLyricInterface(ScrollArea):
             output_lyrics=self.cb_output_lyrics.isChecked(),
             output_pitch_curve=self.cb_pitch_curve.isChecked() if self.cb_ustx.isChecked() else False,
             slicing_method=self.slicing_combo.currentText(),
+            slice_min_sec=slice_min_sec,
+            slice_max_sec=slice_max_sec,
             tempo=self.tempo_spin.value(),
             quantization_step=parse_quantization(self.quantize_combo.currentText()),
             quantization_mode=parse_quantization_mode(self.quantize_mode_combo.currentText()),
@@ -384,7 +397,6 @@ class AutoLyricInterface(ScrollArea):
             asr_batch_size=self.global_settings.asr_batch_spin.value(),
             rmvpe_model_path=self.global_settings.rmvpe_model_edit.text(),
             phoneme_asr_model_path=self.global_settings.phoneme_asr_model_edit.text(),
-            use_phoneme_asr_for_ja_without_lyrics=self.global_settings.cb_ja_no_lyrics_phoneme.isChecked(),
         )
 
         self.log_edit.clear()

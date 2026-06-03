@@ -1,4 +1,5 @@
 from pathlib import Path
+import types
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -6,6 +7,14 @@ import pytest
 
 from inference.io.note_io import NoteInfo
 from inference.pipeline import auto_lyric_hybrid as pipeline
+
+
+def _patch_librosa_load(monkeypatch):
+    monkeypatch.setattr(
+        pipeline,
+        "librosa",
+        types.SimpleNamespace(load=lambda *args, **kwargs: (np.zeros(4410, dtype=np.float32), 44100)),
+    )
 
 
 def _base_kwargs(tmp_path: Path) -> dict:
@@ -22,6 +31,8 @@ def _base_kwargs(tmp_path: Path) -> dict:
         "original_lyrics": "",
         "output_dir": tmp_path / "out",
         "output_formats": [],
+        "slice_min_sec": 8.0,
+        "slice_max_sec": 22.0,
         "slicing_method": "默认切片",
         "tempo": 120.0,
         "quantization_step": 0,
@@ -38,14 +49,14 @@ def _base_kwargs(tmp_path: Path) -> dict:
 
 def _patch_common(monkeypatch):
     chunks = [{"waveform": np.zeros(1600, dtype=np.float32), "offset": 0.0}]
-    monkeypatch.setattr(pipeline.librosa, "load", lambda *args, **kwargs: (np.zeros(4410, dtype=np.float32), 44100))
+    _patch_librosa_load(monkeypatch)
     monkeypatch.setattr(pipeline, "slice_audio", lambda *args, **kwargs: chunks)
     monkeypatch.setattr(pipeline, "free_memory", lambda: None)
     monkeypatch.setattr(pipeline, "load_game_model", lambda *args, **kwargs: MagicMock())
     return chunks
 
 
-def test_ja_auto_mode_uses_phoneme_asr_when_enabled(monkeypatch, tmp_path):
+def test_ja_romaji_mode_uses_mora_asr(monkeypatch, tmp_path):
     chunks = _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline, "_select_romaji_asr_path", lambda path: "phoneme")
@@ -63,7 +74,6 @@ def test_ja_auto_mode_uses_phoneme_asr_when_enabled(monkeypatch, tmp_path):
     )
 
     kwargs = _base_kwargs(tmp_path)
-    kwargs["use_phoneme_asr_for_ja_without_lyrics"] = True
 
     pipeline.auto_lyric_hybrid_pipeline(**kwargs)
 
@@ -73,7 +83,7 @@ def test_ja_auto_mode_uses_phoneme_asr_when_enabled(monkeypatch, tmp_path):
     assert run_phoneme.call_args.args[0] is chunks
 
 
-def test_ja_auto_mode_still_uses_hfa_after_romaji_asr(monkeypatch, tmp_path):
+def test_ja_kana_mode_uses_mora_asr_and_dictionary_hfa(monkeypatch, tmp_path):
     chunks = _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline, "_select_romaji_asr_path", lambda path: "phoneme")
@@ -93,13 +103,14 @@ def test_ja_auto_mode_still_uses_hfa_after_romaji_asr(monkeypatch, tmp_path):
     )
 
     kwargs = _base_kwargs(tmp_path)
-    kwargs["use_phoneme_asr_for_ja_without_lyrics"] = True
+    kwargs["lyric_output_mode"] = "kana"
 
     pipeline.auto_lyric_hybrid_pipeline(**kwargs)
 
     run_phoneme.assert_called_once()
     load_hfa.assert_called_once()
     run_hfa.assert_called_once()
+    assert run_hfa.call_args.kwargs.get("use_phoneme_g2p", False) is False
 
 
 def test_no_lyrics_mode_skips_asr_and_hfa(monkeypatch, tmp_path):
@@ -136,8 +147,17 @@ def test_invalid_batch_sizes_fail_fast(tmp_path):
         pipeline.auto_lyric_hybrid_pipeline(**kwargs)
 
 
+def test_invalid_slice_bounds_fail_fast(tmp_path):
+    kwargs = _base_kwargs(tmp_path)
+    kwargs["slice_min_sec"] = 12.0
+    kwargs["slice_max_sec"] = 6.0
+
+    with pytest.raises(ValueError, match="slice_min_sec"):
+        pipeline.auto_lyric_hybrid_pipeline(**kwargs)
+
+
 def test_empty_chunks_fail_before_models(monkeypatch, tmp_path):
-    monkeypatch.setattr(pipeline.librosa, "load", lambda *args, **kwargs: (np.zeros(4410, dtype=np.float32), 44100))
+    _patch_librosa_load(monkeypatch)
     monkeypatch.setattr(pipeline, "slice_audio", lambda *args, **kwargs: [])
     load_game = MagicMock()
     monkeypatch.setattr(pipeline, "load_game_model", load_game)
@@ -195,7 +215,7 @@ def test_missing_hfa_chunk_uses_pitch_only_fallback(monkeypatch, tmp_path):
         {"waveform": np.zeros(1600, dtype=np.float32), "offset": 0.0},
         {"waveform": np.zeros(1600, dtype=np.float32), "offset": 1.0},
     ]
-    monkeypatch.setattr(pipeline.librosa, "load", lambda *args, **kwargs: (np.zeros(4410, dtype=np.float32), 44100))
+    _patch_librosa_load(monkeypatch)
     monkeypatch.setattr(pipeline, "slice_audio", lambda *args, **kwargs: chunks)
     monkeypatch.setattr(pipeline, "free_memory", lambda: None)
     monkeypatch.setattr(pipeline, "load_game_model", lambda *args, **kwargs: MagicMock())
@@ -226,7 +246,7 @@ def test_missing_hfa_chunk_uses_pitch_only_fallback(monkeypatch, tmp_path):
 
 def test_unproductive_aligned_chunk_uses_pitch_only_fallback(monkeypatch, tmp_path):
     chunks = [{"waveform": np.zeros(1600, dtype=np.float32), "offset": 0.0}]
-    monkeypatch.setattr(pipeline.librosa, "load", lambda *args, **kwargs: (np.zeros(4410, dtype=np.float32), 44100))
+    _patch_librosa_load(monkeypatch)
     monkeypatch.setattr(pipeline, "slice_audio", lambda *args, **kwargs: chunks)
     monkeypatch.setattr(pipeline, "free_memory", lambda: None)
     monkeypatch.setattr(pipeline, "load_game_model", lambda *args, **kwargs: MagicMock())
@@ -249,3 +269,27 @@ def test_unproductive_aligned_chunk_uses_pitch_only_fallback(monkeypatch, tmp_pa
     extract_aligned.assert_called_once()
     extract_only.assert_called_once()
     assert extract_only.call_args.args[0] == chunks
+
+
+def test_slice_bounds_are_forwarded_to_slicer(monkeypatch, tmp_path):
+    chunks = [{"waveform": np.zeros(1600, dtype=np.float32), "offset": 0.0}]
+    slice_audio = MagicMock(return_value=chunks)
+    _patch_librosa_load(monkeypatch)
+    monkeypatch.setattr(pipeline, "slice_audio", slice_audio)
+    monkeypatch.setattr(pipeline, "free_memory", lambda: None)
+    monkeypatch.setattr(pipeline, "load_game_model", lambda *args, **kwargs: MagicMock())
+    monkeypatch.setattr(
+        pipeline,
+        "extract_pitches_only_torch",
+        lambda *args, **kwargs: [NoteInfo(0.0, 0.5, 60.0, "")],
+    )
+
+    kwargs = _base_kwargs(tmp_path)
+    kwargs["output_lyrics"] = False
+    kwargs["slice_min_sec"] = 5.0
+    kwargs["slice_max_sec"] = 17.5
+
+    pipeline.auto_lyric_hybrid_pipeline(**kwargs)
+
+    assert slice_audio.call_args.kwargs["min_len_sec"] == 5.0
+    assert slice_audio.call_args.kwargs["max_len_sec"] == 17.5

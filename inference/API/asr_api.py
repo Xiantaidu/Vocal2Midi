@@ -1,5 +1,6 @@
 import multiprocessing as mp
 import queue
+import re
 import threading
 import time
 
@@ -16,11 +17,70 @@ _ROMAJI_MODEL_CACHE = {}
 _ROMAJI_MODEL_CACHE_LOCK = threading.Lock()
 _PHONEME_MODEL_CACHE = _ROMAJI_MODEL_CACHE
 _PHONEME_MODEL_CACHE_LOCK = _ROMAJI_MODEL_CACHE_LOCK
+DEFAULT_QWEN_ASR_PROMPT = (
+    "Accurately transcribe only the sung lyric text in the requested language. "
+    "Output only the lyric text itself. "
+    "Ignore spoken chatter, background speech, filler words, and non-lyric English words."
+)
+_ASCII_WORD_RE = re.compile(r"[A-Za-z]+(?:['’\-][A-Za-z]+)*")
+_ASCII_PUNCT_RE = re.compile(r"[!\"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]+")
+_CJK_KANA_SPACE_RE = re.compile(r"(?<=[\u3400-\u9fff\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f])\s+(?=[\u3400-\u9fff\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f])")
+
+
+def _normalize_lyric_language(language: str | None) -> str:
+    value = str(language or "").strip().lower()
+    if value in {"ja", "japanese"}:
+        return "ja"
+    if value in {"zh", "cn", "chinese"}:
+        return "zh"
+    return value
+
+
+def _filter_qwen_asr_text_for_lyric_flow(text: str, language: str | None) -> str:
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        return ""
+    if _normalize_lyric_language(language) not in {"zh", "ja"}:
+        return cleaned
+
+    filtered = _ASCII_WORD_RE.sub(" ", cleaned)
+    filtered = _ASCII_PUNCT_RE.sub(" ", filtered)
+    filtered = re.sub(r"\s+", " ", filtered).strip()
+    filtered = _CJK_KANA_SPACE_RE.sub("", filtered)
+    return filtered
+
+
+def _sanitize_qwen_asr_result(result, language: str | None):
+    if result is None:
+        return None
+
+    if isinstance(result, dict):
+        sanitized = dict(result)
+        for key in ("text", "transcript"):
+            if key in sanitized and sanitized[key] is not None:
+                sanitized[key] = _filter_qwen_asr_text_for_lyric_flow(sanitized[key], language)
+        return sanitized
+
+    text_attr = getattr(result, "text", None)
+    if text_attr is not None:
+        try:
+            result.text = _filter_qwen_asr_text_for_lyric_flow(text_attr, language)
+        except Exception:
+            pass
+        return result
+
+    if isinstance(result, str):
+        return _filter_qwen_asr_text_for_lyric_flow(result, language)
+    return result
+
+
+def _sanitize_qwen_asr_results(results, language: str | None):
+    return [_sanitize_qwen_asr_result(result, language) for result in results]
 
 
 def load_qwen_model(model_path, device="dml", use_cache=True):
     """
-    Loads the Qwen ASR model using the DML encoder + CPU decoder runtime.
+    Loads the Qwen ASR model using the unified ONNX + llama.cpp runtime.
     Caches model in-process to avoid repeated loading.
     """
     requested_device = normalize_runtime_device(device)
@@ -33,11 +93,16 @@ def load_qwen_model(model_path, device="dml", use_cache=True):
             return cached_model
 
     try:
-        print(f"Loading Qwen ASR DML+CPU runtime from '{model_path}' (requested device: {requested_device})...")
+        print(f"Loading Qwen ASR runtime from '{model_path}' (requested device: {requested_device})...")
         model = Qwen3ASRDmlModel.from_model_path(
             model_path,
             device=requested_device,
             verbose=False,
+        )
+        print(
+            "Qwen ASR runtime ready: "
+            f"encoder={model.encoder_provider_name} {model.encoder_frontend_providers}, "
+            f"decoder={model.decoder_backend}."
         )
     except Exception as e:
         raise RuntimeError(
@@ -174,14 +239,14 @@ def _init_worker(model_path, device):
     print(f"ASR worker ({proc_name}) initialized.")
 
 
-def _transcribe_task(paths, asr_lang, model=None):
+def _transcribe_task(paths, asr_lang, context, model=None):
     """The actual transcription task executed by a worker process or in-process."""
     m = model if model is not None else _WORKER_ASR_MODEL
     if m is None:
         return RuntimeError("ASR worker model not initialized.")
 
     try:
-        return m.transcribe(audio=paths, language=asr_lang)
+        return m.transcribe(audio=paths, language=asr_lang, context=context)
     except Exception as e:
         return e
 
@@ -206,7 +271,8 @@ def _asr_worker_main(model_path, device, task_queue, result_queue):
             task_id = int(message["task_id"])
             batch = list(message["paths"])
             asr_lang = str(message["asr_lang"])
-            batch_result = _transcribe_task(batch, asr_lang, model=model)
+            asr_prompt = str(message.get("asr_prompt") or DEFAULT_QWEN_ASR_PROMPT)
+            batch_result = _transcribe_task(batch, asr_lang, asr_prompt, model=model)
             if isinstance(batch_result, Exception):
                 result_queue.put(
                     {
@@ -290,6 +356,7 @@ def batch_transcribe_asr(
     device="dml",
     force_subprocess=False,
     asr_timeout_sec=180,
+    asr_prompt: str = DEFAULT_QWEN_ASR_PROMPT,
 ):
     """Saves chunks to temp_dir and runs batched ASR transcription."""
     asr_lang = "Japanese" if language == "ja" else "Chinese"
@@ -346,6 +413,7 @@ def batch_transcribe_asr(
                         "task_id": i,
                         "paths": batch,
                         "asr_lang": asr_lang,
+                        "asr_prompt": asr_prompt,
                     }
                 )
                 print(f"  Waiting for ASR batch {batch_no}/{total_batches}...")
@@ -387,7 +455,7 @@ def batch_transcribe_asr(
             print(f"  Processing ASR batch {batch_no}/{total_batches} (size={len(batch)})...")
             try:
                 batch_start = time.perf_counter()
-                results = _transcribe_task(batch, asr_lang, model=asr_model)
+                results = _transcribe_task(batch, asr_lang, asr_prompt, model=asr_model)
                 cost = time.perf_counter() - batch_start
                 print(f"  ASR batch {batch_no}/{total_batches} done in {cost:.2f}s")
                 all_results.extend(results)
@@ -395,4 +463,4 @@ def batch_transcribe_asr(
                 print(f"Error during in-process ASR for batch {batch_no}: {e}")
                 all_results.extend([None] * len(batch))
 
-    return all_results, chunk_indices
+    return _sanitize_qwen_asr_results(all_results, language), chunk_indices

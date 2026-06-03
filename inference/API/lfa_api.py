@@ -1,9 +1,14 @@
 from inference.LyricFA.tools.ZhG2p import ZhG2p
-from inference.LyricFA.tools.JaG2p import JaG2p
+from inference.LyricFA.tools.JaG2p import JaG2p, KATA_TO_ROMAJI
 from inference.LyricFA.tools.lyric_matcher import LyricMatcher
 
 _zh_g2p = None
 _ja_g2p = None
+_ROMAJI_TO_KANA_MORA = {}
+
+for _kata_token, _romaji_token in KATA_TO_ROMAJI.items():
+    _ROMAJI_TO_KANA_MORA.setdefault(_romaji_token.lower(), JaG2p._katakana_to_hiragana(_kata_token))
+_ROMAJI_TO_KANA_MORA.setdefault("n", "ん")
 
 
 def _normalize_asr_phoneme_token(token: str) -> str:
@@ -122,6 +127,14 @@ def _align_direct_phoneme_moras_with_matcher(language, lyric_output_mode, matche
     }
 
 
+def _direct_moras_to_display_tokens(language, lyric_output_mode, romaji_moras):
+    mode = _normalize_lyric_output_mode(language, lyric_output_mode)
+    filtered = [str(token).lower() for token in romaji_moras if token and token not in {"AP", "EP", "SP"}]
+    if language == "ja" and mode == "kana":
+        return [_ROMAJI_TO_KANA_MORA.get(token, token) for token in filtered]
+    return filtered
+
+
 def _normalize_lyric_output_mode(language, lyric_output_mode):
     language = (language or "zh").lower()
     mode = (lyric_output_mode or "").lower()
@@ -185,10 +198,9 @@ def create_lyric_matcher(language, original_lyrics):
     if original_lyrics and original_lyrics.strip():
         matcher_lang = language if language in ["zh", "en", "ja"] else "zh"
         matcher = LyricMatcher(matcher_lang)
-        processor = matcher.processor
-        cleaned_lyric = processor.clean_text(original_lyrics)
-        matcher.lyric_text_list = processor.split_text(cleaned_lyric)
-        matcher.lyric_phonetic_list = processor.get_phonetic_list(matcher.lyric_text_list)
+        lyric_data = matcher.process_lyric_text(original_lyrics)
+        matcher.lyric_text_list = lyric_data.text_list
+        matcher.lyric_phonetic_list = lyric_data.phonetic_list
     return matcher
 
 def process_asr_to_phonemes(
@@ -230,7 +242,8 @@ def process_asr_to_phonemes(
         matched_lyric_phonetic = ""
         match_reason = ""
         
-        text = _extract_text(res)
+        raw_text = _extract_text(res)
+        text = raw_text
         direct_phoneme_tokens = []
         if use_asr_phonemes and isinstance(res, dict):
             tokens = res.get("phonemes")
@@ -240,9 +253,15 @@ def process_asr_to_phonemes(
                     nt = _normalize_asr_phoneme_token(str(t))
                     if nt:
                         direct_phoneme_tokens.append(nt)
-        if not text.strip():
-            print(f"[Warning] {stem}: ASR output empty or failed; skipping this chunk for lyric alignment.")
-            chunk_logs.append(f"[{stem}]\nASR Output: [Empty or Failed]\nStatus: Ignored\n")
+        if not text.strip() and not direct_phoneme_tokens:
+            reason = "ASR output empty or failed"
+            print(f"[Warning] {stem}: {reason}; skipping this chunk for lyric alignment.")
+            log_lines = [
+                f"[{stem}]",
+                f"ASR Output: {raw_text or '[Empty or Failed]'}",
+            ]
+            log_lines.append("Status: Ignored")
+            chunk_logs.append("\n".join(log_lines) + "\n")
             continue
 
         match_status = "No original lyrics provided"
@@ -262,16 +281,18 @@ def process_asr_to_phonemes(
                 match_reason = matched_direct["reason"]
                 match_status = "Direct phoneme ASR -> Matched original lyrics"
             else:
-                if write_asr_phoneme_lab:
+                if use_asr_phonemes and language == "ja":
+                    pinyin_str = " ".join(token for token in romaji_moras if token not in {"AP", "EP", "SP"})
+                    chars = _direct_moras_to_display_tokens(language, lyric_output_mode, romaji_moras)
+                    match_status = "Direct mora ASR"
+                elif write_asr_phoneme_lab:
                     pinyin_str = " ".join(direct_phoneme_tokens)
+                    chars = romaji_moras or direct_phoneme_tokens
                     match_status = "Direct phoneme ASR -> Raw phoneme lab"
-                elif use_asr_phonemes and language == "ja":
-                    pinyin_str = " ".join(direct_phoneme_tokens)
-                    match_status = "Direct phoneme ASR -> Japanese phoneme lab"
                 else:
                     pinyin_str = " ".join(romaji_moras or direct_phoneme_tokens)
+                    chars = romaji_moras or direct_phoneme_tokens
                     match_status = "Direct phoneme ASR -> Romaji moras"
-                chars = romaji_moras or direct_phoneme_tokens
         elif matcher:
             asr_text_list, asr_phonetic_list = matcher.process_asr_content(text)
             if asr_phonetic_list:
@@ -306,7 +327,7 @@ def process_asr_to_phonemes(
         assigned_lyrics = _join_display_tokens(language, lyric_output_mode, chars)
         log_lines = [
             f"[{stem}]",
-            f"ASR Output: {text}",
+            f"ASR Output: {raw_text}",
             f"Match Status: {match_status}",
         ]
 

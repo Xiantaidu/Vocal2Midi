@@ -3,13 +3,18 @@ import sys
 import tempfile
 
 import librosa
+from application.config import (
+    DEFAULT_SLICE_MAX_SEC,
+    DEFAULT_SLICE_MIN_SEC,
+    validate_slice_bounds,
+)
 
 # Allow running this script directly from anywhere
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from inference.API.slicer_api import slice_audio
+from inference.API.slicer_api import slice_audio_with_custom_bounds as slice_audio
 from inference.io.note_io import _save_midi, _save_text
 from inference.quant.quantization import quantize_notes, should_apply_quantization
 
@@ -59,6 +64,17 @@ def _validate_runtime_options(tempo: float, batch_size: int, asr_batch_size: int
         raise ValueError(f"batch_size 必须大于 0，当前为 {batch_size}")
     if asr_batch_size <= 0:
         raise ValueError(f"asr_batch_size 必须大于 0，当前为 {asr_batch_size}")
+
+
+def _validate_slice_runtime_options(
+    tempo: float,
+    batch_size: int,
+    asr_batch_size: int,
+    slice_min_sec: float,
+    slice_max_sec: float,
+) -> None:
+    _validate_runtime_options(tempo, batch_size, asr_batch_size)
+    validate_slice_bounds(slice_min_sec, slice_max_sec)
 
 
 def _export_chunk_wavs(chunks, sr: int, output_key: str, output_dir: pathlib.Path, cancel_checker=None) -> None:
@@ -130,7 +146,6 @@ def run_romaji_asr(
     lyric_output_mode=None,
     asr_batch_size=1,
     cancel_checker=None,
-    write_asr_phoneme_lab=False,
 ):
     all_results, chunk_indices = batch_transcribe_romaji_asr(
         chunks,
@@ -149,7 +164,6 @@ def run_romaji_asr(
         matcher,
         lyric_output_mode=lyric_output_mode,
         use_asr_phonemes=True,
-        write_asr_phoneme_lab=write_asr_phoneme_lab,
     )
     return chars_dict, chunk_logs
 
@@ -181,17 +195,18 @@ def auto_lyric_hybrid_pipeline(
     est_threshold: float,
     batch_size: int = 4,
     asr_batch_size: int = 4,
+    slice_min_sec: float = DEFAULT_SLICE_MIN_SEC,
+    slice_max_sec: float = DEFAULT_SLICE_MAX_SEC,
     output_lyrics: bool = True,
     output_pitch_curve: bool = False,
     debug_mode: bool = False,
     rmvpe_model_path: str = "",
     phoneme_asr_model_path: str = "",
-    use_phoneme_asr_for_ja_without_lyrics: bool = False,
     cancel_checker=None,
 ):
     """Auto Lyric Hybrid ONNX pipeline."""
     device = normalize_runtime_device(device)
-    _validate_runtime_options(tempo, batch_size, asr_batch_size)
+    _validate_slice_runtime_options(tempo, batch_size, asr_batch_size, slice_min_sec, slice_max_sec)
     output_key = _resolve_output_key(output_filename, audio_path)
     output_formats = _normalize_output_formats(output_formats)
     output_format_set = set(output_formats)
@@ -232,6 +247,8 @@ def auto_lyric_hybrid_pipeline(
         waveform,
         sr,
         slicing_method,
+        min_len_sec=slice_min_sec,
+        max_len_sec=slice_max_sec,
         rmvpe_voiced_mask=rmvpe_voiced_mask,
         rmvpe_time_step_seconds=rmvpe_step,
     )
@@ -257,18 +274,12 @@ def auto_lyric_hybrid_pipeline(
 
         pred_dict = {}
         chars_dict = {}
-        hfa_use_phoneme_g2p = False
 
         if run_lyric_alignment:
-            use_phoneme_asr = language == "ja" and lyric_output_mode == "romaji" and (
-                matcher is not None or use_phoneme_asr_for_ja_without_lyrics
-            )
+            use_phoneme_asr = language == "ja" and lyric_output_mode in {"romaji", "kana"}
             phoneme_asr_path = None
             if use_phoneme_asr:
-                if matcher is not None:
-                    print("\n--- Stage 1/3: Running romaji ASR for Japanese lyric mode ---")
-                else:
-                    print("\n--- Stage 1/3: Running romaji ASR for Japanese token-lab mode (no reference lyrics) ---")
+                print("\n--- Stage 1/3: Running mora ASR for Japanese lyric mode ---")
                 phoneme_asr_path = _select_romaji_asr_path(phoneme_asr_model_path)
                 if phoneme_asr_path is None:
                     print(
@@ -289,13 +300,10 @@ def auto_lyric_hybrid_pipeline(
                     lyric_output_mode=lyric_output_mode,
                     asr_batch_size=asr_batch_size,
                     cancel_checker=cancel_checker,
-                    write_asr_phoneme_lab=(matcher is None),
                 )
-                hfa_use_phoneme_g2p = (matcher is None)
             else:
-                if language == "ja" and lyric_output_mode == "romaji":
-                    reason = "No reference lyrics provided" if matcher is None else "Romaji ASR unavailable"
-                    print(f"\n--- Stage 1/3: {reason}; fallback to text ASR + Japanese G2P for romaji mode ---")
+                if language == "ja" and lyric_output_mode in {"romaji", "kana"}:
+                    print("\n--- Stage 1/3: Mora ASR unavailable; fallback to text ASR + Japanese G2P ---")
                 else:
                     print("\n--- Stage 1/3: Running ASR in subprocess isolation mode ---")
                 chars_dict, chunk_logs = run_qwen_asr_and_fa(
@@ -333,7 +341,6 @@ def auto_lyric_hybrid_pipeline(
                         temp_dir_path,
                         language=language,
                         cancel_checker=cancel_checker,
-                        use_phoneme_g2p=hfa_use_phoneme_g2p,
                     )
                     _check_cancel()
                     if not pred_dict:

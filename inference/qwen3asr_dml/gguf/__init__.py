@@ -1,3 +1,7 @@
+import sys
+
+sys.modules.setdefault("gguf", sys.modules[__name__])
+
 from .constants import *
 from .lazy import *
 from .gguf_reader import *

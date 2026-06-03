@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from application.config import PipelineConfig
+from application.config import (
+    DEFAULT_SLICE_MAX_SEC,
+    DEFAULT_SLICE_MIN_SEC,
+    PipelineConfig,
+    validate_slice_bounds,
+)
 
 
 class TestPipelineConfig:
@@ -33,6 +38,8 @@ class TestPipelineConfig:
         assert cfg.language == "zh"
         assert cfg.tempo == 120.0  # default
         assert cfg.batch_size == 8  # default
+        assert cfg.slice_min_sec == DEFAULT_SLICE_MIN_SEC
+        assert cfg.slice_max_sec == DEFAULT_SLICE_MAX_SEC
         assert cfg.output_lyrics is True  # default
         assert cfg.debug_mode is False  # default
         assert cfg.cancel_checker is None  # default
@@ -57,6 +64,8 @@ class TestPipelineConfig:
         assert result["output_dir"] == Path("/tmp/output")
         assert result["language"] == "zh"
         assert result["tempo"] == 120.0
+        assert result["slice_min_sec"] == DEFAULT_SLICE_MIN_SEC
+        assert result["slice_max_sec"] == DEFAULT_SLICE_MAX_SEC
 
     def test_mutable_default_is_safe(self, base_kwargs):
         """Default output_formats should not be shared across instances."""
@@ -100,3 +109,17 @@ class TestPipelineConfig:
         assert isinstance(cfg.batch_size, int)
         assert isinstance(cfg.seg_threshold, float)
         assert isinstance(cfg.rmvpe_model_path, str)
+
+    def test_validate_slice_bounds_accepts_zero_min(self):
+        """Zero minimum slice duration should be allowed when max is positive."""
+        validate_slice_bounds(0.0, 22.0)
+
+    def test_validate_slice_bounds_rejects_zero_max(self):
+        """Zero maximum slice duration should be rejected."""
+        with pytest.raises(ValueError, match="slice_max_sec"):
+            validate_slice_bounds(0.0, 0.0)
+
+    def test_validate_slice_bounds_rejects_min_greater_than_max(self):
+        """Minimum slice duration cannot exceed maximum."""
+        with pytest.raises(ValueError, match="slice_min_sec"):
+            validate_slice_bounds(24.0, 12.0)

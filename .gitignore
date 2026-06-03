@@ -12,6 +12,7 @@ __pycache__
 .venv
 venv
 /artifacts/
+/dist/
 /python/
 .vscode
 .ipynb_checkpoints/
@@ -28,3 +29,4 @@ inference/tempCodeRunnerFile.py
 /inference/phonemeASR/logs
 *.json
 *.dll
+/outputs/

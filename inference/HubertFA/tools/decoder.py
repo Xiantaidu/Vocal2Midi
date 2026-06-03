@@ -1,7 +1,21 @@
+import importlib
+
 import numpy as np
 
 from .align_word import Phoneme, Word, WordList
-from .plot import plot_force_alignment_prob, plot_non_lexical_phonemes
+
+
+def _load_plot_helpers():
+    try:
+        plot_module = importlib.import_module(".plot", package=__package__)
+    except ModuleNotFoundError as exc:
+        missing_name = getattr(exc, "name", "")
+        if missing_name in {"matplotlib", "matplotlib.pyplot"}:
+            raise RuntimeError(
+                "HubertFA plotting requires the optional 'matplotlib' package."
+            ) from exc
+        raise
+    return plot_module.plot_force_alignment_prob, plot_module.plot_non_lexical_phonemes
 
 
 def sigmoid(x):
@@ -116,6 +130,7 @@ class AlignmentDecoder:
         return words, total_confidence
 
     def plot(self, melspec, ph_time_gt=None):
+        plot_force_alignment_prob, _ = _load_plot_helpers()
         ph_idx_frame = np.zeros(self.T, dtype="int32")
         ph_intervals_pred_int = (np.array(self.ph_intervals_pred) / self.frame_length).round().astype("int32")
         ph_time_gt_int = (ph_time_gt / self.frame_length).round().astype("int32") if ph_time_gt is not None else None
@@ -261,6 +276,7 @@ class NonLexicalDecoder:
         return non_lexical_words
 
     def plot(self, mel_spec, non_lexical_target=None):
+        _, plot_non_lexical_phonemes = _load_plot_helpers()
         return plot_non_lexical_phonemes(
             mel_spec=mel_spec, cvnt_prob=self.cvnt_probs,
             label=self.non_lexical_phs, frame_duration=self.frame_length, non_lexical_target=non_lexical_target
