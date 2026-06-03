@@ -129,6 +129,67 @@ def test_load_qwen_model_uses_dml_runtime_cache(monkeypatch):
     assert calls[-1] == "shutdown"
 
 
+def test_load_romaji_model_skips_dml_cache_for_stability(monkeypatch, tmp_path):
+    calls = []
+    asr_api.clear_romaji_model_cache()
+
+    class _DummyRomajiModel:
+        sample_rate = 16000
+        provider = "dml"
+
+    def fake_resolve_model_dir(model_dir):
+        return tmp_path / "romaji"
+
+    def fake_from_model_path(cls, model_path, device="dml", verbose=False):
+        calls.append((str(model_path), device, verbose))
+        return _DummyRomajiModel()
+
+    monkeypatch.setattr(asr_api, "resolve_model_dir", fake_resolve_model_dir)
+    monkeypatch.setattr(
+        asr_api.RomajiASROnnxModel,
+        "from_model_path",
+        classmethod(fake_from_model_path),
+    )
+
+    first = asr_api.load_romaji_asr_model("experiments/romajiASR", device="dml", use_cache=True)
+    second = asr_api.load_romaji_asr_model("experiments/romajiASR", device="dml", use_cache=True)
+
+    assert first is not second
+    assert len(calls) == 2
+    assert asr_api._ROMAJI_MODEL_CACHE == {}
+
+
+def test_load_romaji_model_keeps_cpu_cache(monkeypatch, tmp_path):
+    calls = []
+    asr_api.clear_romaji_model_cache()
+
+    class _DummyRomajiModel:
+        sample_rate = 16000
+        provider = "cpu"
+
+    def fake_resolve_model_dir(model_dir):
+        return tmp_path / "romaji"
+
+    def fake_from_model_path(cls, model_path, device="cpu", verbose=False):
+        calls.append((str(model_path), device, verbose))
+        return _DummyRomajiModel()
+
+    monkeypatch.setattr(asr_api, "resolve_model_dir", fake_resolve_model_dir)
+    monkeypatch.setattr(
+        asr_api.RomajiASROnnxModel,
+        "from_model_path",
+        classmethod(fake_from_model_path),
+    )
+
+    first = asr_api.load_romaji_asr_model("experiments/romajiASR", device="cpu", use_cache=True)
+    second = asr_api.load_romaji_asr_model("experiments/romajiASR", device="cpu", use_cache=True)
+
+    assert first is second
+    assert len(calls) == 1
+
+    asr_api.clear_romaji_model_cache()
+
+
 def test_batch_transcribe_asr_sanitizes_results_and_passes_default_prompt_in_process(tmp_path):
     calls = []
 
