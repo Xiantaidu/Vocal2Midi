@@ -1,112 +1,183 @@
 # Vocal2Midi
 
-Vocal2Midi is a desktop and pipeline toolkit for turning vocal audio into lyric-aligned MIDI and related editing artifacts.
+Vocal2Midi is a Windows-first desktop tool and inference pipeline for turning vocal audio into lyric-aligned MIDI, USTX, and supporting editing artifacts.
 
-The current project runtime is centered on ONNX inference:
+The current runtime is **ONNX-first**:
 
-- `llama.cpp` stays on CPU.
-- ONNX backends default to DirectML and fall back to CPU when DirectML is unavailable.
-- The main user entrypoint is the Fluent GUI in `app_fluent.py`.
+- `llama.cpp` is used for the Qwen decoder and runs on CPU.
+- ONNX models default to **DirectML** and fall back to **CPU** when DirectML is unavailable.
+- The main user-facing entrypoint is the Fluent GUI in [`app_fluent.py`](app_fluent.py).
 
-## What the project does
+## Highlights
 
-Vocal2Midi combines several stages into one workflow:
+- End-to-end vocal-to-MIDI workflow in one project
+- Chinese and Japanese lyric handling
+- GUI workflow for interactive use
+- Batch slice + ASR CLI for folder processing
+- Portable-folder packaging flow for Windows distribution
+- ONNX-based inference stack for ASR, alignment, note extraction, and RMVPE
 
-1. slice or load vocal audio
-2. transcribe lyrics with Qwen3-ASR or the Japanese romaji ASR path
-3. align lyrics with HubertFA
-4. extract note timing and pitch with GAME
-5. optionally extract frame-level pitch with RMVPE
-6. export MIDI, USTX, text, CSV, and alignment artifacts
+## What Vocal2Midi Does
 
-## Current runtime layout
+At a high level, the hybrid pipeline looks like this:
 
-The active inference stack in this repository is:
+```text
+audio
+  -> optional RMVPE pitch curve
+  -> slicing
+  -> ASR
+  -> lyric matching / .lab generation
+  -> HubertFA forced alignment
+  -> GAME note extraction
+  -> quantization
+  -> export
+```
 
-- Qwen3-ASR: `inference/qwen3asr_dml/`
-- Japanese romaji ASR: `inference/romaji_asr/`
-- HubertFA ONNX: `inference/HubertFA/`
-- GAME ONNX: `inference/game/`
-- RMVPE ONNX: `inference/API/rmvpe_api.py`
-- runtime device helpers: `inference/device_utils.py`
+There is also a no-lyrics path:
 
-Compatibility function names such as `extract_pitches_and_align_torch()` are still present in a few places, but their current implementation is ONNX-based.
+```text
+audio
+  -> optional RMVPE pitch curve
+  -> slicing
+  -> GAME pitch-only extraction
+  -> export
+```
 
-## Repository overview
+## Runtime Stack
+
+| Component | Current backend | Location |
+| --- | --- | --- |
+| Qwen3-ASR | ONNX Runtime + `llama.cpp` | `inference/qwen3asr_dml/` |
+| Japanese mora / romaji ASR | ONNX Runtime | `inference/romaji_asr/` |
+| HubertFA | ONNX Runtime | `inference/HubertFA/` |
+| GAME | ONNX Runtime | `inference/game/` |
+| RMVPE | ONNX Runtime | `inference/API/rmvpe_api.py` |
+| Device normalization | DirectML / CPU helpers | `inference/device_utils.py` |
+
+Some public function names still contain `_torch` for compatibility, but the active backend is ONNX-based.
+
+## Repository Layout
 
 ```text
 application/   application-layer orchestration and config objects
-docs/          project documentation
+docs/          architecture notes and supporting docs
 experiments/   local model directories
 gui/           PyQt5 + qfluentwidgets desktop UI
-inference/     ASR, alignment, pitch extraction, export, and runtime code
-scripts/       command-line utilities
+inference/     ASR, alignment, pitch extraction, slicing, quantization, export
+scripts/       batch CLI and portable build helpers
 tests/         automated tests
 ```
 
-## Default model locations
+## Quick Start
 
-The GUI currently defaults to these local paths:
+### 1. Install dependencies
 
-- GAME: `experiments/GAME-1.0.3-medium-onnx`
-- HubertFA: `experiments/1218_hfa_model_new_dict`
-- Qwen3-ASR: `experiments/Qwen3-ASR-1.7B-dml`
-- Romaji ASR: `experiments/romajiASR`
-- RMVPE: `experiments/RMVPE/rmvpe.onnx`
+Use your preferred Python environment, then install:
 
-## Running the GUI
+```bash
+pip install -r requirements.txt
+```
 
-For a local developer environment, start the GUI with:
+The main runtime dependencies are:
+
+- `onnxruntime-directml`
+- `PyQt5`
+- `PyQt-Fluent-Widgets`
+- `librosa`
+- `soundfile`
+- `mido`
+- `pyopenjtalk`
+
+An `environment.yml` file is also included as a reference environment snapshot.
+
+### 2. Prepare model folders
+
+By default, the GUI expects models in these locations:
+
+| Component | Default path |
+| --- | --- |
+| GAME | `experiments/GAME-1.0.3-medium-onnx` |
+| HubertFA | `experiments/1218_hfa_model_new_dict` |
+| Qwen3-ASR | `experiments/Qwen3-ASR-1.7B-dml` |
+| Japanese mora ASR | `experiments/romajiASR` |
+| RMVPE | `experiments/RMVPE/rmvpe.onnx` |
+
+You can change these paths in the GUI settings panel.
+
+### 3. Launch the GUI
+
+For a normal developer environment:
 
 ```bash
 python app_fluent.py
 ```
 
-For the installer-style Windows portable flow added in this repository, use:
+## GUI Workflow
 
-```bat
-安装环境.bat
-启动GUI.bat
-```
+The GUI is the main way to use Vocal2Midi interactively. It lets you:
 
-## Portable distribution
+- choose model paths
+- pick the runtime device
+- set slicing mode and slice length bounds
+- choose language and lyric output mode
+- provide optional reference lyrics
+- export MIDI, USTX, text, CSV, chunk audio, and alignment artifacts
 
-If you want a sharable folder with a bundled Python runtime instead of an `.exe`, use:
+The application-layer job entrypoint is `run_auto_lyric_job()` in [`application/pipeline.py`](application/pipeline.py), which dispatches into the hybrid inference pipeline in [`inference/pipeline/auto_lyric_hybrid.py`](inference/pipeline/auto_lyric_hybrid.py).
 
-```bash
-python scripts/build_portable.py --clean
-```
+## Language Behavior
 
-By default, the builder copies the current Python runtime (`sys.prefix`) into `dist/Vocal2Midi-portable/` and bundles the active ONNX/GGUF models used by the GUI.
+### Chinese
 
-If the runtime source is a conda environment, a more relocatable build is:
+- Qwen3-ASR provides text transcription.
+- The lyric matcher and G2P path prepare `.lab` content for HubertFA.
+- Lyrics can be exported in Hanzi or pinyin-oriented forms depending on mode.
 
-```bash
-python scripts/build_portable.py --runtime-mode conda-pack --clean
-```
+### Japanese
 
-The generated folder includes:
+In the main hybrid lyric pipeline:
 
-- `Run Vocal2Midi.bat`
-- `Run Slice ASR CLI.bat`
-- `Open Portable Shell.bat`
-- a bundled `python/` runtime
-- bundled model assets under `experiments/`
+- `romaji` and `kana` lyric modes use the dedicated **mora ASR** path
+- if the output mode is `romaji`, the pipeline uses mora ASR output directly
+- if the output mode is `kana`, the pipeline converts matched mora output to kana for display
+- if reference lyrics are provided, the reference text is processed through `pyopenjtalk`, converted to kana mora tokens, then converted again to romaji mora tokens for matching
 
-Portable mode also stores GUI settings locally in `settings/vocal2midi.ini` and defaults output files to `outputs/`.
+This keeps Japanese lyric matching consistent with the mora-based ASR path instead of routing through the old phoneme-ASR forced-alignment branch.
 
-## Windows setup scripts
+## Runtime Device Rules
 
-For a lighter distribution flow where the user installs the bundled runtime on first launch instead of receiving a prebuilt `python/` folder, the repository also includes:
+Visible device options in the current UI are:
 
-- `安装环境.bat`: download embeddable Python, install `pip`, and install `requirements.txt`
-- `启动GUI.bat`: start the GUI with portable-mode environment variables
+- `dml`
+- `cpu`
 
-This route keeps the upload smaller, but it requires network access on the end user's machine during setup.
+Notes:
 
-## Batch slice + ASR CLI
+- `dml` is the default ONNX device
+- if DirectML is unavailable, ONNX Runtime falls back to CPU
+- legacy `cuda` values are still accepted by some public interfaces, but they are normalized to `dml`
+- `llama.cpp` remains CPU-based in the current design
 
-For folder-based batch processing, use:
+## Slicing
+
+The user-facing slice duration settings currently support:
+
+- minimum slice length: `0` to `60` seconds
+- maximum slice length: `0` to `60` seconds
+
+Current defaults:
+
+- minimum: `8.0` seconds
+- maximum: `22.0` seconds
+
+Validation rules:
+
+- `slice_max_sec` must be greater than `0`
+- `slice_min_sec` must be less than or equal to `slice_max_sec`
+
+## Batch Slice + ASR CLI
+
+For folder-based batch ASR processing:
 
 ```bash
 python scripts/slice_asr_cli.py <input_dir> <output_dir> \
@@ -115,21 +186,86 @@ python scripts/slice_asr_cli.py <input_dir> <output_dir> \
   --language zh
 ```
 
+This CLI is focused on:
+
+- scanning input audio files
+- slicing audio or bypassing slicing
+- running local Qwen3-ASR
+- saving chunk audio and `.lab` outputs
+- optionally saving JSON timing / ASR metadata
+
+Supported input extensions currently include:
+
+- `.wav`
+- `.m4a`
+- `.mp3`
+
 Useful options:
 
-- `--no-slice`: send the whole file to ASR as a single chunk
-- `--file-batch-size`: process multiple source files per batch
-- `--asr-batch-size`: control ASR batch size
-- `--rmvpe-model`: enable RMVPE-assisted smart slicing when used with the matching slicing mode
-- `--keep-model`: keep the ASR runtime alive across the whole batch
-- `--keep-rmvpe`: keep the RMVPE runtime alive across the whole batch
-- `--save-json`: save per-chunk timestamps and ASR text
+```text
+--no-slice              bypass slicing and send the whole file to ASR
+--asr-batch-size        ASR batch size
+--file-batch-size       number of audio files per batch
+--rmvpe-model           enable RMVPE-assisted smart slicing
+--rmvpe-batch-size      RMVPE batch size
+--keep-model            keep the ASR runtime alive across the batch
+--keep-rmvpe            keep the RMVPE runtime alive across the batch
+--save-json             save slice timing and ASR outputs as JSON
+--no-recursive          scan only the top level
+--no-skip-existing      force reprocessing of existing outputs
+```
 
-Supported input extensions in the CLI are currently `.wav`, `.m4a`, and `.mp3`.
+Japanese whole-file example:
 
-## Outputs
+```bash
+python scripts/slice_asr_cli.py input output \
+  --asr-model experiments/Qwen3-ASR-1.7B-dml \
+  --device dml \
+  --language ja \
+  --no-slice
+```
 
-Depending on the selected pipeline mode, Vocal2Midi can export:
+## Portable Windows Distribution
+
+Vocal2Midi supports a **portable-folder** distribution flow. This is useful when you want to ship a self-contained runtime folder instead of building an `.exe`.
+
+Build a portable folder with:
+
+```bash
+python scripts/build_portable.py --clean
+```
+
+If the current Python runtime is a Conda environment and you want a more relocatable bundle:
+
+```bash
+python scripts/build_portable.py --runtime-mode conda-pack --clean
+```
+
+The generated portable folder is written under `dist/` and typically includes:
+
+- a bundled `python/` runtime
+- bundled model assets under `experiments/`
+- `Run Vocal2Midi.bat`
+- `Run Slice ASR CLI.bat`
+- `Open Portable Shell.bat`
+
+In portable mode:
+
+- GUI settings are stored in `settings/vocal2midi.ini`
+- default output files go to `outputs/`
+
+## Windows Setup Scripts
+
+The repository also includes Windows helper scripts:
+
+- [`安装环境.bat`](安装环境.bat)
+- [`启动GUI.bat`](启动GUI.bat)
+
+These are useful for a smaller distribution model where the user downloads or initializes the runtime on first setup rather than receiving a fully bundled `python/` folder.
+
+## Export Formats
+
+Depending on the selected workflow, Vocal2Midi can export:
 
 - `.mid`
 - `.ustx`
@@ -137,27 +273,39 @@ Depending on the selected pipeline mode, Vocal2Midi can export:
 - `.csv`
 - `TextGrid`
 - chunk `.wav` files
-- `.lab` alignment text
-- ASR match logs
+- `.lab`
+- ASR matching logs
 
-## Dependencies
+## Project Notes
 
-This repository includes both `requirements.txt` and `environment.yml` as dependency references.
+- The repository has already migrated away from the earlier Torch-heavy runtime design for the main inference path.
+- Some historical function names remain for compatibility.
+- Model assets are expected to exist locally under `experiments/` or another user-provided path.
+- The codebase is still being cleaned up in places, so you may still see a few legacy names or UI strings from earlier iterations.
 
-The active inference design assumes:
+## License
 
-- ONNX Runtime for DirectML and CPU execution
-- `llama.cpp` for the Qwen decoder on CPU
-- PyQt5 and qfluentwidgets for the desktop UI
+The overall Vocal2Midi repository is distributed under the **Apache License 2.0**. See [LICENSE](LICENSE).
 
-## Notes
+Third-party components, vendored code, model assets, dictionaries, and other embedded materials may also carry their own original licenses, notices, or attribution requirements. Those original notices remain applicable to the corresponding materials. See [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) and any embedded license files for details.
 
-- The GUI and documentation still reflect an evolving migration from older Torch-based inference paths to ONNX-based runtimes.
-- Some older names remain for compatibility, even when the backend has already changed.
-- Local model files are expected to exist under `experiments/` or another user-provided path.
+## Development and Testing
 
-## More documentation
+The repo includes a focused automated test suite under `tests/`.
 
+Examples:
+
+```bash
+python -m pytest tests/test_auto_lyric_hybrid_pipeline.py
+python -m pytest tests/test_asr_api.py tests/test_game_api.py tests/test_rmvpe_api.py
+python -m pytest tests/test_device_selection.py tests/test_hubertfa_decoder.py
+```
+
+For architecture details, see [docs/architecture.md](docs/architecture.md).
+
+## Related Files
+
+- Main GUI entrypoint: [`app_fluent.py`](app_fluent.py)
 - Architecture notes: [docs/architecture.md](docs/architecture.md)
 - Third-party credits: [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md)
 - License: [LICENSE](LICENSE)

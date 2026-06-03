@@ -8,7 +8,7 @@ set "PYTHON_DIR=%ROOT%python"
 
 if not exist "%PYTHON_DIR%\python.exe" (
     echo [ERROR] Portable Python was not found.
-    echo         Please run 安装环境.bat first.
+    echo         Please run install.bat first.
     pause
     exit /b 1
 )

@@ -126,6 +126,6 @@ if errorlevel 1 (
 echo.
 echo ========================================
 echo   Setup complete.
-echo   Now run: 启动GUI.bat
+echo   Now run: run.bat
 echo ========================================
 pause
