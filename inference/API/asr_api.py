@@ -135,7 +135,14 @@ def load_romaji_asr_model(model_dir, device="dml", use_cache=True):
     resolved_dir = str(resolve_model_dir(model_dir))
     requested_device = normalize_runtime_device(device)
     cache_key = (resolved_dir, requested_device)
-    if use_cache:
+    cache_enabled = bool(use_cache) and requested_device == "cpu"
+    if not cache_enabled:
+        with _ROMAJI_MODEL_CACHE_LOCK:
+            _ROMAJI_MODEL_CACHE.pop(cache_key, None)
+        if use_cache and requested_device != "cpu":
+            print("[Romaji ASR] In-process cache is disabled on DML for stability; creating a fresh session.")
+
+    if cache_enabled:
         with _ROMAJI_MODEL_CACHE_LOCK:
             cached = _ROMAJI_MODEL_CACHE.get(cache_key)
         if cached is not None:
@@ -150,7 +157,7 @@ def load_romaji_asr_model(model_dir, device="dml", use_cache=True):
         "sample_rate": int(model.sample_rate),
         "provider": model.provider,
     }
-    if use_cache:
+    if cache_enabled:
         with _ROMAJI_MODEL_CACHE_LOCK:
             _ROMAJI_MODEL_CACHE[cache_key] = payload
     return payload
