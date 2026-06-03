@@ -10,8 +10,8 @@ from typing import Callable, Optional
 
 SLICE_DURATION_MIN_SEC = 0.0
 SLICE_DURATION_MAX_SEC = 60.0
-DEFAULT_SLICE_MIN_SEC = 8.0
-DEFAULT_SLICE_MAX_SEC = 22.0
+DEFAULT_SLICE_MIN_SEC = 5.0
+DEFAULT_SLICE_MAX_SEC = 10.0
 
 
 def validate_slice_bounds(slice_min_sec: float, slice_max_sec: float) -> None:
@@ -64,8 +64,8 @@ class PipelineConfig:
     seg_threshold: float = -40.0
     seg_radius: float = 0.2
     est_threshold: float = 0.5
-    batch_size: int = 8
-    asr_batch_size: int = 4
+    batch_size: int = 1
+    asr_batch_size: int = 2
     output_lyrics: bool = True
     rmvpe_model_path: str = ""
     phoneme_asr_model_path: str = ""

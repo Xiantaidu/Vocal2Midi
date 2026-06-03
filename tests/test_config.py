@@ -37,7 +37,8 @@ class TestPipelineConfig:
         assert cfg.audio_path == "test.wav"
         assert cfg.language == "zh"
         assert cfg.tempo == 120.0  # default
-        assert cfg.batch_size == 8  # default
+        assert cfg.batch_size == 1  # default
+        assert cfg.asr_batch_size == 2  # default
         assert cfg.slice_min_sec == DEFAULT_SLICE_MIN_SEC
         assert cfg.slice_max_sec == DEFAULT_SLICE_MAX_SEC
         assert cfg.output_lyrics is True  # default
