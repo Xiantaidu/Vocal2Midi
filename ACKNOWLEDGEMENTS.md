@@ -2,6 +2,12 @@
 
 Vocal2Midi builds on several open-source projects for transcription, alignment, pitch extraction, runtime support, and UI tooling.
 
+## Repository license
+
+The overall Vocal2Midi repository is distributed under the **Apache License 2.0**.
+
+Third-party components, vendored code, bundled data, dictionaries, and other embedded materials may retain their own original licenses, copyright notices, and attribution requirements. Where such notices are present, they remain applicable to the corresponding materials.
+
 ## Core upstream projects
 
 | Project | Role in Vocal2Midi | Upstream repository |

@@ -1,5 +1,5 @@
 # Runtime note:
-# - `llama.cpp` stays on CPU.
+# - `llama.cpp` stays on CPU OR Vulkan.
 # - The ONNX backends default to DirectML and fall back to CPU when DML is unavailable.
 
 click
