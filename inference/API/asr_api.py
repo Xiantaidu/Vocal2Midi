@@ -18,9 +18,9 @@ _ROMAJI_MODEL_CACHE_LOCK = threading.Lock()
 _PHONEME_MODEL_CACHE = _ROMAJI_MODEL_CACHE
 _PHONEME_MODEL_CACHE_LOCK = _ROMAJI_MODEL_CACHE_LOCK
 DEFAULT_QWEN_ASR_PROMPT = (
-    "Accurately transcribe only the sung lyric text in the requested language. "
-    "Output only the lyric text itself. "
-    "Ignore spoken chatter, background speech, filler words, and non-lyric English words."
+    "你是一位专业的歌词转录助手，专注于从音频中准确提取歌词文本。"
+    "请专注于识别歌曲中的歌词内容。"
+    "避免乱猜歌词。"
 )
 _ASCII_WORD_RE = re.compile(r"[A-Za-z]+(?:['’\-][A-Za-z]+)*")
 _ASCII_PUNCT_RE = re.compile(r"[!\"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]+")

@@ -70,22 +70,25 @@ class QwenASREngine:
     def _build_prompt_embd(
         self,
         audio_embd: np.ndarray,
-        prefix_text: str,
         context: Optional[str],
         language: Optional[str],
     ) -> np.ndarray:
         def tk(text: str) -> List[int]:
             return self.model.tokenize(text)
 
-        prefix_str = f"system\n{context or 'You are a helpful assistant.'}"
-        prefix_tokens = [self.ID_IM_START] + tk(prefix_str) + [self.ID_IM_END]
-        prefix_tokens += [self.ID_IM_START] + tk("user\n") + [self.ID_AUDIO_START]
+        prefix_tokens = []
+        if context:
+            prefix_tokens.extend([self.ID_IM_START] + tk(f"system\n{context}") + [self.ID_IM_END])
+            prefix_tokens.extend(tk("\n"))
 
-        suffix_head = "assistant\n"
+        prefix_tokens.extend([self.ID_IM_START] + tk("user\n") + [self.ID_AUDIO_START])
+
+        suffix_tokens = [self.ID_AUDIO_END, self.ID_IM_END]
+        suffix_tokens.extend(tk("\n"))
+        suffix_tokens.extend([self.ID_IM_START] + tk("assistant\n"))
         if language:
-            suffix_head += f"language {language}"
-        suffix_tokens = [self.ID_AUDIO_END] + [self.ID_IM_END]
-        suffix_tokens += [self.ID_IM_START] + tk(suffix_head) + [self.ID_ASR_TEXT] + tk(prefix_text)
+            suffix_tokens.extend(tk(f"language {language}"))
+            suffix_tokens.append(self.ID_ASR_TEXT)
 
         n_pre = len(prefix_tokens)
         n_aud = audio_embd.shape[0]
@@ -100,8 +103,7 @@ class QwenASREngine:
         self,
         full_embd: np.ndarray,
         rollback_num: int,
-        is_last_chunk: bool = False,
-        temperature: float = 0.4,
+        temperature: float = 0.0,
     ) -> DecodeResult:
         result = DecodeResult()
         total_len = full_embd.shape[0]
@@ -121,6 +123,7 @@ class QwenASREngine:
         stable_text = ""
         text_decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
+        rollback_num = max(int(rollback_num), 0)
         seed = int(np.random.randint(0, 2**31 - 1))
         sampler = self.llama_mod.LlamaSampler(temperature=temperature, seed=seed)
         last_sampled_token = sampler.sample(self.ctx.ptr)
@@ -150,7 +153,7 @@ class QwenASREngine:
         del sampler
         del batch
 
-        if is_last_chunk and not result.is_aborted:
+        if not result.is_aborted:
             while display_queue:
                 token_id = display_queue.popleft()
                 stable_tokens.append(token_id)
@@ -176,16 +179,11 @@ class QwenASREngine:
         self,
         full_embd: np.ndarray,
         rollback_num: int,
-        is_last_chunk: bool,
         temperature: float,
     ) -> DecodeResult:
-        current_temperature = temperature
-        for _ in range(4):
-            result = self._decode(full_embd, rollback_num, is_last_chunk, current_temperature)
-            if not result.is_aborted:
-                return result
-            current_temperature += 0.3
-            print(f"\n\n[!] decode retry (Temp -> {current_temperature:.1f})\n")
+        result = self._decode(full_embd, rollback_num, temperature)
+        if result.is_aborted and self.verbose:
+            print("\n\n[!] decode stopped by repetition safeguard.\n")
         return result
 
     def _print_stats(self, stats: dict, audio_duration: float, total_time: float) -> None:
@@ -213,7 +211,7 @@ class QwenASREngine:
         context: Optional[str] = None,
         start_second: float = 0.0,
         duration: float = 0.0,
-        temperature: float = 0.4,
+        temperature: float = 0.0,
         rollback_num: int = 5,
     ) -> TranscribeResult:
         from .utils import load_audio
@@ -236,7 +234,7 @@ class QwenASREngine:
         context: Optional[str] = None,
         start_second: float = 0.0,
         duration: float = 0.0,
-        temperature: float = 0.4,
+        temperature: float = 0.0,
         rollback_num: int = 5,
     ) -> List[TranscribeResult]:
         from .utils import load_audio
@@ -262,19 +260,19 @@ class QwenASREngine:
         language: Optional[str],
         chunk_size_sec: float = 40.0,
         memory_chunks: int = 1,
-        temperature: float = 0.4,
+        temperature: float = 0.0,
         rollback_num: int = 5,
     ) -> TranscribeResult:
         if language:
             language = normalize_language_name(language)
             validate_language(language)
+        _ = memory_chunks  # Kept for API compatibility; offline decoding follows official per-chunk inference.
 
         sr = 16000
         samples_per_chunk = int(chunk_size_sec * sr)
         total_len = len(audio)
         num_chunks = int(np.ceil(total_len / samples_per_chunk))
         total_duration = total_len / sr
-        asr_memory = deque(maxlen=memory_chunks)
         total_full_text = ""
         stats = {
             "prefill_time": 0.0,
@@ -316,12 +314,9 @@ class QwenASREngine:
             if not was_last:
                 send_enc(idx + 1)
 
-            prefix_text = "".join(item[1] for item in asr_memory)
-            combined_audio = np.concatenate([item[0] for item in asr_memory] + [audio_feature], axis=0)
-            full_embd = self._build_prompt_embd(combined_audio, prefix_text, context, language)
-            res = self._safe_decode(full_embd, rollback_num, was_last, temperature)
+            full_embd = self._build_prompt_embd(audio_feature, context, language)
+            res = self._safe_decode(full_embd, rollback_num, temperature)
 
-            asr_memory.append((audio_feature, res.text))
             total_full_text += res.text
             stats["prefill_tokens"] += res.n_prefill
             stats["prefill_time"] += res.t_prefill
@@ -340,12 +335,13 @@ class QwenASREngine:
         language: Optional[str],
         chunk_size_sec: float = 40.0,
         memory_chunks: int = 1,
-        temperature: float = 0.4,
+        temperature: float = 0.0,
         rollback_num: int = 5,
     ) -> List[TranscribeResult]:
         if language:
             language = normalize_language_name(language)
             validate_language(language)
+        _ = memory_chunks  # Kept for API compatibility; offline decoding follows official per-chunk inference.
 
         if not audios:
             return []
@@ -362,7 +358,6 @@ class QwenASREngine:
                     "total_len": total_len,
                     "total_duration": total_len / sr,
                     "num_chunks": num_chunks,
-                    "memory": deque(maxlen=memory_chunks),
                     "text": "",
                     "stats": {
                         "prefill_time": 0.0,
@@ -379,7 +374,6 @@ class QwenASREngine:
         for round_idx in range(max_rounds):
             active_indices = []
             batch_audio = []
-            batch_is_last = []
             for state_idx, state in enumerate(states):
                 if round_idx >= state["num_chunks"]:
                     continue
@@ -390,7 +384,6 @@ class QwenASREngine:
                     data = np.pad(data, (0, samples_per_chunk - len(data)))
                 batch_audio.append(data)
                 active_indices.append(state_idx)
-                batch_is_last.append(round_idx == state["num_chunks"] - 1)
 
             if not batch_audio:
                 continue
@@ -413,13 +406,9 @@ class QwenASREngine:
                 stats["encode_time"] += encode_time * shared_weight
 
                 audio_feature = audio_features[batch_idx]
-                was_last = batch_is_last[batch_idx]
-                prefix_text = "".join(item[1] for item in state["memory"])
-                combined_audio = np.concatenate([item[0] for item in state["memory"]] + [audio_feature], axis=0)
-                full_embd = self._build_prompt_embd(combined_audio, prefix_text, context, language)
-                res = self._safe_decode(full_embd, rollback_num, was_last, temperature)
+                full_embd = self._build_prompt_embd(audio_feature, context, language)
+                res = self._safe_decode(full_embd, rollback_num, temperature)
 
-                state["memory"].append((audio_feature, res.text))
                 state["text"] += res.text
                 stats["prefill_tokens"] += res.n_prefill
                 stats["prefill_time"] += res.t_prefill
