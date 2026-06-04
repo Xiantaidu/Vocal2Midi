@@ -42,7 +42,7 @@ class ASREngineConfig:
     n_ctx: int = 2048
     chunk_size: float = 40.0
     memory_num: int = 1
-    max_decode_tokens: int = 256
+    max_decode_tokens: int = 512
     llama_backend: str = "auto"
     verbose: bool = True
 
