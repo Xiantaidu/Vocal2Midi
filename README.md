@@ -4,7 +4,7 @@ Vocal2Midi is a Windows-first desktop tool and inference pipeline for turning vo
 
 The current runtime is **ONNX-first**:
 
-- `llama.cpp` is used for the Qwen decoder and runs on CPU.
+- `llama.cpp` is used for the Qwen decoder and runs on Vulkan or CPU.
 - ONNX models default to **DirectML** and fall back to **CPU** when DirectML is unavailable.
 - The main user-facing entrypoint is the Fluent GUI in [`app_fluent.py`](app_fluent.py).
 
@@ -225,41 +225,14 @@ python scripts/slice_asr_cli.py input output \
   --no-slice
 ```
 
-## Portable Windows Distribution
 
-Vocal2Midi supports a **portable-folder** distribution flow. This is useful when you want to ship a self-contained runtime folder instead of building an `.exe`.
-
-Build a portable folder with:
-
-```bash
-python scripts/build_portable.py --clean
-```
-
-If the current Python runtime is a Conda environment and you want a more relocatable bundle:
-
-```bash
-python scripts/build_portable.py --runtime-mode conda-pack --clean
-```
-
-The generated portable folder is written under `dist/` and typically includes:
-
-- a bundled `python/` runtime
-- bundled model assets under `experiments/`
-- `Run Vocal2Midi.bat`
-- `Run Slice ASR CLI.bat`
-- `Open Portable Shell.bat`
-
-In portable mode:
-
-- GUI settings are stored in `settings/vocal2midi.ini`
-- default output files go to `outputs/`
 
 ## Windows Setup Scripts
 
 The repository also includes Windows helper scripts:
 
-- [`安装环境.bat`](安装环境.bat)
-- [`启动GUI.bat`](启动GUI.bat)
+- [`install.bat`](install.bat)
+- [`run.bat`](run.bat)
 
 These are useful for a smaller distribution model where the user downloads or initializes the runtime on first setup rather than receiving a fully bundled `python/` folder.
 
