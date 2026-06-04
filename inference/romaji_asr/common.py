@@ -6,6 +6,8 @@ import onnxruntime as ort
 import soundfile as sf
 from scipy.signal import resample_poly
 
+from inference.device_utils import resolve_onnx_providers
+
 
 DEFAULT_SAMPLE_RATE = 16000
 
@@ -30,18 +32,15 @@ def load_audio(audio_path: str | Path, sample_rate: int = DEFAULT_SAMPLE_RATE) -
 
 def create_session(model_path: Path, provider: str = "dml") -> ort.InferenceSession:
     provider = provider.lower()
-    available = ort.get_available_providers()
     sess_options = ort.SessionOptions()
     sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
     if provider == "dml":
-        if "DmlExecutionProvider" not in available:
-            raise RuntimeError(
-                "DmlExecutionProvider is not available. Install onnxruntime-directml and retry."
-            )
         sess_options.enable_mem_pattern = False
         sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-        providers = ["DmlExecutionProvider", "CPUExecutionProvider"]
+        provider_name, providers = resolve_onnx_providers("dml", label="Romaji ASR ONNX")
+        if provider_name != "dml":
+            raise RuntimeError("No eligible DirectML adapter is available for romaji ASR.")
     elif provider == "cpu":
         providers = ["CPUExecutionProvider"]
     else:

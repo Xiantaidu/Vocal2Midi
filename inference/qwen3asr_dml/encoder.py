@@ -6,6 +6,8 @@ import numpy as np
 import onnxruntime as ort
 import scipy.signal
 
+from inference.device_utils import resolve_onnx_providers
+
 
 class FastWhisperMel:
     """NumPy/SciPy mel extractor compatible with the Qwen3-ASR frontend."""
@@ -123,9 +125,8 @@ class QwenAudioEncoder:
         sess_opts.add_session_config_entry("session.inter_op.allow_spinning", "0")
         sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
-        providers = ["CPUExecutionProvider"]
-        if use_dml and "DmlExecutionProvider" in ort.get_available_providers():
-            providers.insert(0, "DmlExecutionProvider")
+        requested_device = "dml" if use_dml else "cpu"
+        _, providers = resolve_onnx_providers(requested_device, label="Qwen3 Encoder ONNX")
 
         if self.verbose:
             print(f"--- [Encoder] Loading split ONNX models (DML: {use_dml}) ---")
