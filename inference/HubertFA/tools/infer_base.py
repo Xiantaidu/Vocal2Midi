@@ -82,11 +82,14 @@ def median_abs_deviation(x, axis=0, center=np.median, scale=1.0):
 
 def remove_outliers_per_position(data_series, threshold=1.5):
     """
-    使用中位数绝对偏差(MAD)方法去除离群值
-    参数:
-        data_series -- 每个位置的时间戳列表
-        threshold -- MAD阈值
-    返回: 处理后的平均值列表
+    Remove outliers with the median absolute deviation (MAD) method.
+
+    Args:
+        data_series: Timestamp lists for each position.
+        threshold: MAD threshold.
+
+    Returns:
+        A list of processed average values.
     """
     processed_values = []
     for position_values in data_series:
@@ -96,15 +99,15 @@ def remove_outliers_per_position(data_series, threshold=1.5):
         med = np.median(position_values)
         mad_val = median_abs_deviation(position_values)
 
-        # 处理MAD=0的情况（所有值相同）
+        # Handle MAD=0, meaning all values are identical.
         if mad_val == 0:
             processed_values.append(med)
             continue
 
-        # 计算修正Z-score
+        # Compute the modified Z-score.
         z_scores = np.abs((np.array(position_values) - med) / (mad_val * 1.4826))
 
-        # 分离有效值和离群值
+        # Separate retained values from outliers.
         retained_values = []
         filtered_out = []
         for x, z in zip(position_values, z_scores):

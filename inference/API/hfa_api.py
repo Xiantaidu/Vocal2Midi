@@ -125,9 +125,9 @@ def run_hubert_fa(hfa_model, temp_dir, language="zh", cancel_checker=None, use_p
     dict_path = hfa_model.vocab_folder / dict_file
 
     if use_phoneme_g2p:
-        # 输入 .lab 已经是音素 token。
-        # 对日语额外做一层 "音素 -> mora词边界" 解析，这样 HFA 仍然按音素对齐，
-        # 但 word 层级不再是单个 phoneme，而是更接近日语拍(mora)。
+        # The input .lab file already contains phoneme tokens.
+        # For Japanese, add an extra "phoneme -> mora word boundary" pass so HFA
+        # still aligns at the phoneme level while word boundaries better match mora units.
         g2p_mode = "ja_mora_phoneme" if language == "ja" else "phoneme"
         hfa_model.get_dataset(wav_folder=temp_dir, language=language, g2p=g2p_mode, dictionary_path=None)
     else:

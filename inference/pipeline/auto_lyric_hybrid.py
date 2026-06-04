@@ -87,7 +87,7 @@ def _export_chunk_wavs(chunks, sr: int, output_key: str, output_dir: pathlib.Pat
 
 
 def _resolve_rmvpe_path(model_path: str) -> str:
-    """解析 RMVPE 模型路径"""
+    """Resolve the RMVPE model path."""
     if not model_path:
         raise ValueError("RMVPE 模型路径不能为空")
     return model_path
@@ -494,7 +494,7 @@ if __name__ == "__main__":
             original_lyrics=lyrics,
             output_dir=out_dir,
             output_formats=["mid", "txt"], # Simplified for now
-            slicing_method="默认切片",
+            slicing_method="default",
             tempo=120.0, # Simplified
             quantization_step=60, # Simplified
             pitch_format="name", # Simplified

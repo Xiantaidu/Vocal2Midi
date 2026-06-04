@@ -114,18 +114,18 @@ class Word:
 class WordList(list):
     def __init__(self, *args):
         super().__init__(*args)
-        self._log = []  # 新增：日志列表
+        self._log = []  # Shared in-memory log entries.
 
     def _add_log(self, message: str):
-        """内部方法：添加日志信息"""
+        """Internal helper to append a log message."""
         self._log.append(message)
 
     def log(self) -> str:
-        """将日志输出为字符串"""
+        """Return the accumulated log as a string."""
         return "\n".join(self._log)
 
     def clear_log(self):
-        """清空日志"""
+        """Clear the accumulated log."""
         self._log.clear()
 
     def overlapping_words(self, new_word: Word):
@@ -235,7 +235,7 @@ class WordList(list):
     def add_SP(self, wav_length, add_phone="SP"):
         try:
             words_res = WordList()
-            words_res._log = self._log  # 共享日志
+            words_res._log = self._log  # Share the same log buffer.
 
             if self[0].start > 0:
                 try:

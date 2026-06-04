@@ -22,8 +22,8 @@ class LyricMatcher:
     def __init__(self, language: str) -> None:
         self.language = language.lower()
         self.processor = ProcessorFactory.create_processor(language)
-        self.aligner = SequenceAligner()  # 合并后的对齐器
-        self.highlighter = SmartHighlighter(self.aligner)  # 共享同一实例
+        self.aligner = SequenceAligner()  # Unified aligner used by the matcher pipeline.
+        self.highlighter = SmartHighlighter(self.aligner)  # Reuse the same aligner instance.
 
     def process_lyric_file(self, lyric_path: str) -> LyricData:
         try:

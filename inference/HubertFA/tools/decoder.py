@@ -113,7 +113,7 @@ class AlignmentDecoder:
         word_idx_last = -1
         for i, ph_idx in enumerate(ph_idx_seq):
             ph_seq_decoded.append(ph_seq[ph_idx])
-            # ph_idx只能用于两种情况：ph_seq和ph_idx_to_word_idx
+            # ph_idx is only valid for indexing ph_seq and ph_idx_to_word_idx.
             if ph_seq[ph_idx] == 'SP' and ignore_sp:
                 continue
             phoneme = Phoneme(ph_intervals[i, 0], ph_intervals[i, 1], ph_seq[ph_idx])
@@ -152,38 +152,38 @@ class AlignmentDecoder:
         edge_prob_log, not_edge_prob_log = np.log(edge_prob + 1e-6), np.log(1 - edge_prob + 1e-6)
         mask_reset = (ph_seq_id == 0)  # [S]
 
-        # 预分配数组
+        # Preallocate arrays.
         prob1 = np.empty(S, dtype=np.float32)
         prob2 = np.full(S, -np.inf, dtype=np.float32)
         prob3 = np.full(S, -np.inf, dtype=np.float32)
 
-        # 预计算prob3索引和掩码
+        # Precompute prob3 indices and masks.
         i_vals_prob3 = np.arange(prob3_pad_len, S)
         idx_arr = np.clip(i_vals_prob3 - prob3_pad_len + 1, 0, S - 1)
         mask_cond_prob3 = (idx_arr >= S - 1) | (ph_seq_id[idx_arr] == 0)
 
-        # 循环时间帧
+        # Iterate over time frames.
         for t in range(1, T):
             prob_log_t, edge_log_t, not_edge_log_t = prob_log[:, t], edge_prob_log[t], not_edge_prob_log[t]
             dp_prev = dp[:, t - 1]
 
-            # 类型1转移: 停留在当前音素
+            # Type 1 transition: stay on the current phoneme.
             prob1[:] = dp_prev + prob_log_t + not_edge_log_t
 
-            # 类型2转移: 移动到下一个音素
+            # Type 2 transition: move to the next phoneme.
             prob2[1:] = dp_prev[:S - 1] + prob_log_t[:S - 1] + edge_log_t + curr_ph_max_prob_log[:S - 1] * (T / S)
 
-            # 类型3转移: 跳转到后续音素
+            # Type 3 transition: jump ahead to a later phoneme.
             candidate_vals = dp_prev[:S - prob3_pad_len] + prob_log_t[
                 :S - prob3_pad_len] + edge_log_t + curr_ph_max_prob_log[:S - prob3_pad_len] * (T / S)
             prob3[i_vals_prob3] = np.where(mask_cond_prob3, candidate_vals, -np.inf)
 
-            # 组合概率并找出最佳转移
+            # Combine transition scores and pick the best move.
             stacked_probs = np.vstack((prob1, prob2, prob3))
             max_indices = np.argmax(stacked_probs, axis=0)
             dp[:, t], backtrack_s[:, t] = stacked_probs[max_indices, np.arange(S)], max_indices
 
-            # 更新当前音素最大概率
+            # Update the maximum probability for the current phoneme.
             mask_type0 = (max_indices == 0)
             np.maximum(curr_ph_max_prob_log, prob_log_t, out=curr_ph_max_prob_log, where=mask_type0)
             np.copyto(curr_ph_max_prob_log, prob_log_t, where=~mask_type0)
@@ -204,7 +204,7 @@ class AlignmentDecoder:
         curr_ph_max_prob_log = np.full(S, -np.inf)  # [S]
         dp = np.full((S, T), -np.inf, dtype="float32")  # [S, T]
 
-        # 如果mode==forced，只能从SP开始或者从第一个音素开始
+        # In forced mode, decoding can only start from SP or the first phoneme.
         dp[0, 0] = prob_log[0, 0]
         curr_ph_max_prob_log[0] = prob_log[0, 0]
         if ph_seq_id[0] == 0 and S > 1:
@@ -220,13 +220,13 @@ class AlignmentDecoder:
         # backward
         ph_idx_seq, ph_time_int, frame_confidence = [], [], []
 
-        # 确定结束状态
+        # Determine the terminal state.
         if S == 1:
             s = 0
         else:
             s = S - 2 if dp[-2, -1] > dp[-1, -1] and ph_seq_id[-1] == 0 else S - 1
 
-        # 回溯路径
+        # Backtrack the best path.
         for t in np.arange(T - 1, -1, -1):
             assert backtrack_s[s, t] >= 0 or t == 0
             frame_confidence.append(dp[s, t])
@@ -235,11 +235,11 @@ class AlignmentDecoder:
                 ph_idx_seq.append(s)
                 ph_time_int.append(t)
 
-                # 根据转移类型更新s
+                # Update s according to the chosen transition type.
                 if backtrack_s[s, t] == 1:
-                    s -= 1  # 类型2转移
+                    s -= 1  # Type 2 transition.
                 elif backtrack_s[s, t] == 2:
-                    s -= 2  # 类型3转移，假设prob3_pad_len=2
+                    s -= 2  # Type 3 transition, assuming prob3_pad_len=2.
 
         ph_idx_seq.reverse()
         ph_time_int.reverse()

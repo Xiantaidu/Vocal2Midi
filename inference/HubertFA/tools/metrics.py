@@ -92,8 +92,8 @@ class VlabelerEditRatio(Metric):
 
     def update(self, pred: tg.PointTier, target: tg.PointTier):
         self.edit_distance.update(pred, target)
-        # Total possible edits: 每个点可能有插入、删除、移动三种操作
-        # 简化计算：使用目标序列长度的两倍作为最大可能编辑数
+        # Total possible edits: each point can be inserted, deleted, or moved.
+        # Use twice the target sequence length as a simplified upper bound.
         self.total += 2 * len(target)
 
     def compute(self):
@@ -108,8 +108,7 @@ class VlabelerEditRatio(Metric):
 
 class IntersectionOverUnion(Metric):
     """
-    所有音素的交并比
-    Intersection over union of all phonemes.
+    Intersection over union across all phonemes.
     """
 
     def __init__(self):

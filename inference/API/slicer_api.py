@@ -6,6 +6,64 @@ from concurrent.futures import ProcessPoolExecutor
 
 from inference.slicer.slicer2 import Slicer
 
+DEFAULT_SLICE_METHOD = "default"
+SLICE_METHOD_CHOICES = ("default", "smart", "heuristic", "grid")
+_SLICE_METHOD_ALIASES = {
+    "auto": DEFAULT_SLICE_METHOD,
+    "default": "default",
+    "smart": "smart",
+    "heuristic": "heuristic",
+    "grid": "grid",
+    "默认切片": "default",
+    "智能切片": "smart",
+    "启发式切片": "heuristic",
+    "网格搜索切片": "grid",
+}
+_SLICE_METHOD_KEYWORDS = (
+    ("smart", ("smart", "智能")),
+    ("heuristic", ("heuristic", "启发式")),
+    ("grid", ("grid", "网格")),
+    ("default", ("default", "默认", "auto")),
+)
+
+
+def _repair_text_candidates(text: str) -> list[str]:
+    stripped = text.strip()
+    candidates = [stripped]
+    for source_encoding in ("gb18030", "gbk"):
+        try:
+            repaired = stripped.encode(source_encoding).decode("utf-8", errors="ignore").strip()
+        except UnicodeError:
+            continue
+        if repaired and repaired not in candidates:
+            candidates.append(repaired)
+    return candidates
+
+
+def normalize_slicing_method(method: str | None) -> str:
+    if method is None:
+        return DEFAULT_SLICE_METHOD
+
+    candidates = []
+    for candidate in _repair_text_candidates(str(method)):
+        lowered = candidate.lower()
+        for value in (candidate, lowered):
+            if value and value not in candidates:
+                candidates.append(value)
+
+    for candidate in candidates:
+        normalized = _SLICE_METHOD_ALIASES.get(candidate)
+        if normalized is not None:
+            return normalized
+
+    for candidate in candidates:
+        for normalized, keywords in _SLICE_METHOD_KEYWORDS:
+            if any(keyword in candidate for keyword in keywords):
+                return normalized
+
+    supported = ", ".join(SLICE_METHOD_CHOICES)
+    raise ValueError(f"Unsupported slicing method: {method!r}. Supported values: {supported}")
+
 
 def _concat_waveforms(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     axis = -1 if a.ndim > 1 else 0
@@ -45,10 +103,11 @@ def _merge_segments(left: dict, right: dict, sr: int) -> dict:
 def _merge_short_segments(chunks: list, sr: int, min_len_sec: float, max_len_sec: float) -> list:
     """Greedily merge adjacent short segments to approach min_len_sec target.
 
-    合并策略：
-    1. 按 offset 排序
-    2. 从左到右扫描，如果当前片段 < min_len_sec 且与下一个合并后 ≤ max_len_sec，则合并
-    3. 重复直到无法再合并或所有片段都 ≥ min_len_sec
+    Merge strategy:
+    1. Sort by offset.
+    2. Scan left to right and merge when the current segment is shorter than
+       min_len_sec and the merged segment remains within max_len_sec.
+    3. Repeat until no more merges are possible or every segment reaches min_len_sec.
     """
     if not chunks:
         return chunks
@@ -61,7 +120,7 @@ def _merge_short_segments(chunks: list, sr: int, min_len_sec: float, max_len_sec
         nxt_dur = _segment_duration_sec(nxt, sr)
         combined_dur = _merged_duration_sec(cur, nxt, sr)
 
-        # 如果当前片段太短且合并后不超过最大允许时长，则合并
+        # Merge if the current segment is too short and the combined duration remains valid.
         if cur_dur < min_len_sec and combined_dur <= max_len_sec:
             print(f"  Merging short segment at {nxt['offset']:.2f}s ({nxt_dur:.2f}s) "
                   f"→ combined {combined_dur:.2f}s")
@@ -69,11 +128,11 @@ def _merge_short_segments(chunks: list, sr: int, min_len_sec: float, max_len_sec
         else:
             merged.append(dict(nxt))
 
-    # 尾部也可能留一个短片段，尝试反向与前一个合并
+    # The tail may still contain a short segment, so try merging it backward.
     if len(merged) >= 2:
         last = merged[-1]
         last_dur = _segment_duration_sec(last, sr)
-        if last_dur < min_len_sec - 2.0:  # 明显过短才反向合并
+        if last_dur < min_len_sec - 2.0:  # Only reverse-merge when it is clearly too short.
             prev = merged[-2]
             combined_dur = _merged_duration_sec(prev, last, sr)
             if combined_dur <= max_len_sec:
@@ -84,10 +143,10 @@ def _merge_short_segments(chunks: list, sr: int, min_len_sec: float, max_len_sec
                 merged[-2] = _merge_segments(prev, last, sr)
                 merged.pop()
 
-    # 递归：合并后可能仍有短片段需要进一步合并
+    # Recurse because merges can still leave short segments behind.
     any_short = any(_segment_duration_sec(c, sr) < min_len_sec for c in merged)
     if any_short and len(merged) < len(chunks):
-        # 有一定合并进展则继续
+        # Continue only if the previous pass made progress.
         merged = _merge_short_segments(merged, sr, min_len_sec, max_len_sec)
 
     return merged
@@ -373,7 +432,7 @@ def heuristic_slice(
     final_chunks.sort(key=lambda x: x['offset'])
     final_chunks = _merge_tiny_chunks(final_chunks, sr=sr, tiny_sec=ultra_short_sec)
 
-    # Stage 3: 合并过短相邻片段，趋近目标时长范围
+    # Stage 3: merge neighboring short segments toward the target duration range.
     if final_chunks:
         merge_before = len(final_chunks)
         durations_before = [len(c["waveform"]) / sr for c in final_chunks]
@@ -392,7 +451,7 @@ def _split_wrapper(segment, slicer_func):
     A wrapper function for parallel processing.
     It takes a segment dictionary and a slicing function, and returns the processed chunks.
     """
-    # 传递 segment['offset'] 让音高提取器能对齐到正确的全局时间
+    # Pass segment['offset'] through so pitch extraction stays aligned to global time.
     sub_chunks = slicer_func(segment['waveform'], segment_offset_sec=segment['offset'])
     # Add the original offset to each sub-chunk
     for sub in sub_chunks:
@@ -573,7 +632,7 @@ def pitch_based_slice(
 
     final_chunks = _merge_tiny_chunks(final_chunks, sr=sr, tiny_sec=ultra_short_sec)
 
-    # Stage 3: 合并过短相邻片段，趋近目标时长范围
+    # Stage 3: merge neighboring short segments toward the target duration range.
     if final_chunks:
         merge_before = len(final_chunks)
         durations_before = [len(c["waveform"]) / sr for c in final_chunks]
@@ -607,8 +666,9 @@ def slice_audio(
     """
     Top-level API for slicing audio with different methods.
     """
-    print(f"Slicing audio with method: '{method}'")
-    if method == "智能切片":
+    normalized_method = normalize_slicing_method(method)
+    print(f"Slicing audio with method: '{normalized_method}'")
+    if normalized_method == "smart":
         if rmvpe_voiced_mask is not None and rmvpe_time_step_seconds and rmvpe_time_step_seconds > 0:
             print("Using RMVPE voiced mask for smart slicing (pyin fallback disabled for this run).")
         chunks = pitch_based_slice(
@@ -617,11 +677,11 @@ def slice_audio(
             voiced_flag_override=rmvpe_voiced_mask,
             voiced_flag_override_step_sec=rmvpe_time_step_seconds,
         )
-    elif method == "启发式切片":
+    elif normalized_method == "heuristic":
         chunks = heuristic_slice(waveform, sr)
-    elif method == "网格搜索切片":
+    elif normalized_method == "grid":
         chunks = grid_search_slice(waveform, sr)
-    else: # "默认切片"
+    else:
         chunks = default_slice(waveform, sr)
     
     print(f"Sliced into {len(chunks)} chunks.")
@@ -668,51 +728,6 @@ def slice_audio_with_bounds(
         rmvpe_voiced_mask=rmvpe_voiced_mask,
         rmvpe_time_step_seconds=rmvpe_time_step_seconds,
     )
-
-    custom_bounds = _resolve_custom_slice_bounds(min_len_sec, max_len_sec)
-    if custom_bounds is None:
-        return slice_audio(
-            waveform,
-            sr,
-            method,
-            rmvpe_voiced_mask=rmvpe_voiced_mask,
-            rmvpe_time_step_seconds=rmvpe_time_step_seconds,
-        )
-
-    resolved_min_sec, resolved_max_sec = custom_bounds
-    print(f"Slicing audio with method: '{method}'")
-    print(f"Using custom slice bounds: min={resolved_min_sec:.1f}s max={resolved_max_sec:.1f}s")
-
-    if method == "鏅鸿兘鍒囩墖":
-        if rmvpe_voiced_mask is not None and rmvpe_time_step_seconds and rmvpe_time_step_seconds > 0:
-            print("Using RMVPE voiced mask for smart slicing (pyin fallback disabled for this run).")
-        chunks = pitch_based_slice(
-            waveform,
-            sr,
-            min_len_sec=resolved_min_sec,
-            max_len_sec=resolved_max_sec,
-            voiced_flag_override=rmvpe_voiced_mask,
-            voiced_flag_override_step_sec=rmvpe_time_step_seconds,
-        )
-    elif method == "缃戞牸鎼滅储鍒囩墖":
-        chunks = grid_search_slice(
-            waveform,
-            sr,
-            min_len_sec=resolved_min_sec,
-            max_len_sec=resolved_max_sec,
-        )
-    elif method == "榛樿鍒囩墖":
-        chunks = default_slice(waveform, sr)
-    else:
-        chunks = heuristic_slice(
-            waveform,
-            sr,
-            min_len_sec=resolved_min_sec,
-            max_len_sec=resolved_max_sec,
-        )
-
-    print(f"Sliced into {len(chunks)} chunks.")
-    return chunks
 
 
 def slice_audio_with_custom_bounds(

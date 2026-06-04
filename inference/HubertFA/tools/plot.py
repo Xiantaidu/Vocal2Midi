@@ -118,7 +118,7 @@ def find_continuous_regions(row):
 def plot_non_lexical_phonemes(mel_spec,  # [C,T]
                               cvnt_prob,
                               label=None,
-                              non_lexical_target=None,  # 形状为 [N, T]
+                              non_lexical_target=None,  # Shape: [N, T]
                               v_min=-8, v_max=2,
                               bar_alpha=0.7, pcolor_alpha=0.4, frame_duration=None):
     label = label or [f'Tensor {i}' for i in range(len(cvnt_prob))]

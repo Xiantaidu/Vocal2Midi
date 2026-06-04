@@ -135,8 +135,8 @@ class SequenceAligner:
         ref_len = len(reference_seq)
         long_input_note = ""
         if input_len > ref_len:
-            # 允许输入长于参考：ASR 常会出现插入/幻觉词，
-            # 这里继续走窗口+编辑距离流程，尽量回填出参考歌词。
+            # Allow input longer than the reference: ASR often inserts or hallucinates
+            # extra words, so keep the windowed edit-distance path as a best-effort recovery.
             long_input_note = "Input longer than reference; attempted approximate alignment"
 
         direct_start = self._find_exact_match(input_seq, reference_seq)

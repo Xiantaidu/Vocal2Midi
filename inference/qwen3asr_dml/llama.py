@@ -16,7 +16,7 @@ from . import logger
 # =========================================================================
 # Configuration
 # =========================================================================
-# QUIET_LOGS = True 时，不打印任何日志。但现在我们路由到 logger。
+# When QUIET_LOGS is True, suppress direct logging. Logs are currently routed through logger.
 QUIET_LOGS = False
 _log_callback_ref = None
 
@@ -173,7 +173,7 @@ def detect_available_llama_backend(lib_dir: str | Path | None = None) -> str:
     return LLAMA_BACKEND_CPU
 
 def init_llama_lib():
-    """初始化 llama.cpp 库，支持跨平台加载"""
+    """Initialize the llama.cpp library with cross-platform loading support."""
     global llama, ggml, ggml_base
     global llama_log_set, llama_backend_init, llama_backend_free
     global llama_model_default_params, llama_model_load_from_file, llama_model_free, llama_model_get_vocab
@@ -191,10 +191,10 @@ def init_llama_lib():
     if llama is not None:
         return
 
-    # 获取库文件所在目录 (模块目录下的 bin)
+    # Resolve the directory that contains the shared libraries (the module's bin folder).
     lib_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin")
 
-    # DLL 命名处理
+    # Platform-specific shared library names.
     if sys.platform == "win32":
         GGML_DLL = "ggml.dll"
         GGML_BASE_DLL = "ggml-base.dll"
@@ -212,16 +212,16 @@ def init_llama_lib():
     ggml_base = ctypes.CDLL(os.path.join(lib_dir, GGML_BASE_DLL))
     llama = ctypes.CDLL(os.path.join(lib_dir, LLAMA_DLL))
 
-    # 设置日志回调
+    # Register the log callback.
     LOG_CALLBACK = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p)
     llama_log_set = llama.llama_log_set
     llama_log_set.argtypes = [LOG_CALLBACK, ctypes.c_void_p]
     llama_log_set.restype = None
     
-    # 默认开启日志路由
+    # Enable log routing by default.
     configure_logging(quiet=QUIET_LOGS)
 
-    # 加载后端
+    # Load backend implementations.
     ggml_backend_load_all = ggml.ggml_backend_load_all
     ggml_backend_load_all.argtypes = []
     ggml_backend_load_all.restype = None
@@ -232,7 +232,7 @@ def init_llama_lib():
     llama_backend_init.restype = None
     llama_backend_init()
 
-    # 绑定其他函数
+    # Bind the remaining exported functions.
     llama_backend_free = llama.llama_backend_free
     llama_backend_free.argtypes = []
     llama_backend_free.restype = None
@@ -379,19 +379,19 @@ def init_llama_lib():
 
 def load_model(model_path: str):
     """
-    加载 GGUF 模型（自动处理初始化和路径编码）
-    
+    Load a GGUF model while handling initialization and path encoding details.
+
     Args:
-        model_path: GGUF 模型文件路径
-        
+        model_path: Path to the GGUF model file.
+
     Returns:
-        model: llama_model 指针
+        model: Pointer to the loaded llama_model.
     """
     lib_dir = Path(__file__).parent / 'bin'
     model_path = Path(model_path)
     model_rel = Path(relpath(model_path, lib_dir))
 
-    # 跳转到 dll 所在目录，并将其加到 Path
+    # Temporarily switch to the DLL directory and prepend it to PATH.
     original_cwd = Path.cwd()
     os.chdir(lib_dir)
     if hasattr(os, 'add_dll_directory'):
@@ -399,7 +399,7 @@ def load_model(model_path: str):
     os.environ['PATH'] = os.getcwd() + os.pathsep + os.environ['PATH']
     logger.info(f"Changed directory to: {Path.cwd()}")
 
-    # 初始化 backend，载入模型
+    # Initialize the backend and load the model.
     init_llama_lib()
     model_params = llama_model_default_params()
     model_params.n_gpu_layers = 0
@@ -487,7 +487,7 @@ def load_model_with_backend(
 def create_context(model, n_ctx=2048, n_batch=2048, n_ubatch=512, n_seq_max=1, 
                    embeddings=False, pooling_type=0, flash_attn=True, 
                    offload_kqv=True, no_perf=True, n_threads=None):
-    """创建 ASR 专用的上下文"""
+    """Create an ASR-oriented llama context."""
     params = llama_context_default_params()
     params.n_ctx = n_ctx
     params.n_batch = n_batch
@@ -509,7 +509,7 @@ def create_context(model, n_ctx=2048, n_batch=2048, n_ubatch=512, n_seq_max=1,
     return llama_init_from_model(model, params)
 
 class LlamaModel:
-    """模型的面向对象封装"""
+    """Object-oriented wrapper for a llama model."""
     def __init__(self, path, backend: str = LLAMA_BACKEND_AUTO, quiet: bool = False):
         self.ptr, self.backend = load_model_with_backend(path, backend=backend, quiet=quiet)
             
@@ -518,21 +518,21 @@ class LlamaModel:
         self.eos_token = llama_vocab_eos(self.vocab)
 
     def tokenize(self, text: str, add_special: bool = False, parse_special: bool = True) -> List[int]:
-        """(Native) 文本转 Token ID 列表"""
+        """(Native) Convert text into a list of token IDs."""
         return text_to_tokens(self.vocab, text, add_special, parse_special)
 
     def detokenize(self, tokens: List[int]) -> str:
-        """(Native) Token ID 列表转文本"""
+        """(Native) Convert a list of token IDs back to text."""
         if tokens is None or len(tokens) == 0: return ""
         all_bytes = b"".join([self.token_to_bytes(tid) for tid in tokens])
         return all_bytes.decode('utf-8', errors='replace')
 
     def token_to_bytes(self, token_id: int) -> bytes:
-        """(Native) 单个 Token 转字节"""
+        """(Native) Convert a single token to raw bytes."""
         return token_to_bytes(self.vocab, token_id)
         
     def token_to_piece(self, token_id: int) -> str:
-        """(Native) 单个 Token 转字符串 Piece"""
+        """(Native) Convert a single token to its string piece."""
         return self.token_to_bytes(token_id).decode('utf-8', errors='replace')
 
     def token_bos(self) -> int:
@@ -542,8 +542,8 @@ class LlamaModel:
         return llama_vocab_eos(self.vocab)
         
     def token_to_id(self, text: str) -> int:
-        """(Native) 单个 Token 字符串转 ID (仅限 Exact Match)"""
-        # 利用 tokenize 来查找 ID
+        """(Native) Convert a single token string to an ID (exact matches only)."""
+        # Reuse tokenize() to look up the ID.
         res = self.tokenize(text, add_special=False, parse_special=True)
         return res[0] if res else -1
 
@@ -553,11 +553,11 @@ class LlamaModel:
             self.ptr = None
 
 class LlamaContext:
-    """上下文的面向对象封装"""
+    """Object-oriented wrapper for a llama context."""
     def __init__(self, model, n_ctx=2048, n_batch=2048, n_ubatch=512, n_seq_max=1, 
                  embeddings=False, pooling_type=0, flash_attn=True, 
                  offload_kqv=True, no_perf=True, n_threads=None, n_threads_batch=None):
-        self.model = model # 保持模型引用防止被释放
+        self.model = model # Keep a model reference so it is not released early.
         params = llama_context_default_params()
         params.n_ctx = n_ctx
         params.n_batch = n_batch
@@ -569,7 +569,7 @@ class LlamaContext:
         params.offload_kqv = offload_kqv
         params.no_perf = no_perf
         
-        # 线程配置
+        # Thread configuration.
         cpu_count = os.cpu_count() or 4
         if n_threads:
             params.n_threads = n_threads
@@ -591,16 +591,16 @@ class LlamaContext:
 
     def decode_token(self, token_id):
         """
-        原子操作：设置单 Token Batch 并执行解码
+        Atomic helper that sets up a single-token batch and executes decoding.
         """
         return self.decode(get_one_batch(token_id))
 
     def get_logits(self):
-        """获取 Batch 中最后一个启用 Logits 的 Token 的输出"""
+        """Return logits for the last token in the batch with logits enabled."""
         return llama_get_logits(self.ptr)
 
     def get_logits_ith(self, i: int):
-        """获取 Batch 中第 i 个 Token 的 Logits 输出 (前提是该 Token 启用了 Logits 标志)"""
+        """Return logits for the i-th token when its logits flag is enabled."""
         return llama_get_logits_ith(self.ptr, i)
 
     def get_embeddings(self):
@@ -616,7 +616,7 @@ class LlamaContext:
             self.ptr = None
 
 class LlamaBatch:
-    """Batch 的面向对象封装，支持直接属性访问"""
+    """Object-oriented batch wrapper with direct attribute access."""
     def __init__(self, n_tokens, embd_dim=0, n_seq_max=1):
         self.struct = llama_batch_init(n_tokens, embd_dim, n_seq_max)
         self.n_tokens_max = n_tokens
@@ -641,44 +641,46 @@ class LlamaBatch:
 
     def set_embd(self, data: np.ndarray, pos: Union[np.ndarray, int] = 0, seq_id: int = 0):
         """
-        高阶接口：直接注入 Embedding 数据并初始化位置信息
-        
+        Higher-level API that injects embedding data and initializes positions.
+
         Args:
-            data: Embedding 数据 [n_tokens, dim]
-            pos: 位置信息。
-                 - 若为 int，则视为起始偏移量，自动生成 [offset, offset+1, ...]
-                 - 若为 np.ndarray，则直接拷贝到 pos buffer (支持 Qwen3 等复杂位置编码)
-            seq_id: 序列 ID
+            data: Embedding tensor with shape [n_tokens, dim].
+            pos: Position information.
+                 - If an int, treat it as the starting offset and generate
+                   [offset, offset+1, ...] automatically.
+                 - If an np.ndarray, copy it directly into the position buffer
+                   to support complex encodings such as Qwen3.
+            seq_id: Sequence ID.
         """
         n_tokens = data.shape[0]
         if n_tokens > self.n_tokens_max:
             raise ValueError(f"Batch 空间不足: {n_tokens} > {self.n_tokens_max}")
         
-        # 1. 内存移动 (Embedding)
+        # 1. Copy embedding memory.
         if not data.flags['C_CONTIGUOUS']:
             data = np.ascontiguousarray(data)
         ctypes.memmove(self.embd, data.ctypes.data, data.nbytes)
         
-        # 2. 位置信息处理 (Position)
+        # 2. Handle position information.
         if isinstance(pos, int):
-            # 自动生成线性位置
+            # Generate linear positions automatically.
             pos_offset = pos
             for i in range(n_tokens):
                 self.pos[i] = pos_offset + i
         elif isinstance(pos, np.ndarray):
-            # 外部提供的复杂位置 (如 Qwen3 的多平面位置)
-            # 注意：不检查 pos 长度是否等于 n_tokens，因为可能有 stride (Qwen3 case)
-            # 但必须确保不超过 batch capacity
+            # Complex external positions (for example Qwen3 multi-plane positions).
+            # Do not require pos length to equal n_tokens because strided layouts
+            # are allowed, but the data must still fit within batch capacity.
             if not pos.flags['C_CONTIGUOUS']:
                 pos = np.ascontiguousarray(pos)
             
-            # 使用 memmove 直接拷贝
-            # self.pos 是 ctypes 指针，可以直接操作
+            # Copy directly with memmove.
+            # self.pos is a ctypes pointer, so it can be written directly.
             ctypes.memmove(self.pos, pos.ctypes.data, pos.nbytes)
         else:
             raise TypeError(f"Unsupported pos type: {type(pos)}")
 
-        # 3. 设置其他元数据
+        # 3. Fill in the remaining metadata.
         self.n_tokens = n_tokens
         for i in range(n_tokens):
             self.n_seq_id[i] = 1
@@ -693,15 +695,16 @@ class LlamaBatch:
 
 def get_one_batch(token_id: int):
     """
-    底层极限优化：用于单 Token 生成的无分配 Batch 构造。
-    相当于 C++ 的 llama_batch_get_one(&token, 1)。
-    它不依赖 llama_batch_init 的内存分配，并允许底层自动推断 pos。
+    Highly optimized low-level helper that builds an allocation-free batch for
+    single-token generation.
+    Equivalent to C++ llama_batch_get_one(&token, 1).
+    It avoids llama_batch_init allocations and lets the backend infer pos.
     """
     token_arr = (llama_token * 1)(token_id)
     return llama_batch_get_one(token_arr, 1)
 
 class LlamaSampler:
-    """采样器的面向对象封装"""
+    """Object-oriented wrapper for a sampler."""
     def __init__(self, temperature=0.8, top_k=50, top_p=1.0, seed=None, logit_bias=None, n_vocab=0):
         import time
         if seed is None:
@@ -710,7 +713,7 @@ class LlamaSampler:
         sparams = llama_sampler_chain_default_params()
         self.ptr = llama_sampler_chain_init(sparams)
         
-        # Logit Bias (支持范围/掩码)
+        # Logit bias, including range- and mask-style constraints.
         if logit_bias and n_vocab > 0 and isinstance(logit_bias, dict):
             n_bias = len(logit_bias)
             BiasArray = llama_logit_bias * n_bias
@@ -734,30 +737,29 @@ class LlamaSampler:
 
     def sample(self, ctx, idx=-1, limit_start=None, limit_end=None):
         """
-        采样一个 Token
-        
+        Sample one token.
+
         Args:
-            limit_start (int, optional): 限制采样范围的起始 Index (包含)
-            limit_end (int, optional): 限制采样范围的结束 Index (不包含)
+            limit_start (int, optional): Inclusive start index of the allowed sampling range.
+            limit_end (int, optional): Exclusive end index of the allowed sampling range.
         """
         ctx_ptr = ctx
         if hasattr(ctx, 'ptr'):
             ctx_ptr = ctx.ptr
             
-        # 动态范围限制 (直接操作 Logits 内存，极速)
+        # Apply dynamic range limits by editing the logits buffer in place.
         if (limit_start is not None or limit_end is not None) and hasattr(ctx, 'get_logits') and hasattr(ctx, 'model'):
-            # 需要获取 n_vocab
-            # LlamaContext -> LlamaModel -> vocab -> n_tokens
+            # Need n_vocab via LlamaContext -> LlamaModel -> vocab -> n_tokens.
             if hasattr(ctx.model, 'vocab'):
                 n_vocab = llama_vocab_n_tokens(ctx.model.vocab)
                 
-                # 获取 Logits Numpy View
+                # Get a NumPy view over the logits buffer.
                 logits_ptr = ctx.get_logits()
                 logits = np.ctypeslib.as_array(logits_ptr, shape=(n_vocab,))
                 
-                # In-place 修改
-                # 注意：这会修改 ctx 中的 logits，影响本次采样。
-                # 下一次 decode 会覆盖，所以是安全的。
+                # Modify logits in place.
+                # This affects the current sampling step only; the next decode call
+                # overwrites the buffer, so the mutation is safe.
                 
                 s = max(0, limit_start) if limit_start is not None else 0
                 e = min(n_vocab, limit_end) if limit_end is not None else n_vocab
@@ -770,7 +772,7 @@ class LlamaSampler:
         return llama_sampler_sample(self.ptr, ctx_ptr, idx)
 
     def free(self):
-        """释放采样器资源"""
+        """Release sampler resources."""
         if hasattr(self, 'ptr') and self.ptr:
             llama_sampler_free(self.ptr)
             self.ptr = None
@@ -786,7 +788,7 @@ class LlamaSampler:
 
 
 class ASRStreamDecoder:
-    """ASR 专属流式解码器，集成字节解码与 ASRReporter 交互"""
+    """Streaming decoder specialized for ASR with reporter-aware byte decoding."""
     def __init__(self, vocab, reporter=None):
         self.vocab = vocab
         self.reporter = reporter
@@ -796,7 +798,7 @@ class ASRStreamDecoder:
         self.tokens = []
 
     def push(self, token_id: int):
-        """推入 Token，返回新解码的文字片段"""
+        """Push one token and return any newly decoded text fragment."""
         raw_bytes = token_to_bytes(self.vocab, token_id)
         text_piece = self.byte_decoder.decode(raw_bytes, final=False)
         self.tokens.append(text_piece)
@@ -810,7 +812,7 @@ class ASRStreamDecoder:
         return text_piece
 
     def flush(self):
-        """清空残余字节并返回"""
+        """Flush any buffered bytes and return the decoded remainder."""
         remaining = self.byte_decoder.decode(b"", final=True)
         self.tokens.append(remaining)
         self.generated_text += remaining
@@ -819,7 +821,7 @@ class ASRStreamDecoder:
 
 def python_log_callback(level, message, user_data):
     """
-    llama.cpp 日志回调函数
+    llama.cpp log callback.
     level: 
         2 = ERROR
         3 = WARN
@@ -842,11 +844,11 @@ def python_log_callback(level, message, user_data):
         else:
             logger.info(f"[llama.cpp] {msg_str}")
     except Exception as e:
-        # 防止回调错误导致程序崩溃
+        # Prevent callback failures from crashing the process.
         print(f"日志回调出错: {e}")
 
 def configure_logging(quiet=False):
-    """配置 llama.cpp 日志回调"""
+    """Configure the llama.cpp log callback."""
     global _log_callback_ref
     if not llama_log_set: return
     
@@ -855,7 +857,7 @@ def configure_logging(quiet=False):
         _log_callback_ref = LOG_CALLBACK(python_log_callback)
         llama_log_set(_log_callback_ref, None)
     else:
-        # 如果需要静默，可以传递一个空函数，或者将 logger 级别调高
+        # For quiet mode, register a no-op callback or raise the logger level elsewhere.
         _log_callback_ref = LOG_CALLBACK(lambda l, m, u: None)
         llama_log_set(_log_callback_ref, None)
 
@@ -868,7 +870,7 @@ def configure_logging(quiet=False):
 
 
 class LlamaEmbeddingTable:
-    """动态反量化 Embedding 表，支持 table[ids] 语法"""
+    """Dynamically dequantized embedding table that supports table[ids] access."""
     def __init__(self, raw_data, qtype):
         self.raw_data = raw_data
         self.qtype = qtype
@@ -879,11 +881,11 @@ class LlamaEmbeddingTable:
     def __getitem__(self, tokens):
         from gguf.quants import dequantize
         
-        # 如果是原生 float 类型，直接返回
+        # Return directly for native float tensors.
         if self.raw_data.dtype in (np.float32, np.float16):
             return self.raw_data[tokens].astype(np.float32)
             
-        # 调用官方库进行高性能反量化
+        # Use the official library for fast dequantization.
         return dequantize(self.raw_data[tokens], self.qtype.value)
 
 
@@ -915,18 +917,19 @@ def _skip_gguf_value(mm, offs, v_type):
 
 def get_token_embeddings_gguf(model_path, target_tensor="token_embd.weight", quiet: bool = False):
     """
-    超极速 GGUF Embedding 提取 (直接二进制寻址)
-    避免加载整个模型、避免解析包含 15 万词条的 tokenizer 对象。耗时降至 < 50ms。
+    Extremely fast GGUF embedding extraction through direct binary addressing.
+    This avoids loading the full model and avoids parsing a tokenizer with
+    150k entries, reducing runtime to under 50 ms.
     """
     t_start = time.time()
     mm = np.memmap(model_path, mode='r')
     
-    # 获取文件头信息
+    # Read header metadata.
     tensor_count, kv_count = struct.unpack_from("<QQ", mm, 8)
     offs = 24
     alignment = 32
     
-    # 光速跃过/扫描所有 KV 字段
+    # Fast-skip or scan all KV fields.
     for _ in range(kv_count):
         key_len = struct.unpack_from("<Q", mm, offs)[0]
         offs += 8
@@ -945,10 +948,10 @@ def get_token_embeddings_gguf(model_path, target_tensor="token_embd.weight", qui
         offs += 4
         offs = _skip_gguf_value(mm, offs, v_type)
         
-    # 扫描 Tensor Infos 搜寻我们想要的张量
+    # Scan tensor infos to find the target tensor.
     target_rel_offset = None
     target_type = None
-    target_shape = None # GGUF shape 是倒序的 [n_embd, vocab_size]
+    target_shape = None # GGUF stores shape in reverse order: [n_embd, vocab_size]
     
     target_bytes = target_tensor.encode('utf-8')
     for _ in range(tensor_count):
@@ -962,7 +965,7 @@ def get_token_embeddings_gguf(model_path, target_tensor="token_embd.weight", qui
         n_dims = struct.unpack_from("<I", mm, offs)[0]
         offs += 4
         
-        shape = struct.unpack_from(f"<{n_dims}Q", mm, offs) # 返回元组
+        shape = struct.unpack_from(f"<{n_dims}Q", mm, offs) # Returns a tuple.
         offs += 8 * n_dims
         
         t_type = struct.unpack_from("<I", mm, offs)[0]
@@ -976,7 +979,7 @@ def get_token_embeddings_gguf(model_path, target_tensor="token_embd.weight", qui
             target_type = t_type
             target_rel_offset = rel_offset
             
-    # 计算数据区起始点并加载张量
+    # Compute the data-section offset and load the tensor.
     padding = offs % alignment
     if padding != 0:
         offs += (alignment - padding)
@@ -987,15 +990,15 @@ def get_token_embeddings_gguf(model_path, target_tensor="token_embd.weight", qui
         return None
         
     abs_offset = data_offset + target_rel_offset
-    n_embd = target_shape[0]     # 特征维度
-    vocab_size = target_shape[1] # 词表大小
+    n_embd = target_shape[0]     # Feature dimension.
+    vocab_size = target_shape[1] # Vocabulary size.
     
     qtype = GGMLQuantizationType(target_type)
     if qtype in GGML_QUANT_SIZES:
         block_size, type_size = GGML_QUANT_SIZES[qtype]
         bytes_per_row = (n_embd // block_size) * type_size
     else:
-        # F32 或 F16
+        # F32 or F16.
         if qtype == GGMLQuantizationType.F32:
             bytes_per_row = n_embd * 4
         elif qtype == GGMLQuantizationType.F16:

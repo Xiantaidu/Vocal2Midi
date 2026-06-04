@@ -39,10 +39,10 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.autoLyricInterface, FluentIcon.MUSIC, "自动提取与灌注")
         self.addSubInterface(self.globalSettingsInterface, FluentIcon.SETTING, "全局设置", position=NavigationItemPosition.BOTTOM)
 
-        # 隐藏侧边栏顶部三条杠（菜单）按钮
+        # Hide the hamburger/menu button at the top of the sidebar.
         self.navigationInterface.setMenuButtonVisible(False)
         
-        # 固定侧边栏宽度
+        # Keep the sidebar width fixed.
         self.navigationInterface.setExpandWidth(50)
         self.navigationInterface.setMinimumExpandWidth(50)
         self.navigationInterface.setMaximumWidth(50)
