@@ -21,3 +21,17 @@ def test_ustx_export_skips_invalid_notes_and_clamps_tone(tmp_path):
     assert len(exported) == 1
     assert exported[0]["tone"] == 127
     assert exported[0]["lyric"] == "a"
+    assert exported[0]["phoneme_expressions"] == []
+    assert exported[0]["phoneme_overrides"] == []
+    assert data["resolution"] == 480
+    assert data["ustx_version"] == "0.7"
+    assert data["expressions"]["dyn"]["is_flag"] is False
+    assert data["expressions"]["dyn"]["type"] == "Curve"
+    assert data["expressions"]["pitd"]["type"] == "Curve"
+    assert data["expressions"]["gen"]["flag"] == "g"
+    assert data["expressions"]["bre"]["flag"] == "B"
+    assert data["exp_selectors"] == ["dyn", "pitd", "clr", "eng", "vel", "vol", "atk", "dec", "gen", "bre"]
+    assert data["tracks"][0]["phonemizer"] == "OpenUtau.Core.DefaultPhonemizer"
+    assert data["tracks"][0]["track_expressions"] == []
+    assert data["voice_parts"][0]["comment"] == ""
+    assert data["wave_parts"] == []

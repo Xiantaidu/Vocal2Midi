@@ -3,6 +3,9 @@ from typing import Literal
 import numpy as np
 
 
+_ALIGN_MIN_GAP = 1e-4
+
+
 def validate_phones(
         ph_seq: list[str],
         ph_dur: list[float],
@@ -104,49 +107,85 @@ def align_notes_to_words(
     :param apply_word_uv: whether to set note pitch to "rest" for unvoiced words
     :return: new_note_seq, new_note_dur, note_slur (1 for slur, 0 for non-slur)
     """
-    word_start = np.cumsum([0.0] + word_dur[:-1])
-    word_end = np.cumsum(word_dur)
-    note_start = np.cumsum([0.0] + note_dur[:-1])
-    note_end = np.cumsum(note_dur)
+    if not word_dur or not note_dur or not note_seq:
+        return [], [], []
+
+    word_boundaries = np.cumsum([0.0] + word_dur, dtype=np.float64)
+    note_boundaries = np.cumsum([0.0] + note_dur, dtype=np.float64)
+    if len(note_boundaries) < 2:
+        return [], [], []
+
+    # Snap HFA word boundaries to nearby GAME note boundaries while keeping
+    # the word timeline strictly monotonic.
+    aligned_boundaries = word_boundaries.copy()
+    for boundary_idx in range(1, len(word_boundaries) - 1):
+        raw_boundary = word_boundaries[boundary_idx]
+        nearest_idx = int(np.argmin(np.abs(note_boundaries - raw_boundary)))
+        nearest_boundary = float(note_boundaries[nearest_idx])
+        candidate = raw_boundary
+        if abs(nearest_boundary - raw_boundary) <= tol:
+            candidate = nearest_boundary
+
+        lower = float(aligned_boundaries[boundary_idx - 1] + _ALIGN_MIN_GAP)
+        upper = float(word_boundaries[boundary_idx + 1] - _ALIGN_MIN_GAP)
+        if lower < upper:
+            aligned_boundaries[boundary_idx] = min(max(candidate, lower), upper)
+        else:
+            aligned_boundaries[boundary_idx] = raw_boundary
+
+    word_start = aligned_boundaries[:-1]
+    word_end = aligned_boundaries[1:]
+    note_start = note_boundaries[:-1]
+    note_end = note_boundaries[1:]
     new_note_seq = []
     new_note_dur = []
     note_slur = []
+    note_idx = 0
+
     for word_idx in range(len(word_dur)):
-        if apply_word_uv and word_vuv[word_idx] == 0:
-            # unvoiced word, set all notes to rest
-            new_note_seq.append("rest")
-            new_note_dur.append(word_dur[word_idx])
-            note_slur.append(0)
+        start = float(word_start[word_idx])
+        end = float(word_end[word_idx])
+        if end <= start:
             continue
-        # find the closest note start
-        note_start_idx = np.argmin(np.abs(note_start - word_start[word_idx]))
-        if word_start[word_idx] < note_start[note_start_idx] - tol:
-            note_start_idx = max(0, note_start_idx - 1)
-        # find the closest note end
-        note_end_idx = np.argmin(np.abs(note_end[note_start_idx:] - word_end[word_idx])) + note_start_idx
-        if word_end[word_idx] > note_end[note_end_idx] + tol:
-            note_end_idx = min(len(note_end) - 1, note_end_idx + 1)
-        # adjust note sequence and durations to fit the word duration
+
+        while note_idx < len(note_end) and note_end[note_idx] <= start + _ALIGN_MIN_GAP:
+            note_idx += 1
+
+        if apply_word_uv and word_vuv[word_idx] == 0:
+            # Preserve unvoiced spans as a single rest word after boundary snapping.
+            new_note_seq.append("rest")
+            new_note_dur.append(end - start)
+            note_slur.append(0)
+            while note_idx < len(note_end) and note_end[note_idx] <= end + _ALIGN_MIN_GAP:
+                note_idx += 1
+            continue
+
         word_note_seq = []
         word_note_dur = []
-        for note_idx in range(note_start_idx, note_end_idx + 1):
-            # adjust note start
-            if note_idx == note_start_idx:
-                start = word_start[word_idx]
+        scan_idx = note_idx
+        while scan_idx < len(note_seq) and note_start[scan_idx] < end - _ALIGN_MIN_GAP:
+            seg_start = max(start, float(note_start[scan_idx]))
+            seg_end = min(end, float(note_end[scan_idx]))
+            seg_dur = seg_end - seg_start
+            if seg_dur > _ALIGN_MIN_GAP:
+                if word_note_seq and word_note_seq[-1] == note_seq[scan_idx]:
+                    word_note_dur[-1] += seg_dur
+                else:
+                    word_note_seq.append(note_seq[scan_idx])
+                    word_note_dur.append(seg_dur)
+            if note_end[scan_idx] <= end + _ALIGN_MIN_GAP:
+                scan_idx += 1
             else:
-                start = note_start[note_idx]
-            # adjust note end
-            if note_idx == note_end_idx:
-                end = word_end[word_idx]
-            else:
-                end = note_end[note_idx]
-            if word_note_seq and word_note_seq[-1] == note_seq[note_idx]:
-                # same note as previous, merge durations
-                word_note_dur[-1] += (end - start)
-            else:
-                word_note_seq.append(note_seq[note_idx])
-                word_note_dur.append(end - start)
+                break
+
+        if not word_note_seq:
+            word_note_seq.append("rest")
+            word_note_dur.append(end - start)
+
         new_note_seq.extend(word_note_seq)
         new_note_dur.extend(word_note_dur)
         note_slur.extend([0] + [1] * (len(word_note_seq) - 1))
+        while note_idx < len(note_end) and note_end[note_idx] <= end + _ALIGN_MIN_GAP:
+            note_idx += 1
+
     return new_note_seq, new_note_dur, note_slur

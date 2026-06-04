@@ -15,6 +15,11 @@ from inference.game.alignment_utils import align_notes_to_words
 from inference.game.onnx_runtime import GameOnnxModel
 
 
+_SINGABLE_JA_PHONEMES = {"a", "i", "u", "e", "o"}
+_SINGABLE_ZH_FALLBACK_VOWELS = set("aeiouv")
+_NON_SINGABLE_WORD_TOKENS = {"SP", "AP", "EP", "br", "sil", "pau"}
+
+
 def _normalize_ts(ts) -> list[float]:
     if ts is None:
         return []
@@ -28,6 +33,33 @@ def _normalize_ts(ts) -> list[float]:
 def _resolve_game_language_id(game_model: GameOnnxModel, language: str | None = None) -> int:
     del game_model, language
     return 0
+
+
+def _normalize_phone_text(phone_text: str) -> str:
+    return str(phone_text or "").split("/")[-1].strip()
+
+
+def _is_singable_phone(phone_text: str, language: str | None) -> bool:
+    phone_raw = _normalize_phone_text(phone_text)
+    phone = phone_raw.lower()
+    lang = (language or "").lower()
+
+    if not phone or phone == "sp":
+        return False
+    if lang == "ja":
+        return phone in _SINGABLE_JA_PHONEMES or phone_raw == "N"
+
+    if phone in {"n", "ng", "m"}:
+        return False
+    return any(ch in _SINGABLE_ZH_FALLBACK_VOWELS for ch in phone)
+
+
+def _find_word_nucleus_start(word, language: str | None) -> float | None:
+    phonemes = getattr(word, "phonemes", None) or []
+    for phoneme in phonemes:
+        if _is_singable_phone(getattr(phoneme, "text", ""), language):
+            return float(phoneme.start)
+    return None
 
 
 def load_game_model(model_dir: str, device="dml"):
@@ -47,7 +79,7 @@ def load_game_model(model_dir: str, device="dml"):
     return model
 
 
-def extract_vowel_boundaries(result_word, original_chars: list[str]):
+def extract_vowel_boundaries(result_word, original_chars: list[str], language: str | None = None):
     word_durs = []
     word_vuvs = []
     lyrics = []
@@ -55,7 +87,7 @@ def extract_vowel_boundaries(result_word, original_chars: list[str]):
     char_idx = 0
     last_end = 0.0
 
-    ignore_tokens = {"SP", "AP", "EP", "br", "sil", "pau"}
+    ignore_tokens = _NON_SINGABLE_WORD_TOKENS
     is_romaji = len(original_chars) > 0 and all(c.isascii() or c == "" for c in original_chars)
 
     for i, word in enumerate(result_word):
@@ -67,7 +99,14 @@ def extract_vowel_boundaries(result_word, original_chars: list[str]):
                 last_end = word.end
             continue
 
-        vowel_start = word.phonemes[-1].start if len(word.phonemes) > 0 else word.start
+        vowel_start = _find_word_nucleus_start(word, language)
+        if vowel_start is None:
+            if word.end > last_end:
+                word_durs.append(word.end - last_end)
+                word_vuvs.append(0)
+                lyrics.append("")
+                last_end = word.end
+            continue
 
         if vowel_start > last_end + 0.005:
             word_durs.append(vowel_start - last_end)
@@ -80,7 +119,9 @@ def extract_vowel_boundaries(result_word, original_chars: list[str]):
         if i + 1 < len(result_word):
             next_w = result_word[i + 1]
             if next_w.text not in ignore_tokens:
-                next_vowel_start = next_w.phonemes[-1].start if len(next_w.phonemes) > 0 else next_w.start
+                next_nucleus_start = _find_word_nucleus_start(next_w, language)
+                if next_nucleus_start is not None:
+                    next_vowel_start = next_nucleus_start
 
         note_end = next_vowel_start
         if i + 1 < len(result_word) and result_word[i + 1].text in ignore_tokens:
@@ -182,7 +223,11 @@ def extract_pitches_and_align_torch(
             print(f"[Warning] {stem}: empty HFA word result; skipping lyric-aligned GAME for this chunk.")
             continue
 
-        word_durs, word_vuvs, lyrics = extract_vowel_boundaries(result_word, chars_dict.get(stem, []))
+        word_durs, word_vuvs, lyrics = extract_vowel_boundaries(
+            result_word,
+            chars_dict.get(stem, []),
+            language=language,
+        )
         if not word_durs:
             print(f"[Warning] {stem}: no usable word durations; skipping lyric-aligned GAME for this chunk.")
             continue
