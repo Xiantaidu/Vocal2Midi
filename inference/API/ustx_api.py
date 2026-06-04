@@ -11,8 +11,8 @@ from inference.API.rmvpe_api import RmvpeResult
 
 
 UCurveInterval = 5
-# 为兼容较旧 OpenUtau 版本（如 0.1.x），默认写入较低的 ustx 版本号。
-# 旧版本会拒绝“更高版本”工程，但可读取并升级较低版本工程。
+# Use a lower ustx version by default for compatibility with older OpenUtau
+# releases (for example 0.1.x), which may reject higher-version projects.
 USTX_VERSION = "0.6"
 
 
@@ -134,7 +134,7 @@ def _build_pitd_curve(notes: list[Any], rmvpe: RmvpeResult, tempo: float) -> tup
             continue
 
         x = int(round(_to_ticks(t, tempo) / UCurveInterval) * UCurveInterval)
-        # 使用 note 的半音作基准，转换为 cents 偏移
+        # Convert to cents offset relative to the note's semitone pitch.
         y = int(round(np.clip((float(mp) - float(note.pitch)) * 100.0, -1200, 1200)))
         pending_note_idx = note_idx
         if pending and pending[-1].x == x:

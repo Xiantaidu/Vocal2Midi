@@ -1,24 +1,13 @@
-"""Batch slicing + local Qwen3-ASR CLI.
+﻿"""Batch slice + Qwen3-ASR CLI.
 
-This script processes a folder of audio files, optionally slices each file,
-runs local ASR on each chunk, and writes both chunk WAVs and `.lab` text files.
-
-Supported input formats: `.wav`, `.m4a`, `.mp3`
-Supported workflows:
-- normal slicing + ASR
-- `--no-slice` whole-file ASR
-- JSON-driven re-slicing via `--from-json`
-- persistent ASR / RMVPE runtimes via `--keep-model` / `--keep-rmvpe`
-"""
+杈撳叆涓€涓寘鍚?.wav / .m4a 鐨勭洰褰曪紝榛樿鍏堝垏鐗囷紝鍐嶅鍒囩墖鍋?Qwen3-ASR锛?鏈€鍚庢妸鍒囩墖 wav 鍜屽搴旂殑 .lab 绾枃鏈緭鍑哄埌鎸囧畾鐩綍銆?
+鍔犱笂 --no-slice 鏃讹紝浼氱洿鎺ユ妸鏁存闊抽褰撴垚涓€涓?chunk 閫佸叆 ASR銆?"""
 
 from __future__ import annotations
 
 import argparse
-import gc
 import hashlib
-import importlib
 import json
-import math
 import os
 import shutil
 import sys
@@ -34,141 +23,55 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-asr_api = importlib.import_module("inference.API.asr_api")
-rmvpe_api = importlib.import_module("inference.API.rmvpe_api")
-slicer_api = importlib.import_module("inference.API.slicer_api")
-device_utils = importlib.import_module("inference.device_utils")
+from inference.API.asr_api import batch_transcribe_asr, load_qwen_model, clear_qwen_model_cache
+from inference.API.rmvpe_api import RmvpeTranscriber
+from inference.API.slicer_api import slice_audio
+from inference.device_utils import RUNTIME_DEVICE_CHOICES, normalize_runtime_device
 
-batch_transcribe_asr = asr_api.batch_transcribe_asr
-load_qwen_model = asr_api.load_qwen_model
-clear_qwen_model_cache = asr_api.clear_qwen_model_cache
-RmvpeTranscriber = rmvpe_api.RmvpeTranscriber
-slice_audio = slicer_api.slice_audio
-slice_audio_with_custom_bounds = getattr(slicer_api, "slice_audio_with_custom_bounds", None)
-RUNTIME_DEVICE_CHOICES = device_utils.RUNTIME_DEVICE_CHOICES
-normalize_runtime_device = device_utils.normalize_runtime_device
 
 DEFAULT_RMVPE_MODEL = ROOT_DIR / "experiments" / "RMVPE" / "rmvpe.onnx"
-INPUT_AUDIO_EXTENSIONS = {".wav", ".m4a", ".mp3"}
+INPUT_AUDIO_EXTENSIONS = (".wav", ".m4a", ".mp3")
 SOURCE_INDEX_NAME = "_source_index.json"
-DEFAULT_SAMPLE_RATE = 44100
-DEFAULT_SLICE_METHOD = "default"
-SLICE_METHOD_CHOICES = (
-    "default",
-    "smart",
-    "heuristic",
-    "grid",
-)
-SLICE_METHOD_ALIASES = {
-    "auto": DEFAULT_SLICE_METHOD,
-    "default": "default",
-    "smart": "smart",
-    "heuristic": "heuristic",
-    "grid": "grid",
-    "默认切片": "default",
-    "智能切片": "smart",
-    "启发式切片": "heuristic",
-    "网格搜索切片": "grid",
-}
-SLICE_METHOD_KEYWORDS = (
-    ("smart", ("smart", "智能")),
-    ("heuristic", ("heuristic", "启发式")),
-    ("grid", ("grid", "网格")),
-    ("default", ("default", "默认", "auto")),
-)
 
 
 def batch_iter(items: List[Path], batch_size: int) -> Iterable[List[Path]]:
     if batch_size <= 0:
-        raise ValueError("batch_size must be greater than 0")
-    for start in range(0, len(items), batch_size):
-        yield items[start : start + batch_size]
+        raise ValueError("batch_size must be > 0")
+    for i in range(0, len(items), batch_size):
+        yield items[i : i + batch_size]
 
 
 def ensure_ffmpeg_on_path() -> None:
     ffmpeg_bin = ROOT_DIR / "_ffmpeg" / "bin"
-    if not ffmpeg_bin.is_dir():
-        return
-
-    current_path = os.environ.get("PATH", "")
-    parts = current_path.split(os.pathsep) if current_path else []
-    ffmpeg_bin_str = str(ffmpeg_bin)
-    if ffmpeg_bin_str not in parts:
-        os.environ["PATH"] = ffmpeg_bin_str + (os.pathsep + current_path if current_path else "")
-
-
-def repair_text_candidates(text: str) -> list[str]:
-    stripped = text.strip()
-    candidates = [stripped]
-    for source_encoding in ("gb18030", "gbk"):
-        try:
-            repaired = stripped.encode(source_encoding).decode("utf-8", errors="ignore").strip()
-        except UnicodeError:
-            continue
-        if repaired and repaired not in candidates:
-            candidates.append(repaired)
-    return candidates
-
-
-def normalize_slicing_method(method: str) -> str:
-    if method is None:
-        return DEFAULT_SLICE_METHOD
-
-    candidates = []
-    for candidate in repair_text_candidates(str(method)):
-        lowered = candidate.lower()
-        for value in (candidate, lowered):
-            if value and value not in candidates:
-                candidates.append(value)
-
-    for candidate in candidates:
-        normalized = SLICE_METHOD_ALIASES.get(candidate)
-        if normalized is not None:
-            return normalized
-
-    for candidate in candidates:
-        for normalized, keywords in SLICE_METHOD_KEYWORDS:
-            if any(keyword in candidate for keyword in keywords):
-                return normalized
-
-    supported = ", ".join(SLICE_METHOD_CHOICES)
-    raise ValueError(f"Unsupported slicing method: {method!r}. Supported values: {supported}")
-
-
-def resolve_slice_bounds(
-    min_seconds: Optional[float],
-    max_seconds: Optional[float],
-) -> Optional[tuple[float, float]]:
-    if min_seconds is None and max_seconds is None:
-        return None
-    if min_seconds is None or max_seconds is None:
-        raise ValueError("--min-seconds and --max-seconds must be provided together")
-
-    min_seconds = float(min_seconds)
-    max_seconds = float(max_seconds)
-    if min_seconds < 0:
-        raise ValueError("--min-seconds must be greater than or equal to 0")
-    if max_seconds <= 0:
-        raise ValueError("--max-seconds must be greater than 0")
-    if min_seconds > max_seconds:
-        raise ValueError("--min-seconds must be less than or equal to --max-seconds")
-    return min_seconds, max_seconds
+    if ffmpeg_bin.is_dir():
+        current_path = os.environ.get("PATH", "")
+        parts = current_path.split(os.pathsep) if current_path else []
+        ffmpeg_bin_str = str(ffmpeg_bin)
+        if ffmpeg_bin_str not in parts:
+            os.environ["PATH"] = ffmpeg_bin_str + (os.pathsep + current_path if current_path else "")
 
 
 def collect_audio_files(input_dir: Path, recursive: bool = True) -> List[Path]:
-    iterator = input_dir.rglob("*") if recursive else input_dir.glob("*")
-    files = [path for path in iterator if path.is_file() and path.suffix.lower() in INPUT_AUDIO_EXTENSIONS]
-    return sorted(files)
+    patterns = []
+    for ext in INPUT_AUDIO_EXTENSIONS:
+        patterns.append(f"**/*{ext}" if recursive else f"*{ext}")
+        patterns.append(f"**/*{ext.upper()}" if recursive else f"*{ext.upper()}")
+
+    files = {}
+    for pattern in patterns:
+        for p in input_dir.glob(pattern):
+            if p.is_file():
+                files[str(p.resolve())] = p
+    return sorted(files.values())
 
 
-def load_audio(path: Path, sr: int = DEFAULT_SAMPLE_RATE):
+def load_audio(path: Path, sr: int = 44100):
     ensure_ffmpeg_on_path()
     try:
         return librosa.load(str(path), sr=sr, mono=True)
     except Exception as exc:
         if path.suffix.lower() == ".m4a":
-            ffmpeg_found = shutil.which("ffmpeg") is not None
-            ffmpeg_status = "ffmpeg was found on PATH." if ffmpeg_found else "ffmpeg was not found on PATH."
+            ffmpeg_status = "ffmpeg was not found on PATH." if shutil.which("ffmpeg") is None else "ffmpeg was found on PATH."
             raise RuntimeError(
                 f"Failed to read M4A file: {path}\n"
                 f"{ffmpeg_status}\n"
@@ -180,14 +83,11 @@ def load_audio(path: Path, sr: int = DEFAULT_SAMPLE_RATE):
 def extract_text(result) -> str:
     if result is None:
         return ""
-
     text_attr = getattr(result, "text", None)
     if text_attr is not None:
         return str(text_attr)
-
     if isinstance(result, dict):
         return str(result.get("text") or result.get("transcript") or "")
-
     return str(result)
 
 
@@ -197,8 +97,8 @@ def safe_stem(path: Path) -> str:
 
 def file_md5(path: Path, chunk_size: int = 1024 * 1024) -> str:
     digest = hashlib.md5()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(chunk_size), b""):
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(chunk_size), b""):
             digest.update(chunk)
     return digest.hexdigest()
 
@@ -208,20 +108,17 @@ def source_key(audio_path: Path, source_md5: Optional[str] = None) -> str:
     return f"{safe_stem(audio_path)}_{md5[:8]}"
 
 
-def free_runtime_memory() -> None:
+def free_runtime_memory():
+    import gc
+
     gc.collect()
 
 
 def should_use_rmvpe_for_slicing(slicing_method: str, rmvpe_model_path: Optional[str]) -> bool:
-    return normalize_slicing_method(slicing_method) == "smart" and bool(rmvpe_model_path)
+    return slicing_method == "鏅鸿兘鍒囩墖" and bool(rmvpe_model_path)
 
 
-def has_existing_outputs(
-    audio_path: Path,
-    output_dir: Path,
-    source_md5: str,
-    recursive_output: bool = True,
-) -> bool:
+def has_existing_outputs(audio_path: Path, output_dir: Path, source_md5: str, recursive_output: bool = True) -> bool:
     stem = source_key(audio_path, source_md5)
     lab_dir = output_dir / "labs"
     slice_dir = output_dir / "slices"
@@ -247,12 +144,10 @@ def load_source_index(output_dir: Path) -> dict:
     path = source_index_path(output_dir)
     if not path.is_file():
         return {}
-
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {}
-
     return data if isinstance(data, dict) else {}
 
 
@@ -263,34 +158,21 @@ def save_source_index(output_dir: Path, index: dict) -> None:
 
 
 def index_has_completed_output(index: dict, source_md5: str, output_dir: Path) -> Optional[str]:
-    record = index.get(source_md5)
-    if not isinstance(record, dict):
+    rec = index.get(source_md5)
+    if not isinstance(rec, dict):
         return None
-
-    key = record.get("output_key")
+    key = rec.get("output_key")
     if not key:
         return None
-
     json_path = output_dir / "jsons" / f"{key}.json"
     lab_dir = output_dir / "labs" / key
     slice_dir = output_dir / "slices" / key
-    if json_path.is_file():
-        return str(key)
-    if lab_dir.is_dir() and any(lab_dir.glob("*.lab")):
-        return str(key)
-    if slice_dir.is_dir() and any(slice_dir.glob("*.wav")):
+    if json_path.is_file() or (lab_dir.is_dir() and any(lab_dir.glob("*.lab"))) or (slice_dir.is_dir() and any(slice_dir.glob("*.wav"))):
         return str(key)
     return None
 
 
-def update_source_index(
-    index: dict,
-    audio_path: Path,
-    output_key: str,
-    source_md5: str,
-    chunks: int,
-    labs: int,
-) -> None:
+def update_source_index(index: dict, audio_path: Path, output_key: str, source_md5: str, chunks: int, labs: int) -> None:
     index[source_md5] = {
         "output_key": output_key,
         "source_name": audio_path.name,
@@ -309,27 +191,30 @@ def save_timestamps_json(
     sr: int,
     source_audio: Optional[Path] = None,
     source_md5: Optional[str] = None,
-) -> Path:
-    """Save slice offsets, durations, and ASR text to a JSON file."""
+):
+    """灏嗗垏鐗囩殑绮剧‘鏃堕棿鎴冲拰 ASR 杞啓缁撴灉淇濆瓨涓?JSON 鏂囦欢銆?
+    姣忎釜 chunk 鐨勮褰曞寘鍚細
+        - index: 鍒囩墖搴忓彿
+        - offset: 鍒囩墖鍦ㄥ師濮嬮煶棰戜腑鐨勮捣濮嬫椂闂?(绉?
+        - duration: 鍒囩墖鏃堕暱 (绉?
+        - text: ASR 杞啓鏂囨湰锛坙ab 鍐呭锛?    """
     json_dir.mkdir(parents=True, exist_ok=True)
-
     records = []
-    for result_index, result in enumerate(results):
-        chunk_index = chunk_indices[result_index]
-        chunk = chunks[chunk_index]
+    for idx, res in enumerate(results):
+        chunk_idx = chunk_indices[idx]
+        chunk = chunks[chunk_idx]
         offset = float(chunk.get("offset", 0.0))
-        waveform = chunk["waveform"]
-        duration = float(len(waveform) / sr)
-        records.append(
-            {
-                "index": chunk_index,
-                "offset": round(offset, 6),
-                "duration": round(duration, 6),
-                "text": extract_text(result).strip(),
-            }
-        )
-
-    records.sort(key=lambda record: record["offset"])
+        wav = chunk["waveform"]
+        dur = float(len(wav) / sr)
+        text = extract_text(res).strip()
+        records.append({
+            "index": chunk_idx,
+            "offset": round(offset, 6),
+            "duration": round(dur, 6),
+            "text": text,
+        })
+    # 鎸?offset 鎺掑簭淇濊瘉鏃堕棿椤哄簭
+    records.sort(key=lambda r: r["offset"])
     json_path = json_dir / f"{source_stem}.json"
     payload = {
         "source": {
@@ -347,18 +232,24 @@ def slice_audio_from_json(
     json_path: Path,
     source_audio: Path,
     output_dir: Path,
-    sr: int = DEFAULT_SAMPLE_RATE,
+    sr: int = 44100,
 ) -> int:
-    """Re-slice an audio file using chunk offsets from a saved JSON file."""
+    """鏍规嵁 JSON 涓褰曠殑绮剧‘鏃堕棿鎴冲闊抽杩涜鍒囧垎銆?
+    JSON 鏍煎紡搴斾负 save_timestamps_json 杈撳嚭鐨勬牸寮忥細
+        [{"index": 0, "offset": 0.0, "duration": 5.0, "text": "..."}, ...]
+
+    杈撳嚭鍛藉悕瑙勫垯涓庡師鍒囩墖涓€鑷达細
+        {stem}_chunk{index:04d}_off{offset:08.2f}s_dur{duration:07.2f}s.wav
+    """
     if not json_path.is_file():
-        raise FileNotFoundError(f"JSON file does not exist: {json_path}")
+        raise FileNotFoundError(f"JSON 鏂囦欢涓嶅瓨鍦? {json_path}")
     if not source_audio.is_file():
-        raise FileNotFoundError(f"Source audio file does not exist: {source_audio}")
+        raise FileNotFoundError(f"闊抽鏂囦欢涓嶅瓨鍦? {source_audio}")
 
     loaded = json.loads(json_path.read_text(encoding="utf-8"))
     records = loaded.get("chunks", []) if isinstance(loaded, dict) else loaded
     if not records:
-        print(f"[SKIP] Empty JSON chunk list: {json_path}")
+        print(f"[SKIP] JSON 鏂囦欢涓虹┖: {json_path}")
         return 0
 
     stem = safe_stem(source_audio)
@@ -367,78 +258,50 @@ def slice_audio_from_json(
         print(f"[SKIP] Empty audio: {source_audio}")
         return 0
 
+    output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    written = 0
-    for record in records:
-        index = int(record["index"])
-        offset = float(record["offset"])
-        duration = float(record["duration"])
-        text = str(record.get("text", ""))
 
-        start_sample = max(0, int(round(offset * actual_sr)))
-        end_sample = min(waveform.shape[-1], int(round((offset + duration) * actual_sr)))
+    written = 0
+    for rec in records:
+        idx = rec["index"]
+        offset = rec["offset"]
+        dur = rec["duration"]
+        text = rec.get("text", "")
+
+        start_sample = int(offset * actual_sr)
+        end_sample = int((offset + dur) * actual_sr)
+        # 瑁佸壀瓒呭嚭闊抽闀垮害鐨勯儴鍒?        end_sample = min(end_sample, waveform.shape[-1])
         if start_sample >= end_sample:
-            print(f"  [SKIP] chunk {index}: invalid range [{offset:.4f}s - {offset + duration:.4f}s]")
+            print(f"  [SKIP] chunk {idx}: invalid range [{offset:.4f}s - {offset + dur:.4f}s]")
             continue
 
         chunk_wav = waveform[..., start_sample:end_sample]
-        wav_name = f"{stem}_chunk{index:04d}_off{offset:08.2f}s_dur{duration:07.2f}s.wav"
-        wav_path = output_dir / wav_name
-        sf.write(wav_path, chunk_wav, actual_sr)
+        name = f"{stem}_chunk{idx:04d}_off{offset:08.2f}s_dur{dur:07.2f}s.wav"
+        out_path = output_dir / name
+        sf.write(out_path, chunk_wav, actual_sr)
         written += 1
 
+        # 鍚屾椂杈撳嚭瀵瑰簲鐨?lab 鏂囦欢
         if text:
-            lab_name = f"{stem}_chunk{index:04d}_off{offset:08.2f}s.lab"
+            lab_name = f"{stem}_chunk{idx:04d}_off{offset:08.2f}s.lab"
             (output_dir / lab_name).write_text(text, encoding="utf-8")
 
-    print(f"  Sliced {written}/{len(records)} chunks from JSON timestamps -> {output_dir}")
+    print(f"  Sliced {written}/{len(records)} chunks from JSON timestamps 鈫?{output_dir}")
     return written
 
 
 def save_chunks(chunk_dir: Path, source_stem: str, chunks, sr: int):
     chunk_dir.mkdir(parents=True, exist_ok=True)
-    saved_paths = []
-    for index, chunk in enumerate(chunks):
+    saved = []
+    for idx, chunk in enumerate(chunks):
         offset = float(chunk.get("offset", 0.0))
-        waveform = chunk["waveform"]
-        duration = len(waveform) / sr
-        name = f"{source_stem}_chunk{index:04d}_off{offset:08.2f}s_dur{duration:07.2f}s.wav"
-        path = chunk_dir / name
-        sf.write(path, waveform, sr)
-        saved_paths.append(path)
-    return saved_paths
-
-
-def run_slicer(
-    waveform,
-    sr: int,
-    slicing_method: str,
-    min_seconds: Optional[float] = None,
-    max_seconds: Optional[float] = None,
-    rmvpe_voiced_mask=None,
-    rmvpe_time_step_seconds: Optional[float] = None,
-):
-    normalized_method = normalize_slicing_method(slicing_method)
-    if min_seconds is not None or max_seconds is not None:
-        if slice_audio_with_custom_bounds is None:
-            raise RuntimeError("Custom slice bounds are not supported by this build of slicer_api.")
-        return slice_audio_with_custom_bounds(
-            waveform,
-            sr,
-            normalized_method,
-            min_len_sec=min_seconds,
-            max_len_sec=max_seconds,
-            rmvpe_voiced_mask=rmvpe_voiced_mask,
-            rmvpe_time_step_seconds=rmvpe_time_step_seconds,
-        )
-
-    return slice_audio(
-        waveform,
-        sr,
-        normalized_method,
-        rmvpe_voiced_mask=rmvpe_voiced_mask,
-        rmvpe_time_step_seconds=rmvpe_time_step_seconds,
-    )
+        wav = chunk["waveform"]
+        dur = len(wav) / sr
+        name = f"{source_stem}_chunk{idx:04d}_off{offset:08.2f}s_dur{dur:07.2f}s.wav"
+        out_path = chunk_dir / name
+        sf.write(out_path, wav, sr)
+        saved.append(out_path)
+    return saved
 
 
 def process_one_file(
@@ -457,10 +320,9 @@ def process_one_file(
     rmvpe_batch_size: int = 8,
     rmvpe_model: Optional[RmvpeTranscriber] = None,
     source_md5: Optional[str] = None,
-    min_seconds: Optional[float] = None,
-    max_seconds: Optional[float] = None,
 ):
-    """Process one audio file: slice -> ASR -> chunk WAVs / lab files / JSON."""
+    """澶勭悊鍗曚釜闊抽鏂囦欢锛氬垏鐗?鈫?ASR 鈫?杈撳嚭 .wav + .lab銆?
+    褰?asr_model 涓嶄负 None 鏃讹紝鐩存帴鍦ㄤ富杩涚▼涓娇鐢ㄦ寔涔呭寲 ASR 杩愯鏃惰繘琛岃浆鍐欙紙璺宠繃瀛愯繘绋嬶級锛?    閬垮厤姣忎釜鏂囦欢閲嶅鍒濆鍖?Qwen3 DML runtime銆?    """
     output_stem = source_key(audio_path, source_md5)
     wav_out_dir = output_dir / "slices"
     lab_out_dir = output_dir / "labs"
@@ -469,46 +331,50 @@ def process_one_file(
         wav_out_dir = wav_out_dir / output_stem
         lab_out_dir = lab_out_dir / output_stem
 
-    waveform, sr = load_audio(audio_path, sr=DEFAULT_SAMPLE_RATE)
+    sr = 44100
+    waveform, sr = load_audio(audio_path, sr=sr)
     if waveform.size == 0:
         print(f"[SKIP] Empty audio: {audio_path}")
         return 0, 0
 
-    normalized_method = normalize_slicing_method(slicing_method)
     print(f"\n[FILE] {audio_path.name}")
 
+    rmvpe_voiced_mask = None
+    rmvpe_step = None
     if no_slice:
         print("  [NO-SLICE] Skipping slicer; using the full audio as a single chunk.")
         chunks = [{"offset": 0.0, "waveform": waveform}]
-    else:
-        rmvpe_voiced_mask = None
-        rmvpe_step = None
-        if should_use_rmvpe_for_slicing(normalized_method, rmvpe_model_path):
-            own_rmvpe_model = rmvpe_model is None
+    elif should_use_rmvpe_for_slicing(slicing_method, rmvpe_model_path):
+        own_rmvpe_model = rmvpe_model is None
+        if own_rmvpe_model:
+            print(f"  [RMVPE] Loading model for smart slicing: {rmvpe_model_path}")
+            rmvpe_model = RmvpeTranscriber(rmvpe_model_path, device=device, batch_size=rmvpe_batch_size)
+        try:
+            print("  [RMVPE] Running voiced/unvoiced detection for smart slicing...")
+            rmvpe_result = rmvpe_model.infer(waveform, sr)
+            rmvpe_voiced_mask = rmvpe_result.voiced_mask
+            rmvpe_step = rmvpe_result.time_step_seconds
+            print(f"  [RMVPE] Done. Frames={len(rmvpe_result.midi_pitch)} step={rmvpe_step:.4f}s")
+        finally:
             if own_rmvpe_model:
-                print(f"  [RMVPE] Loading model for smart slicing: {rmvpe_model_path}")
-                rmvpe_model = RmvpeTranscriber(rmvpe_model_path, device=device, batch_size=rmvpe_batch_size)
-            try:
-                print("  [RMVPE] Running voiced/unvoiced detection for smart slicing...")
-                rmvpe_result = rmvpe_model.infer(waveform, sr)
-                rmvpe_voiced_mask = rmvpe_result.voiced_mask
-                rmvpe_step = rmvpe_result.time_step_seconds
-                print(f"  [RMVPE] Done. Frames={len(rmvpe_result.midi_pitch)} step={rmvpe_step:.4f}s")
-            finally:
-                if own_rmvpe_model:
-                    del rmvpe_model
-                    free_runtime_memory()
+                del rmvpe_model
+                free_runtime_memory()
 
-        chunks = run_slicer(
-            waveform=waveform,
-            sr=sr,
-            slicing_method=normalized_method,
-            min_seconds=min_seconds,
-            max_seconds=max_seconds,
+        chunks = slice_audio(
+            waveform,
+            sr,
+            slicing_method,
             rmvpe_voiced_mask=rmvpe_voiced_mask,
             rmvpe_time_step_seconds=rmvpe_step,
         )
-
+    else:
+        chunks = slice_audio(
+            waveform,
+            sr,
+            slicing_method,
+            rmvpe_voiced_mask=rmvpe_voiced_mask,
+            rmvpe_time_step_seconds=rmvpe_step,
+        )
     if not chunks:
         print("  No chunks generated, skipping.")
         return 0, 0
@@ -518,6 +384,7 @@ def process_one_file(
         save_chunks(wav_out_dir, output_stem, chunks, sr)
 
         if asr_model is not None:
+            # 鎸佷箙鍖栨ā鍨嬫ā寮忥細涓昏繘绋嬪唴鐩存帴鎺ㄧ悊锛岄伩鍏嶅弽澶嶅姞杞?鍗歌浇妯″瀷
             results, chunk_indices = batch_transcribe_asr(
                 chunks=chunks,
                 sr=sr,
@@ -531,6 +398,7 @@ def process_one_file(
                 asr_timeout_sec=180,
             )
         else:
+            # Subprocess mode: create a fresh ASR runtime for this file.
             results, chunk_indices = batch_transcribe_asr(
                 chunks=chunks,
                 sr=sr,
@@ -547,15 +415,16 @@ def process_one_file(
 
         lab_out_dir.mkdir(parents=True, exist_ok=True)
         written = 0
-        for result_index, result in enumerate(results):
-            chunk_index = chunk_indices[result_index]
-            chunk = chunks[chunk_index]
+        for idx, res in enumerate(results):
+            chunk_idx = chunk_indices[idx]
+            chunk = chunks[chunk_idx]
             offset = float(chunk.get("offset", 0.0))
-            lab_text = extract_text(result).strip()
-            lab_name = f"{output_stem}_chunk{chunk_index:04d}_off{offset:08.2f}s.lab"
+            lab_text = extract_text(res).strip()
+            lab_name = f"{output_stem}_chunk{chunk_idx:04d}_off{offset:08.2f}s.lab"
             (lab_out_dir / lab_name).write_text(lab_text, encoding="utf-8")
             written += 1
 
+        # 淇濆瓨绮剧‘鏃堕棿鎴?JSON
         if save_json:
             save_timestamps_json(
                 json_out_dir,
@@ -588,28 +457,14 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--language", default="zh", choices=["zh", "ja"], help="ASR language")
     parser.add_argument(
         "--slicing-method",
-        default=DEFAULT_SLICE_METHOD,
-        help=(
-            "Slicing strategy. Supported values: default, smart, heuristic, grid. "
-            "Chinese labels and repaired legacy mojibake values are also accepted."
-        ),
-    )
-    parser.add_argument(
-        "--min-seconds",
-        type=float,
-        default=None,
-        help="Optional minimum target chunk duration in seconds. Must be paired with --max-seconds.",
-    )
-    parser.add_argument(
-        "--max-seconds",
-        type=float,
-        default=None,
-        help="Optional maximum target chunk duration in seconds. Must be paired with --min-seconds.",
+        default="榛樿鍒囩墖",
+        choices=["榛樿鍒囩墖", "鏅鸿兘鍒囩墖", "鍚彂寮忓垏鐗?", "缃戞牸鎼滅储鍒囩墖"],
+        help="Slicing strategy. Ignored when --no-slice is enabled.",
     )
     parser.add_argument(
         "--no-slice",
         action="store_true",
-        help="Bypass slicing and send the whole file to ASR as a single chunk.",
+        help="Bypass slicing and send the whole file to ASR as a single chunk",
     )
     parser.add_argument("--asr-batch-size", type=int, default=4, help="ASR batch size")
     parser.add_argument(
@@ -626,53 +481,44 @@ def build_argparser() -> argparse.ArgumentParser:
         "--from-json",
         type=Path,
         default=None,
-        help="Slice by an existing JSON timing file together with --source-audio and --output-dir.",
+        help="Slice by an existing JSON timing file together with --source-audio and --output-dir",
     )
     parser.add_argument(
         "--source-audio",
         type=Path,
         default=None,
-        help="Source audio file used with --from-json.",
+        help="Source audio file used with --from-json",
     )
     parser.add_argument(
         "--keep-model",
         action="store_true",
-        help="Reuse the ASR runtime in the current process across the whole batch.",
+        help="Reuse the ASR runtime in the current process across the whole batch",
     )
     parser.add_argument(
         "--keep-rmvpe",
         action="store_true",
-        help="Reuse the RMVPE runtime in the current process during smart slicing.",
+        help="Reuse the RMVPE runtime in the current process during smart slicing",
     )
     return parser
-
-
-def validate_args(args) -> None:
-    args.device = normalize_runtime_device(args.device)
-    args.slicing_method = normalize_slicing_method(args.slicing_method)
-    resolve_slice_bounds(args.min_seconds, args.max_seconds)
-
-    if args.file_batch_size <= 0:
-        raise ValueError("--file-batch-size must be greater than 0")
-    if args.asr_batch_size <= 0:
-        raise ValueError("--asr-batch-size must be greater than 0")
-    if args.rmvpe_batch_size <= 0:
-        raise ValueError("--rmvpe-batch-size must be greater than 0")
 
 
 def main():
     args = build_argparser().parse_args()
     ensure_ffmpeg_on_path()
-    validate_args(args)
+    args.device = normalize_runtime_device(args.device)
 
+    # ---- 浠?JSON 鍒囧垎鐨勭嫭绔嬫ā寮?----
     if args.from_json is not None:
         if args.source_audio is None:
-            raise ValueError("--from-json requires --source-audio")
-
+            raise ValueError("--from-json 妯″紡闇€瑕佸悓鏃舵寚瀹?--source-audio")
+        json_path = args.from_json.resolve()
+        source_audio = args.source_audio.resolve()
+        output_dir = args.output_dir.resolve()
+        output_dir.mkdir(parents=True, exist_ok=True)
         written = slice_audio_from_json(
-            json_path=args.from_json.resolve(),
-            source_audio=args.source_audio.resolve(),
-            output_dir=args.output_dir.resolve(),
+            json_path=json_path,
+            source_audio=source_audio,
+            output_dir=output_dir,
         )
         print(f"\nDone. Sliced {written} chunks from JSON.")
         return 0
@@ -680,16 +526,13 @@ def main():
     input_dir = args.input_dir.resolve()
     output_dir = args.output_dir.resolve()
     rmvpe_model_path = str(args.rmvpe_model).strip()
-    slice_bounds = resolve_slice_bounds(args.min_seconds, args.max_seconds)
-    min_seconds = slice_bounds[0] if slice_bounds is not None else None
-    max_seconds = slice_bounds[1] if slice_bounds is not None else None
 
     if not input_dir.exists() or not input_dir.is_dir():
-        raise FileNotFoundError(f"Input directory does not exist: {input_dir}")
+        raise FileNotFoundError(f"杈撳叆鐩綍涓嶅瓨鍦? {input_dir}")
 
     audio_files = collect_audio_files(input_dir, recursive=not args.no_recursive)
     if not audio_files:
-        exts = ", ".join(sorted(INPUT_AUDIO_EXTENSIONS))
+        exts = ", ".join(INPUT_AUDIO_EXTENSIONS)
         print(f"No audio files found ({exts}) in: {input_dir}")
         return 0
 
@@ -704,11 +547,9 @@ def main():
     if args.keep_rmvpe and args.no_slice:
         print("[Keep-RMVPE] Ignored: --no-slice bypasses slicing entirely.")
     elif args.keep_rmvpe and not use_rmvpe_for_slicing:
-        print("[Keep-RMVPE] Ignored: RMVPE is only used with --slicing-method smart and a non-empty --rmvpe-model.")
-    if args.no_slice and slice_bounds is not None:
-        print("[Slice Bounds] Ignored: --no-slice sends the full file directly to ASR.")
+        print("[Keep-RMVPE] Ignored: RMVPE is only used with --slicing-method 鏅鸿兘鍒囩墖 and a non-empty --rmvpe-model.")
 
-    asr_model = None
+    # 鎸佷箙鍖栨ā鍨嬶細涓昏繘绋嬩腑涓€娆℃€у姞杞斤紝鎵€鏈夋枃浠跺叡浜?    asr_model = None
     rmvpe_model = None
     if args.keep_model:
         print(f"[Keep-Model] Loading ASR runtime once for all files: {args.asr_model}")
@@ -720,10 +561,9 @@ def main():
         print("[Keep-RMVPE] Runtime loaded. It will be reused for the entire batch.")
 
     try:
-        total_batches = math.ceil(len(audio_files) / args.file_batch_size)
         print(f"Found {len(audio_files)} audio files. Processing in file batches of {args.file_batch_size}...")
         for batch_no, file_batch in enumerate(batch_iter(audio_files, args.file_batch_size), start=1):
-            print(f"\n=== File batch {batch_no} / {total_batches} ===")
+            print(f"\n=== File batch {batch_no} / {(len(audio_files) + args.file_batch_size - 1) // args.file_batch_size} ===")
             for audio_path in file_batch:
                 try:
                     source_md5 = file_md5(audio_path)
@@ -761,15 +601,12 @@ def main():
                         rmvpe_batch_size=args.rmvpe_batch_size,
                         rmvpe_model=rmvpe_model,
                         source_md5=source_md5,
-                        min_seconds=min_seconds,
-                        max_seconds=max_seconds,
                     )
                 except Exception as exc:
                     skipped_failed += 1
                     print(f"\n[SKIP failed] {audio_path}")
                     print(f"  {type(exc).__name__}: {exc}")
                     continue
-
                 update_source_index(source_index, audio_path, output_key, source_md5, chunks, labs)
                 save_source_index(output_dir, source_index)
                 total_chunks += chunks
@@ -783,7 +620,6 @@ def main():
             print("\n[Keep-Model] Releasing cached ASR runtime...")
             clear_qwen_model_cache()
             del asr_model
-            free_runtime_memory()
 
     print(
         f"\nDone. Total chunks: {total_chunks}, total labs: {total_labs}, "
@@ -794,3 +630,6 @@ def main():
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+

@@ -47,6 +47,10 @@ def _load_slice_asr_cli():
 slice_asr_cli = _load_slice_asr_cli()
 
 
+def _make_mojibake(text: str) -> str:
+    return text.encode("utf-8").decode("gb18030", errors="replace")
+
+
 def test_argparser_accepts_no_slice():
     args = slice_asr_cli.build_argparser().parse_args(
         ["input_dir", "output_dir", "--asr-model", "model", "--no-slice"]
@@ -54,6 +58,15 @@ def test_argparser_accepts_no_slice():
 
     assert args.no_slice is True
     assert args.language == "zh"
+
+
+def test_normalize_slicing_method_accepts_english_chinese_and_mojibake():
+    assert slice_asr_cli.normalize_slicing_method("default") == "default"
+    assert slice_asr_cli.normalize_slicing_method("智能切片") == "smart"
+    assert slice_asr_cli.normalize_slicing_method(_make_mojibake("默认切片")) == "default"
+
+    degraded = _make_mojibake("启发式切片")[:-1] + "?"
+    assert slice_asr_cli.normalize_slicing_method(degraded) == "heuristic"
 
 
 def test_process_one_file_no_slice_bypasses_slicer(monkeypatch, tmp_path):
@@ -88,7 +101,7 @@ def test_process_one_file_no_slice_bypasses_slicer(monkeypatch, tmp_path):
         asr_model_path="experiments/Qwen3-ASR-1.7B-dml",
         device="cpu",
         language="ja",
-        slicing_method="默认切片",
+        slicing_method="default",
         asr_batch_size=1,
         no_slice=True,
     )

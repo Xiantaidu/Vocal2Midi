@@ -33,7 +33,7 @@ def _base_kwargs(tmp_path: Path) -> dict:
         "output_formats": [],
         "slice_min_sec": 8.0,
         "slice_max_sec": 22.0,
-        "slicing_method": "默认切片",
+        "slicing_method": "default",
         "tempo": 120.0,
         "quantization_step": 0,
         "pitch_format": "name",
