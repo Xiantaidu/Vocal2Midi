@@ -12,6 +12,13 @@ from pathlib import Path
 from os.path import relpath
 from typing import Union
 from . import logger
+from inference.device_utils import (
+    MIN_GPU_DEDICATED_VRAM_BYTES,
+    DxgiAdapterInfo,
+    describe_gpu_adapter,
+    format_gib,
+    select_preferred_gpu_adapter,
+)
 
 # =========================================================================
 # Configuration
@@ -156,6 +163,7 @@ llama_sampler_free = None
 LLAMA_BACKEND_CPU = "cpu"
 LLAMA_BACKEND_VULKAN = "vulkan"
 LLAMA_BACKEND_AUTO = "auto"
+LLAMA_SPLIT_MODE_NONE = 0
 
 
 def _vulkan_backend_filename() -> str:
@@ -171,6 +179,63 @@ def detect_available_llama_backend(lib_dir: str | Path | None = None) -> str:
     if (base_dir / _vulkan_backend_filename()).is_file():
         return LLAMA_BACKEND_VULKAN
     return LLAMA_BACKEND_CPU
+
+
+def _resolve_backend_and_adapter(
+    backend: str,
+    lib_dir: str | Path | None = None,
+) -> tuple[str, DxgiAdapterInfo | None]:
+    requested_backend = (backend or LLAMA_BACKEND_AUTO).strip().lower()
+    if requested_backend not in {LLAMA_BACKEND_AUTO, LLAMA_BACKEND_CPU, LLAMA_BACKEND_VULKAN}:
+        logger.warning(f"Unknown llama backend '{backend}', falling back to auto.")
+        requested_backend = LLAMA_BACKEND_AUTO
+
+    detected_backend = detect_available_llama_backend(lib_dir)
+    selected_backend = detected_backend if requested_backend == LLAMA_BACKEND_AUTO else requested_backend
+    if selected_backend == LLAMA_BACKEND_VULKAN and detected_backend != LLAMA_BACKEND_VULKAN:
+        logger.warning("Requested Vulkan llama backend, but ggml-vulkan backend DLL is missing. Falling back to CPU.")
+        return LLAMA_BACKEND_CPU, None
+    if selected_backend != LLAMA_BACKEND_VULKAN:
+        return selected_backend, None
+
+    adapter = select_preferred_gpu_adapter(MIN_GPU_DEDICATED_VRAM_BYTES)
+    if adapter is None:
+        logger.warning(
+            "No GPU adapter with at least "
+            f"{format_gib(MIN_GPU_DEDICATED_VRAM_BYTES)} dedicated VRAM was found for Vulkan offload. "
+            "Falling back to CPU."
+        )
+        return LLAMA_BACKEND_CPU, None
+
+    logger.info(f"Selected Vulkan {describe_gpu_adapter(adapter)}.")
+    return LLAMA_BACKEND_VULKAN, adapter
+
+
+def _configure_model_params_for_backend(
+    model_params,
+    active_backend: str,
+    *,
+    n_gpu_layers: int | None = None,
+    adapter: DxgiAdapterInfo | None = None,
+) -> None:
+    if active_backend == LLAMA_BACKEND_VULKAN:
+        model_params.n_gpu_layers = -1 if n_gpu_layers is None else int(n_gpu_layers)
+        model_params.split_mode = LLAMA_SPLIT_MODE_NONE
+        if adapter is not None:
+            model_params.main_gpu = int(adapter.index)
+            logger.info(
+                "llama.cpp decoder is running with Vulkan offload on "
+                f"{describe_gpu_adapter(adapter)} (n_gpu_layers={model_params.n_gpu_layers})."
+            )
+        else:
+            logger.info(
+                "llama.cpp decoder is running with Vulkan offload "
+                f"(n_gpu_layers={model_params.n_gpu_layers})."
+            )
+        return
+
+    model_params.n_gpu_layers = 0
+    logger.info("llama.cpp decoder is running in CPU-only mode.")
 
 def init_llama_lib():
     """Initialize the llama.cpp library with cross-platform loading support."""
@@ -402,8 +467,7 @@ def load_model(model_path: str):
     # Initialize the backend and load the model.
     init_llama_lib()
     model_params = llama_model_default_params()
-    model_params.n_gpu_layers = 0
-    logger.info("llama.cpp decoder is running in CPU-only mode.")
+    _configure_model_params_for_backend(model_params, LLAMA_BACKEND_CPU)
     model = llama_model_load_from_file(
         model_rel.as_posix().encode('utf-8'),
         model_params
@@ -440,36 +504,26 @@ def load_model_with_backend(
 
     init_llama_lib()
     configure_logging(quiet=quiet)
+    selected_backend, selected_adapter = _resolve_backend_and_adapter(backend, lib_dir)
 
-    requested_backend = (backend or LLAMA_BACKEND_AUTO).strip().lower()
-    if requested_backend not in {LLAMA_BACKEND_AUTO, LLAMA_BACKEND_CPU, LLAMA_BACKEND_VULKAN}:
-        logger.warning(f"Unknown llama backend '{backend}', falling back to auto.")
-        requested_backend = LLAMA_BACKEND_AUTO
-
-    detected_backend = detect_available_llama_backend(lib_dir)
-    selected_backend = detected_backend if requested_backend == LLAMA_BACKEND_AUTO else requested_backend
-    if selected_backend == LLAMA_BACKEND_VULKAN and detected_backend != LLAMA_BACKEND_VULKAN:
-        logger.warning("Requested Vulkan llama backend, but ggml-vulkan backend DLL is missing. Falling back to CPU.")
-        selected_backend = LLAMA_BACKEND_CPU
-
-    def _try_load(active_backend: str):
+    def _try_load(active_backend: str, adapter: DxgiAdapterInfo | None):
         model_params = llama_model_default_params()
-        if active_backend == LLAMA_BACKEND_VULKAN:
-            model_params.n_gpu_layers = -1 if n_gpu_layers is None else int(n_gpu_layers)
-            logger.info(f"llama.cpp decoder is running with Vulkan offload (n_gpu_layers={model_params.n_gpu_layers}).")
-        else:
-            model_params.n_gpu_layers = 0
-            logger.info("llama.cpp decoder is running in CPU-only mode.")
+        _configure_model_params_for_backend(
+            model_params,
+            active_backend,
+            n_gpu_layers=n_gpu_layers,
+            adapter=adapter,
+        )
         return llama_model_load_from_file(
             model_rel.as_posix().encode("utf-8"),
             model_params,
         )
 
-    model = _try_load(selected_backend)
+    model = _try_load(selected_backend, selected_adapter)
     active_backend = selected_backend
     if not model and selected_backend == LLAMA_BACKEND_VULKAN:
         logger.warning("Failed to load llama model with Vulkan offload; retrying in CPU-only mode.")
-        model = _try_load(LLAMA_BACKEND_CPU)
+        model = _try_load(LLAMA_BACKEND_CPU, None)
         active_backend = LLAMA_BACKEND_CPU
 
     if model:

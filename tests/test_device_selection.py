@@ -119,7 +119,7 @@ def test_resolve_onnx_providers_selects_explicit_dml_device_id(monkeypatch):
     monkeypatch.setattr(
         device_utils,
         "_select_preferred_dml_adapter",
-        lambda: device_utils._DxgiAdapterInfo(
+        lambda: device_utils.DxgiAdapterInfo(
             index=2,
             name="Discrete GPU",
             dedicated_vram_bytes=4 * (1 << 30),
