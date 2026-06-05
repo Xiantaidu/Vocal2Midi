@@ -11,6 +11,7 @@ RUNTIME_DEVICE_CHOICES = ("dml", "cpu", "cuda")
 VISIBLE_RUNTIME_DEVICE_CHOICES = ("dml", "cpu")
 
 ProviderSpec = str | tuple[str, dict[str, str]]
+MIN_GPU_DEDICATED_VRAM_BYTES = 1 << 30
 
 _DEVICE_ALIASES = {
     "": "dml",
@@ -20,13 +21,12 @@ _DEVICE_ALIASES = {
     "gpu": "dml",
     "cpu": "cpu",
 }
-_MIN_DML_DEDICATED_VRAM_BYTES = 1 << 30
 _DXGI_ADAPTER_FLAG_SOFTWARE = 0x2
 _DXGI_ERROR_NOT_FOUND = 0x887A0002
 
 
 @dataclass(frozen=True)
-class _DxgiAdapterInfo:
+class DxgiAdapterInfo:
     index: int
     name: str
     dedicated_vram_bytes: int
@@ -94,7 +94,7 @@ def _release_com(obj: ctypes.c_void_p | None) -> None:
 
 
 @lru_cache(maxsize=1)
-def _enumerate_dxgi_adapters() -> tuple[_DxgiAdapterInfo, ...]:
+def _enumerate_dxgi_adapters() -> tuple[DxgiAdapterInfo, ...]:
     if not hasattr(ctypes, "WinDLL"):
         return ()
     try:
@@ -107,7 +107,7 @@ def _enumerate_dxgi_adapters() -> tuple[_DxgiAdapterInfo, ...]:
     create_factory.restype = ctypes.c_long
 
     factory = ctypes.c_void_p()
-    adapters: list[_DxgiAdapterInfo] = []
+    adapters: list[DxgiAdapterInfo] = []
     try:
         hr = create_factory(ctypes.byref(_IID_IDXGIFactory1), ctypes.byref(factory))
         if hr < 0 or not factory.value:
@@ -141,7 +141,7 @@ def _enumerate_dxgi_adapters() -> tuple[_DxgiAdapterInfo, ...]:
                 )
                 if hr_desc >= 0:
                     adapters.append(
-                        _DxgiAdapterInfo(
+                        DxgiAdapterInfo(
                             index=adapter_index,
                             name=str(desc.Description).rstrip("\x00").strip() or f"Adapter {adapter_index}",
                             dedicated_vram_bytes=int(desc.DedicatedVideoMemory),
@@ -159,20 +159,30 @@ def _enumerate_dxgi_adapters() -> tuple[_DxgiAdapterInfo, ...]:
     return tuple(adapters)
 
 
-@lru_cache(maxsize=1)
-def _select_preferred_dml_adapter() -> _DxgiAdapterInfo | None:
+def format_gib(num_bytes: int) -> str:
+    return f"{num_bytes / float(1 << 30):.1f} GiB"
+
+
+def describe_gpu_adapter(adapter: DxgiAdapterInfo) -> str:
+    return f"adapter {adapter.index}: {adapter.name} ({format_gib(adapter.dedicated_vram_bytes)} dedicated VRAM)"
+
+
+@lru_cache(maxsize=8)
+def select_preferred_gpu_adapter(
+    min_dedicated_vram_bytes: int = MIN_GPU_DEDICATED_VRAM_BYTES,
+) -> DxgiAdapterInfo | None:
     eligible = [
         adapter
         for adapter in _enumerate_dxgi_adapters()
-        if not adapter.is_software and adapter.dedicated_vram_bytes >= _MIN_DML_DEDICATED_VRAM_BYTES
+        if not adapter.is_software and adapter.dedicated_vram_bytes >= int(min_dedicated_vram_bytes)
     ]
     if not eligible:
         return None
     return max(eligible, key=lambda adapter: (adapter.dedicated_vram_bytes, -adapter.index))
 
 
-def _format_gib(num_bytes: int) -> str:
-    return f"{num_bytes / float(1 << 30):.1f} GiB"
+def _select_preferred_dml_adapter() -> DxgiAdapterInfo | None:
+    return select_preferred_gpu_adapter(MIN_GPU_DEDICATED_VRAM_BYTES)
 
 
 def resolve_onnx_providers(device: str | None, *, label: str = "ONNX") -> tuple[str, list[ProviderSpec]]:
@@ -184,13 +194,12 @@ def resolve_onnx_providers(device: str | None, *, label: str = "ONNX") -> tuple[
         adapter = _select_preferred_dml_adapter()
         if adapter is not None:
             print(
-                f"[{label}] Using DirectML adapter {adapter.index}: "
-                f"{adapter.name} ({_format_gib(adapter.dedicated_vram_bytes)} dedicated VRAM)."
+                f"[{label}] Using DirectML {describe_gpu_adapter(adapter)}."
             )
             return "dml", [("DmlExecutionProvider", {"device_id": str(adapter.index)}), "CPUExecutionProvider"]
         print(
             f"[{label}] No DirectML adapter with at least "
-            f"{_format_gib(_MIN_DML_DEDICATED_VRAM_BYTES)} dedicated VRAM was found; "
+            f"{format_gib(MIN_GPU_DEDICATED_VRAM_BYTES)} dedicated VRAM was found; "
             "falling back to CPUExecutionProvider."
         )
     else:
