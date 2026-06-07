@@ -55,3 +55,7 @@ TEST.wav
 onnxruntime_profile_*.json
 onnxruntime_profile__*.json
 *.log
+inference/qwen3asr_dml/bin/libggml-base.so
+inference/qwen3asr_dml/bin/libggml.so
+inference/qwen3asr_dml/bin/libllama.so
+uv.lock
