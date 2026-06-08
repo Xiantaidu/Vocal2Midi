@@ -1,0 +1,100 @@
+[project]
+name = "vocal2midi"
+version = "0.1.0"
+description = "Vocal2Midi — 歌声转 MIDI 工具（带 ASR 歌词识别）"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.12"
+authors = [
+    { name = "Xiantaidu" },
+]
+
+dependencies = [
+    # ── Audio / Signal ──────────────────────────────────────
+    "librosa",
+    "scipy>=1.10.0",
+    "soundfile",
+
+    # ── MIDI / Annotation ───────────────────────────────────
+    "mido",
+    "textgrid",
+
+    # ── CLI / Config / Progress ─────────────────────────────
+    "click",
+    "PyYAML",
+    "tqdm",
+
+    # ── Numerical ───────────────────────────────────────────
+    "numpy<2.0.0",
+
+    # ── Japanese text processing ────────────────────────────
+    "pyopenjtalk",
+
+    # ── ONNX Runtime (platform-specific) ───────────────────
+    # Windows: DirectML-accelerated build
+    "onnxruntime-directml; sys_platform == 'win32'",
+    # Linux / macOS: CPU-only build (Vulkan fallback if available)
+    "onnxruntime; sys_platform != 'win32'",
+
+    # ── GUI (PyQt5 + Fluent Widgets) ───────────────────────
+    "PyQt5",
+    "PyQt-Fluent-Widgets",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/Vocal2Midi"
+Repository = "https://github.com/yourusername/Vocal2Midi"
+
+[project.scripts]
+vocal2midi = "app_fluent:run_app"
+slice-asr = "scripts.slice_asr_cli:main"
+
+# ── Dependency Groups (uv-native, PEP 735) ─────────────────
+[dependency-groups]
+dev = [
+    "pytest>=7",
+]
+torch = [
+    "torch>=2.3.0",
+    "torchaudio>=2.3.0",
+    "torchvision>=0.18.0",
+    "lightning",
+    "einops>=0.7.0",
+    "torchmetrics",
+    "tensorboard",
+    "tensorboardX",
+]
+onnx-dev = [
+    "onnx",
+    "onnxscript",
+    "onnxslim",
+]
+lint = [
+    "ruff>=0.5",
+]
+
+# ── Build System ────────────────────────────────────────────
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["app_fluent"]
+
+[tool.setuptools.packages.find]
+include = ["application*", "gui*", "inference*", "scripts*"]
+
+[tool.setuptools.package-data]
+inference = ["qwen3asr_dml/gguf/**/*"]
+
+# ── Tool Config ─────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
