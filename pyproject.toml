@@ -42,8 +42,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/Vocal2Midi"
-Repository = "https://github.com/yourusername/Vocal2Midi"
+Homepage = "https://github.com/Xiantaidu/Vocal2Midi"
+Repository = "https://github.com/Xiantaidu/Vocal2Midi"
 
 [project.scripts]
 vocal2midi = "app_fluent:run_app"
