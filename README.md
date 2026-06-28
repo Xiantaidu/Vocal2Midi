@@ -48,7 +48,7 @@ audio
 | Component | Current backend | Location |
 | --- | --- | --- |
 | Qwen3-ASR | ONNX Runtime + `llama.cpp` | `inference/qwen3asr_dml/` |
-| Japanese mora / romaji ASR | ONNX Runtime | `inference/romaji_asr/` |
+| RomajiASR | ONNX Runtime | `inference/romaji_asr/` |
 | HubertFA | ONNX Runtime | `inference/HubertFA/` |
 | GAME | ONNX Runtime | `inference/game/` |
 | RMVPE | ONNX Runtime | `inference/API/rmvpe_api.py` |
@@ -99,7 +99,7 @@ By default, the GUI expects models in these locations:
 | GAME | `experiments/GAME-1.0.3-medium-onnx` |
 | HubertFA | `experiments/1218_hfa_model_new_dict` |
 | Qwen3-ASR | `experiments/Qwen3-ASR-1.7B-dml` |
-| Japanese mora ASR | `experiments/romajiASR` |
+| Japanese mora ASR (RomajiASR) | `experiments/romajiASR` |
 | RMVPE | `experiments/RMVPE/rmvpe.onnx` |
 
 You can change these paths in the GUI settings panel.
@@ -143,6 +143,11 @@ In the main hybrid lyric pipeline:
 - if reference lyrics are provided, the reference text is processed through `pyopenjtalk`, converted to kana mora tokens, then converted again to romaji mora tokens for matching
 
 This keeps Japanese lyric matching consistent with the mora-based ASR path instead of routing through the old phoneme-ASR forced-alignment branch.
+
+The current Japanese mora / romaji ASR integration in this repository is based on
+[Xiantaidu/RomajiASR](https://github.com/Xiantaidu/RomajiASR), the separate
+Japanese singing ASR project used for the `experiments/romajiASR` model path
+and the `inference/romaji_asr/` runtime integration.
 
 ## Runtime Device Rules
 

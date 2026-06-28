@@ -13,6 +13,7 @@ Third-party components, vendored code, bundled data, dictionaries, and other emb
 | Project | Role in Vocal2Midi | Upstream repository |
 | --- | --- | --- |
 | GAME | note and pitch extraction | https://github.com/openvpi/GAME |
+| RomajiASR | Japanese mora / romaji singing ASR used by the Japanese lyric path | https://github.com/Xiantaidu/RomajiASR |
 | HubertFA | phoneme-level forced alignment | https://github.com/wolfgitpr/HubertFA |
 | LyricFA | lyric matching and G2P-based lyric alignment helpers | https://github.com/wolfgitpr/LyricFA |
 | FunASR | broader ASR foundation referenced by the Qwen3-ASR integration path | https://github.com/modelscope/FunASR |
@@ -24,6 +25,7 @@ Third-party components, vendored code, bundled data, dictionaries, and other emb
 
 The repository currently includes local copies or adapted subsets of some upstream projects:
 
+- `inference/romaji_asr/`
 - `inference/HubertFA/`
 - `inference/LyricFA/`
 - `inference/qwen3asr_dml/gguf/`

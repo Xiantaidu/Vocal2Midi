@@ -1,0 +1,39 @@
+Vocal2Midi
+Copyright 2026 Xiantaidu
+
+This product includes software developed by Xiantaidu and contributors.
+
+Vocal2Midi is distributed under the Apache License, Version 2.0.
+See the accompanying LICENSE file for the full license text.
+
+This repository also includes, vendors, or adapts material from third-party
+open-source projects used for transcription, alignment, runtime support, and UI
+integration, including:
+
+- GAME
+- RomajiASR
+- HubertFA
+- LyricFA
+- FunASR
+- llama.cpp
+- ONNX Runtime
+- PyQt-Fluent-Widgets
+
+Known vendored or adapted directories in this repository include:
+
+- inference/romaji_asr/
+- inference/HubertFA/
+- inference/LyricFA/
+- inference/qwen3asr_dml/gguf/
+
+Additional third-party components, model assets, dictionaries, bundled data,
+and embedded materials may carry their own copyright notices, license terms,
+and attribution requirements. Those notices remain applicable to the
+corresponding materials.
+
+See ACKNOWLEDGEMENTS.md and any embedded license or notice files in vendored
+subdirectories for further details.
+
+This NOTICE file is provided for attribution and informational purposes only
+and does not modify the terms of any license that applies to this repository or
+to third-party materials included with it.
