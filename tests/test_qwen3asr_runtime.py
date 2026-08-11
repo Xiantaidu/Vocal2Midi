@@ -9,10 +9,14 @@ from inference.qwen3asr_dml.asr import QwenASREngine
 from inference.qwen3asr_dml.llama import (
     LLAMA_BACKEND_AUTO,
     LLAMA_BACKEND_CPU,
+    LLAMA_BACKEND_METAL,
     LLAMA_SPLIT_MODE_NONE,
     LLAMA_BACKEND_VULKAN,
     detect_available_llama_backend,
+    _metal_backend_filenames,
+    _vulkan_backend_filename,
 )
+from inference.qwen3asr_dml import runtime as runtime_module
 from inference.qwen3asr_dml.runtime import Qwen3ASRDmlModel
 from inference.qwen3asr_dml.runtime import (
     resolve_encoder_filenames,
@@ -177,12 +181,27 @@ def test_resolve_llm_filename_prefers_fp16(tmp_path: Path):
 
 def test_detect_available_llama_backend_prefers_vulkan_when_present(tmp_path: Path):
     assert detect_available_llama_backend(tmp_path) == LLAMA_BACKEND_CPU
-    (tmp_path / ("ggml-vulkan.dll")).write_bytes(b"vk")
+    (tmp_path / _vulkan_backend_filename()).write_bytes(b"vk")
     assert detect_available_llama_backend(tmp_path) == LLAMA_BACKEND_VULKAN
 
 
-def test_resolve_llama_backend_forces_cpu_when_runtime_device_is_cpu():
+def test_detect_available_llama_backend_detects_metal_on_macos(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(llama_module.sys, "platform", "darwin")
+    (tmp_path / _metal_backend_filenames()[0]).write_bytes(b"metal")
+
+    assert detect_available_llama_backend(tmp_path) == LLAMA_BACKEND_METAL
+
+
+def test_resolve_llama_backend_forces_cpu_when_runtime_device_is_cpu(monkeypatch):
+    monkeypatch.setattr(runtime_module.sys, "platform", "linux")
+
     assert resolve_llama_backend("cpu", LLAMA_BACKEND_AUTO) == LLAMA_BACKEND_CPU
+
+
+def test_resolve_llama_backend_keeps_auto_for_cpu_when_macos(monkeypatch):
+    monkeypatch.setattr(runtime_module.sys, "platform", "darwin")
+
+    assert resolve_llama_backend("cpu", LLAMA_BACKEND_AUTO) == LLAMA_BACKEND_AUTO
 
 
 def test_resolve_llama_backend_keeps_auto_when_runtime_device_is_dml():

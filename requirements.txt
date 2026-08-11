@@ -1,5 +1,5 @@
 # Runtime note:
-# - `llama.cpp` stays on CPU OR Vulkan.
+# - `llama.cpp` uses Metal on Apple Silicon, or Vulkan/CPU on other platforms.
 # - The ONNX backends default to DirectML and fall back to CPU when DML is unavailable.
 
 click
@@ -10,7 +10,8 @@ PyQt5
 PyQt-Fluent-Widgets
 PyYAML
 scipy>=1.10.0
-onnxruntime-directml
+onnxruntime-directml; sys_platform == "win32"
+onnxruntime; sys_platform != "win32"
 soundfile
 textgrid
 tqdm

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -87,7 +88,11 @@ def normalize_language(language: str | None) -> str | None:
 
 def resolve_llama_backend(device: str | None, llama_backend: str = "auto") -> str:
     requested_device = normalize_runtime_device(device)
-    if requested_device == "cpu" and str(llama_backend or "auto").strip().lower() == "auto":
+    if (
+        requested_device == "cpu"
+        and sys.platform != "darwin"
+        and str(llama_backend or "auto").strip().lower() == "auto"
+    ):
         return "cpu"
     return llama_backend
 
@@ -145,7 +150,7 @@ class Qwen3ASRDmlModel:
     def from_model_path(
         cls,
         model_path: str | Path,
-        device: str = "dml",
+        device: str | None = None,
         *,
         chunk_size: float = 40.0,
         memory_chunks: int = 1,

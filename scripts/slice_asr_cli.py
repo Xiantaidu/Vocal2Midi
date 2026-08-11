@@ -46,6 +46,7 @@ RmvpeTranscriber = rmvpe_api.RmvpeTranscriber
 slice_audio = slicer_api.slice_audio
 slice_audio_with_custom_bounds = getattr(slicer_api, "slice_audio_with_custom_bounds", None)
 RUNTIME_DEVICE_CHOICES = device_utils.RUNTIME_DEVICE_CHOICES
+DEFAULT_RUNTIME_DEVICE = getattr(device_utils, "default_runtime_device", lambda: "dml")()
 normalize_runtime_device = device_utils.normalize_runtime_device
 
 DEFAULT_RMVPE_MODEL = ROOT_DIR / "experiments" / "RMVPE" / "rmvpe.onnx"
@@ -581,7 +582,7 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--asr-model", required=True, help="Local Qwen3-ASR DML model directory")
     parser.add_argument(
         "--device",
-        default="dml",
+        default=DEFAULT_RUNTIME_DEVICE,
         choices=list(RUNTIME_DEVICE_CHOICES),
         help="Runtime device. Legacy 'cuda' is accepted and mapped to 'dml'.",
     )

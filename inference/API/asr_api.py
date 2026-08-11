@@ -78,7 +78,7 @@ def _sanitize_qwen_asr_results(results, language: str | None):
     return [_sanitize_qwen_asr_result(result, language) for result in results]
 
 
-def load_qwen_model(model_path, device="dml", use_cache=True):
+def load_qwen_model(model_path, device=None, use_cache=True):
     """
     Loads the Qwen ASR model using the unified ONNX + llama.cpp runtime.
     Caches model in-process to avoid repeated loading.
@@ -130,7 +130,7 @@ def clear_qwen_model_cache():
     gc.collect()
 
 
-def load_romaji_asr_model(model_dir, device="dml", use_cache=True):
+def load_romaji_asr_model(model_dir, device=None, use_cache=True):
     """Load the Japanese romaji ASR ONNX runtime from a model directory."""
     resolved_dir = str(resolve_model_dir(model_dir))
     requested_device = normalize_runtime_device(device)
@@ -176,7 +176,7 @@ def batch_transcribe_romaji_asr(
     sr,
     temp_dir_path,
     model_dir,
-    device="dml",
+    device=None,
     asr_batch_size=1,
     cancel_checker=None,
 ):
@@ -204,7 +204,7 @@ def batch_transcribe_romaji_asr(
 
 # Compatibility aliases so higher layers can keep the old kwargs/field names
 # while the implementation has switched from Torch phoneme ASR to romaji ASR.
-def load_phoneme_asr_model(model_dir, device="dml", use_cache=True):
+def load_phoneme_asr_model(model_dir, device=None, use_cache=True):
     return load_romaji_asr_model(model_dir, device=device, use_cache=use_cache)
 
 
@@ -217,7 +217,7 @@ def batch_transcribe_phoneme_asr(
     sr,
     temp_dir_path,
     phoneme_ckpt_dir,
-    device="dml",
+    device=None,
     asr_batch_size=1,
     cancel_checker=None,
 ):
@@ -360,7 +360,7 @@ def batch_transcribe_asr(
     language,
     cancel_checker=None,
     asr_model_path=None,
-    device="dml",
+    device=None,
     force_subprocess=False,
     asr_timeout_sec=180,
     asr_prompt: str = DEFAULT_QWEN_ASR_PROMPT,

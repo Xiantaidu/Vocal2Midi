@@ -62,7 +62,7 @@ def _find_word_nucleus_start(word, language: str | None) -> float | None:
     return None
 
 
-def load_game_model(model_dir: str, device="dml"):
+def load_game_model(model_dir: str, device=None):
     """
     Loads the GAME ONNX model suite.
     """

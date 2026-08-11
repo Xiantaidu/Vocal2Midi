@@ -213,74 +213,137 @@ echo ""
 info "========== 5/6: llama.cpp 共享库 (Qwen 解码器) =========="
 LLAMA_BIN="$ROOT/inference/qwen3asr_dml/bin"
 
+case "$(uname -s)" in
+    Darwin)
+        LLAMA_EXT="dylib"
+        BUILD_JOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 1)"
+        ;;
+    *)
+        LLAMA_EXT="so"
+        BUILD_JOBS="$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
+        ;;
+esac
+
 _libllama_exists() {
-    [ -f "$LLAMA_BIN/libllama.so" ] && [ -f "$LLAMA_BIN/libggml.so" ] && [ -f "$LLAMA_BIN/libggml-base.so" ]
+    if [ ! -f "$LLAMA_BIN/libllama.$LLAMA_EXT" ] \
+        || [ ! -f "$LLAMA_BIN/libggml.$LLAMA_EXT" ] \
+        || [ ! -f "$LLAMA_BIN/libggml-base.$LLAMA_EXT" ]; then
+        return 1
+    fi
+    if [ "$LLAMA_EXT" = "dylib" ]; then
+        # llama.cpp's macOS shared build links these backend libraries through
+        # @rpath, so they must travel with the three core libraries.
+        for required in libggml-cpu.dylib libggml-blas.dylib libggml-metal.dylib; do
+            [ -f "$LLAMA_BIN/$required" ] || return 1
+        done
+    fi
+    return 0
 }
 
 _resolve_libs_from_build() {
     local build_dir="$1"
     local ret=1  # 默认失败
 
-    # libllama.so
+    # libllama shared library
     local llama_src
-    llama_src="$(find "$build_dir" -name 'libllama.so' -type f 2>/dev/null | head -1)"
+    llama_src="$(find "$build_dir" -name "libllama.$LLAMA_EXT" -type f 2>/dev/null | head -1)"
     if [ -n "$llama_src" ]; then
         mkdir -p "$LLAMA_BIN"
-        cp -L "$llama_src" "$LLAMA_BIN/libllama.so"
+        cp -L "$llama_src" "$LLAMA_BIN/libllama.$LLAMA_EXT"
     fi
 
-    # ggml — 优先 libggml.so，后备 libggml_shared.so
+    # ggml — 优先 libggml，后备 libggml_shared
     local ggml_src
-    ggml_src="$(find "$build_dir" -name 'libggml.so' -type f 2>/dev/null | head -1)"
+    ggml_src="$(find "$build_dir" -name "libggml.$LLAMA_EXT" -type f 2>/dev/null | head -1)"
     if [ -z "$ggml_src" ]; then
-        ggml_src="$(find "$build_dir" -name 'libggml_shared.so' -type f 2>/dev/null | head -1)"
+        ggml_src="$(find "$build_dir" -name "libggml_shared.$LLAMA_EXT" -type f 2>/dev/null | head -1)"
     fi
     if [ -n "$ggml_src" ]; then
-        cp -L "$ggml_src" "$LLAMA_BIN/libggml.so"
+        cp -L "$ggml_src" "$LLAMA_BIN/libggml.$LLAMA_EXT"
     fi
 
-    # ggml-base — 优先 libggml-base.so，后备 libggml.so 或 libggml_shared.so
+    # ggml-base — 优先 libggml-base，后备 ggml 或 ggml_shared
     local ggml_base_src
-    ggml_base_src="$(find "$build_dir" -name 'libggml-base.so' -type f 2>/dev/null | head -1)"
+    ggml_base_src="$(find "$build_dir" -name "libggml-base.$LLAMA_EXT" -type f 2>/dev/null | head -1)"
     if [ -z "$ggml_base_src" ]; then
-        # 如果已经复制了 libggml.so，就用它当别名
-        if [ -f "$LLAMA_BIN/libggml.so" ]; then
-            cp -L "$LLAMA_BIN/libggml.so" "$LLAMA_BIN/libggml-base.so"
+        # 如果已经复制了 libggml，就用它当后备库
+        if [ -f "$LLAMA_BIN/libggml.$LLAMA_EXT" ]; then
+            cp -L "$LLAMA_BIN/libggml.$LLAMA_EXT" "$LLAMA_BIN/libggml-base.$LLAMA_EXT"
             ggml_base_src="alias"
         fi
     else
-        cp -L "$ggml_base_src" "$LLAMA_BIN/libggml-base.so"
+        cp -L "$ggml_base_src" "$LLAMA_BIN/libggml-base.$LLAMA_EXT"
+    fi
+
+    # Copy backend libraries (CPU, BLAS, Metal, etc.) alongside the core
+    # libraries. They are separate shared objects in the llama.cpp build.
+    while IFS= read -r backend_src; do
+        [ -n "$backend_src" ] || continue
+        cp -L "$backend_src" "$LLAMA_BIN/$(basename "$backend_src")"
+    done < <(
+        find "$build_dir" -type f \( \
+            -name "libggml*.$LLAMA_EXT" -o \
+            -name "ggml*.$LLAMA_EXT" \
+        \) 2>/dev/null
+    )
+
+    # macOS llama.cpp builds usually embed Metal in libggml. Copy an optional
+    # standalone backend too, because older revisions may load it dynamically.
+    if [ "$LLAMA_EXT" = "dylib" ]; then
+        while IFS= read -r metal_src; do
+            [ -n "$metal_src" ] || continue
+            cp -L "$metal_src" "$LLAMA_BIN/$(basename "$metal_src")"
+        done < <(
+            find "$build_dir" -type f \( \
+                -name 'libggml-metal*.dylib' -o \
+                -name 'libggml-metal*.so' -o \
+                -name 'ggml-metal*.dylib' -o \
+                -name 'ggml-metal*.so' \
+            \) 2>/dev/null
+        )
     fi
 
     # 检查结果
-    if [ -f "$LLAMA_BIN/libllama.so" ] && [ -f "$LLAMA_BIN/libggml.so" ] && [ -f "$LLAMA_BIN/libggml-base.so" ]; then
+    if _libllama_exists; then
         ret=0
     fi
     return $ret
 }
 
 _copy_system_libs() {
-    local sys_llama sys_ggml
-    sys_llama="$(find /usr/lib /usr/local/lib -name 'libllama.so' -type f 2>/dev/null | head -1)"
-    sys_ggml="$(find /usr/lib /usr/local/lib -name 'libggml*.so' -type f 2>/dev/null || true)"
+    local sys_llama="" sys_ggml="" found root
+    for root in /usr/lib /usr/local/lib /opt/homebrew/lib /opt/local/lib "$HOME/.local/lib"; do
+        [ -d "$root" ] || continue
+        if [ -z "$sys_llama" ]; then
+            sys_llama="$(find "$root" -name "libllama.$LLAMA_EXT" -type f 2>/dev/null | head -1)"
+        fi
+        found="$(find "$root" -name "libggml*.$LLAMA_EXT" -type f 2>/dev/null || true)"
+        if [ -n "$found" ]; then
+            sys_ggml="${sys_ggml}${sys_ggml:+$'\n'}$found"
+        fi
+    done
     if [ -z "$sys_llama" ] || [ -z "$sys_ggml" ]; then
         return 1
     fi
     info "发现系统安装的 llama.cpp，复制共享库..."
     mkdir -p "$LLAMA_BIN"
-    cp -L "$sys_llama" "$LLAMA_BIN/libllama.so"
+    cp -L "$sys_llama" "$LLAMA_BIN/libllama.$LLAMA_EXT"
     local have_ggml=false have_ggml_base=false
     for f in $sys_ggml; do
         case "$(basename "$f")" in
-            libggml-base.so) cp -L "$f" "$LLAMA_BIN/libggml-base.so"; have_ggml_base=true ;;
-            libggml.so)      cp -L "$f" "$LLAMA_BIN/libggml.so";      have_ggml=true ;;
-            libggml_shared.so)
-                if ! $have_ggml; then cp -L "$f" "$LLAMA_BIN/libggml.so"; have_ggml=true; fi
-                if ! $have_ggml_base; then cp -L "$f" "$LLAMA_BIN/libggml-base.so"; have_ggml_base=true; fi
+            "libggml-base.$LLAMA_EXT") cp -L "$f" "$LLAMA_BIN/libggml-base.$LLAMA_EXT"; have_ggml_base=true ;;
+            "libggml.$LLAMA_EXT")      cp -L "$f" "$LLAMA_BIN/libggml.$LLAMA_EXT";      have_ggml=true ;;
+            libggml-metal*.$LLAMA_EXT|ggml-metal*.$LLAMA_EXT)
+                cp -L "$f" "$LLAMA_BIN/$(basename "$f")" ;;
+            "libggml_shared.$LLAMA_EXT")
+                if ! $have_ggml; then cp -L "$f" "$LLAMA_BIN/libggml.$LLAMA_EXT"; have_ggml=true; fi
+                if ! $have_ggml_base; then cp -L "$f" "$LLAMA_BIN/libggml-base.$LLAMA_EXT"; have_ggml_base=true; fi
                 ;;
+            libggml*.$LLAMA_EXT|ggml*.$LLAMA_EXT)
+                cp -L "$f" "$LLAMA_BIN/$(basename "$f")" ;;
         esac
     done
-    if [ -f "$LLAMA_BIN/libllama.so" ] && [ -f "$LLAMA_BIN/libggml.so" ] && [ -f "$LLAMA_BIN/libggml-base.so" ]; then
+    if _libllama_exists; then
         return 0
     fi
     return 1
@@ -297,29 +360,38 @@ else
         BUILD_DIR="$(mktemp -d)"
         cd "$BUILD_DIR"
 
-        LLAMA_TAG="b4392"
-        git clone --depth 1 --branch "$LLAMA_TAG" https://github.com/ggml-org/llama.cpp.git 2>/dev/null || {
-            git clone --depth 1 https://github.com/ggml-org/llama.cpp.git 2>/dev/null || {
-                err "克隆 llama.cpp 失败"
-                err "手动编译:"
-                err "  git clone https://github.com/ggml-org/llama.cpp.git"
-                err "  cd llama.cpp"
-                err "  cmake -B build -DBUILD_SHARED_LIBS=ON -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF"
-                err "  cmake --build build -j"
-                err "  # 然后找到 .so 复制到 $LLAMA_BIN/"
-                cd "$ROOT"
-                rm -rf "$BUILD_DIR"
-                exit 1
-            }
-        }
+        # Keep this pinned to the API generation used by inference/qwen3asr_dml/llama.py.
+        LLAMA_TAG="b9000"
+        if ! git clone --depth 1 --branch "$LLAMA_TAG" https://github.com/ggml-org/llama.cpp.git 2>/dev/null; then
+            err "克隆兼容版本 llama.cpp $LLAMA_TAG 失败"
+            err "请检查网络，或手动将兼容版本的共享库复制到 $LLAMA_BIN/"
+            cd "$ROOT"
+            rm -rf "$BUILD_DIR"
+            exit 1
+        fi
         cd llama.cpp
-        cmake -B build \
+        CMAKE_ARGS=(
             -DBUILD_SHARED_LIBS=ON \
             -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_TOOLS=OFF \
+            -DLLAMA_BUILD_COMMON=OFF \
             -DLLAMA_BUILD_EXAMPLES=OFF \
             -DLLAMA_BUILD_SERVER=OFF \
             -DCMAKE_BUILD_TYPE=Release
-        cmake --build build -j"$(nproc)"
+        )
+        if [ "$LLAMA_EXT" = "dylib" ]; then
+            # Apple Silicon uses Metal for llama.cpp decoder offload. Keep it
+            # embedded so the runtime works without a separately named plugin.
+            CMAKE_ARGS+=(
+                -DGGML_METAL=ON
+                -DGGML_METAL_EMBED_LIBRARY=ON
+                -DCMAKE_BUILD_RPATH=@loader_path
+                -DCMAKE_INSTALL_RPATH=@loader_path
+                -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=OFF
+            )
+        fi
+        cmake -B build "${CMAKE_ARGS[@]}"
+        cmake --build build -j"$BUILD_JOBS"
 
         mkdir -p "$LLAMA_BIN"
         _resolve_libs_from_build "build"
@@ -332,8 +404,8 @@ else
         else
             err "llama.cpp 编译完成但未能定位共享库文件。"
             err "编译产出可能在 /tmp 下，手动查找:"
-            err "  find /tmp -name 'libllama.so' -type f"
-            err "  find /tmp -name 'libggml*.so' -type f"
+            err "  find /tmp -name 'libllama.*' -type f"
+            err "  find /tmp -name 'libggml*' -type f"
         fi
     fi
 fi

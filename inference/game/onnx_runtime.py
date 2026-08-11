@@ -8,7 +8,7 @@ from inference.device_utils import resolve_onnx_providers
 
 
 class GameOnnxModel:
-    def __init__(self, model_dir: Path, *, requested_device: str = "dml"):
+    def __init__(self, model_dir: Path, *, requested_device: str | None = None):
         self.model_dir = Path(model_dir)
         config_path = self.model_dir / "config.json"
         if not config_path.exists():

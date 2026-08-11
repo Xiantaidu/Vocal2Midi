@@ -48,7 +48,7 @@ inference/
 The current runtime split is:
 
 - Qwen3-ASR encoder path: ONNX Runtime with DirectML when available
-- Qwen3-ASR decoder path: `llama.cpp` on CPU
+- Qwen3-ASR decoder path: `llama.cpp` on Metal (Apple Silicon), Vulkan, or CPU
 - Romaji ASR: ONNX Runtime
 - HubertFA: ONNX Runtime
 - GAME: ONNX Runtime
@@ -238,4 +238,4 @@ The repository is mid-migration, so a few historical details still remain:
 - some UI strings are not yet normalized
 - `environment.yml` still reflects older dependency history more than the current runtime design
 
-Those issues do not change the intended architecture direction: ONNX-first inference, CPU `llama.cpp`, and stable application-layer entrypoints.
+Those issues do not change the intended architecture direction: ONNX-first inference, platform-aware `llama.cpp`, and stable application-layer entrypoints.

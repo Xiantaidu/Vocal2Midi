@@ -161,6 +161,7 @@ llama_sampler_sample = None
 llama_sampler_free = None
 
 LLAMA_BACKEND_CPU = "cpu"
+LLAMA_BACKEND_METAL = "metal"
 LLAMA_BACKEND_VULKAN = "vulkan"
 LLAMA_BACKEND_AUTO = "auto"
 LLAMA_SPLIT_MODE_NONE = 0
@@ -174,8 +175,29 @@ def _vulkan_backend_filename() -> str:
     return "libggml-vulkan.so"
 
 
+def _metal_backend_filenames() -> tuple[str, ...]:
+    """Return optional dynamic Metal backend names emitted by llama.cpp builds."""
+    if sys.platform != "darwin":
+        return ()
+    # Older llama.cpp revisions may use .so for a dynamically loaded backend
+    # even on macOS; current revisions use the native .dylib suffix.
+    return (
+        "libggml-metal.dylib",
+        "libggml-metal.so",
+        "ggml-metal.dylib",
+        "ggml-metal.so",
+    )
+
+
 def detect_available_llama_backend(lib_dir: str | Path | None = None) -> str:
     base_dir = Path(lib_dir) if lib_dir is not None else Path(__file__).parent / "bin"
+    if sys.platform == "darwin":
+        if any((base_dir / filename).is_file() for filename in _metal_backend_filenames()):
+            return LLAMA_BACKEND_METAL
+        # llama.cpp enables and embeds Metal by default in macOS builds, so
+        # the main ggml library is sufficient when no separate plugin exists.
+        if (base_dir / "libggml.dylib").is_file():
+            return LLAMA_BACKEND_METAL
     if (base_dir / _vulkan_backend_filename()).is_file():
         return LLAMA_BACKEND_VULKAN
     return LLAMA_BACKEND_CPU
@@ -186,16 +208,26 @@ def _resolve_backend_and_adapter(
     lib_dir: str | Path | None = None,
 ) -> tuple[str, DxgiAdapterInfo | None]:
     requested_backend = (backend or LLAMA_BACKEND_AUTO).strip().lower()
-    if requested_backend not in {LLAMA_BACKEND_AUTO, LLAMA_BACKEND_CPU, LLAMA_BACKEND_VULKAN}:
+    if requested_backend not in {
+        LLAMA_BACKEND_AUTO,
+        LLAMA_BACKEND_CPU,
+        LLAMA_BACKEND_METAL,
+        LLAMA_BACKEND_VULKAN,
+    }:
         logger.warning(f"Unknown llama backend '{backend}', falling back to auto.")
         requested_backend = LLAMA_BACKEND_AUTO
 
     detected_backend = detect_available_llama_backend(lib_dir)
     selected_backend = detected_backend if requested_backend == LLAMA_BACKEND_AUTO else requested_backend
+    if selected_backend == LLAMA_BACKEND_METAL and detected_backend != LLAMA_BACKEND_METAL:
+        logger.warning("Requested Metal llama backend, but a Metal-enabled ggml library was not found. Falling back to CPU.")
+        return LLAMA_BACKEND_CPU, None
     if selected_backend == LLAMA_BACKEND_VULKAN and detected_backend != LLAMA_BACKEND_VULKAN:
         logger.warning("Requested Vulkan llama backend, but ggml-vulkan backend DLL is missing. Falling back to CPU.")
         return LLAMA_BACKEND_CPU, None
     if selected_backend != LLAMA_BACKEND_VULKAN:
+        if selected_backend == LLAMA_BACKEND_METAL:
+            logger.info("Selected Metal backend for llama.cpp decoder.")
         return selected_backend, None
 
     adapter = select_preferred_gpu_adapter(MIN_GPU_DEDICATED_VRAM_BYTES)
@@ -218,7 +250,7 @@ def _configure_model_params_for_backend(
     n_gpu_layers: int | None = None,
     adapter: DxgiAdapterInfo | None = None,
 ) -> None:
-    if active_backend == LLAMA_BACKEND_VULKAN:
+    if active_backend in {LLAMA_BACKEND_METAL, LLAMA_BACKEND_VULKAN}:
         model_params.n_gpu_layers = -1 if n_gpu_layers is None else int(n_gpu_layers)
         model_params.split_mode = LLAMA_SPLIT_MODE_NONE
         if adapter is not None:
@@ -229,7 +261,7 @@ def _configure_model_params_for_backend(
             )
         else:
             logger.info(
-                "llama.cpp decoder is running with Vulkan offload "
+                f"llama.cpp decoder is running with {active_backend.capitalize()} offload "
                 f"(n_gpu_layers={model_params.n_gpu_layers})."
             )
         return
@@ -490,7 +522,7 @@ def load_model_with_backend(
     n_gpu_layers: int | None = None,
     quiet: bool = False,
 ):
-    """Load a GGUF model with optional Vulkan offload and CPU fallback."""
+    """Load a GGUF model with optional Metal/Vulkan offload and CPU fallback."""
     lib_dir = Path(__file__).parent / "bin"
     model_path = Path(model_path)
     model_rel = Path(relpath(model_path, lib_dir))
@@ -521,8 +553,11 @@ def load_model_with_backend(
 
     model = _try_load(selected_backend, selected_adapter)
     active_backend = selected_backend
-    if not model and selected_backend == LLAMA_BACKEND_VULKAN:
-        logger.warning("Failed to load llama model with Vulkan offload; retrying in CPU-only mode.")
+    if not model and selected_backend in {LLAMA_BACKEND_METAL, LLAMA_BACKEND_VULKAN}:
+        logger.warning(
+            f"Failed to load llama model with {selected_backend.capitalize()} offload; "
+            "retrying in CPU-only mode."
+        )
         model = _try_load(LLAMA_BACKEND_CPU, None)
         active_backend = LLAMA_BACKEND_CPU
 
