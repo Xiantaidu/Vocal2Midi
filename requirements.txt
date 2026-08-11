@@ -12,6 +12,7 @@ PyYAML
 scipy>=1.10.0
 onnxruntime-directml; sys_platform == "win32"
 onnxruntime; sys_platform != "win32"
+tokenizers
 soundfile
 textgrid
 tqdm

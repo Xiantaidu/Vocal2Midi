@@ -58,4 +58,6 @@ onnxruntime_profile__*.json
 inference/qwen3asr_dml/bin/libggml-base.so
 inference/qwen3asr_dml/bin/libggml.so
 inference/qwen3asr_dml/bin/libllama.so
+inference/qwen3asr_dml/bin/*.so
+inference/qwen3asr_dml/bin/*.dylib
 uv.lock

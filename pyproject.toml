@@ -35,6 +35,8 @@ dependencies = [
     "onnxruntime-directml; sys_platform == 'win32'",
     # Linux / macOS: CPU ONNX path with Metal decoder on Apple Silicon
     "onnxruntime; sys_platform != 'win32'",
+    # Qwen3-ASR ONNX tokenizer.json 的轻量本地解码器
+    "tokenizers",
 
     # ── GUI (PyQt5 + Fluent Widgets) ───────────────────────
     "PyQt5",

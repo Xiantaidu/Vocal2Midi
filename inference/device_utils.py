@@ -8,8 +8,8 @@ from functools import lru_cache
 import onnxruntime as ort
 
 
-RUNTIME_DEVICE_CHOICES = ("dml", "cpu", "cuda")
-VISIBLE_RUNTIME_DEVICE_CHOICES = ("dml", "cpu") if sys.platform == "win32" else ("cpu",)
+RUNTIME_DEVICE_CHOICES = ("dml", "cpu", "cuda", "metal")
+VISIBLE_RUNTIME_DEVICE_CHOICES = ("dml", "cpu") if sys.platform == "win32" else ("cpu", "metal")
 
 ProviderSpec = str | tuple[str, dict[str, str]]
 MIN_GPU_DEDICATED_VRAM_BYTES = 1 << 30
@@ -20,6 +20,7 @@ _DEVICE_ALIASES = {
     "directml": "dml",
     "dml": "dml",
     "gpu": "dml",
+    "metal": "metal",
     "cpu": "cpu",
 }
 _DXGI_ADAPTER_FLAG_SOFTWARE = 0x2
@@ -196,6 +197,9 @@ def resolve_onnx_providers(device: str | None, *, label: str = "ONNX") -> tuple[
     normalized = normalize_runtime_device(device)
     available = set(ort.get_available_providers())
     if normalized == "cpu":
+        return "cpu", ["CPUExecutionProvider"]
+    if normalized == "metal":
+        print(f"[{label}] Metal/CoreML is not enabled for this ONNX stage; using CPUExecutionProvider.")
         return "cpu", ["CPUExecutionProvider"]
     if "DmlExecutionProvider" in available:
         adapter = _select_preferred_dml_adapter()

@@ -579,7 +579,7 @@ def build_argparser() -> argparse.ArgumentParser:
     )
     parser.add_argument("input_dir", type=Path, help="Input folder containing audio files")
     parser.add_argument("output_dir", type=Path, help="Output folder for slices and lab files")
-    parser.add_argument("--asr-model", required=True, help="Local Qwen3-ASR DML model directory")
+    parser.add_argument("--asr-model", required=True, help="Local Qwen3-ASR model directory")
     parser.add_argument(
         "--device",
         default=DEFAULT_RUNTIME_DEVICE,

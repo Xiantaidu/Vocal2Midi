@@ -3,6 +3,9 @@ import warnings
 
 
 class BaseG2P:
+    # 这些是 HubertFA 词表中不带语言前缀的全局静音/边界音素。
+    _LANGUAGE_NEUTRAL_PHONEMES = {"", "SP", "<SP>", "AP", "EP", "GS", "cl", "CL", "pau"}
+
     def __init__(self, language):
         self.language = language
 
@@ -26,7 +29,12 @@ class BaseG2P:
         assert all(
             ph_seq[i] != "SP" or ph_seq[i + 1] != "SP" for i in range(len(ph_seq) - 1)
         )
-        ph_seq = [f"{self.language}/{ph}" if self.language is not None and ph != "SP" else ph for ph in ph_seq]
+        ph_seq = [
+            f"{self.language}/{ph}"
+            if self.language is not None and ph not in self._LANGUAGE_NEUTRAL_PHONEMES
+            else ph
+            for ph in ph_seq
+        ]
         return ph_seq, word_seq, ph_idx_to_word_idx
 
 

@@ -106,8 +106,8 @@ def load_qwen_model(model_path, device=None, use_cache=True):
         )
     except Exception as e:
         raise RuntimeError(
-            f"Error loading Qwen ASR DML runtime: {e}\n"
-            "Please ensure the DML model files are present and required dependencies are installed."
+            f"Error loading Qwen ASR runtime: {e}\n"
+            "Please ensure the Qwen model files are present and required dependencies are installed."
         )
 
     if use_cache:
@@ -259,7 +259,7 @@ def _transcribe_task(paths, asr_lang, context, model=None):
 
 
 def _asr_worker_main(model_path, device, task_queue, result_queue):
-    """Runs a single non-daemon ASR worker process for Qwen DML+CPU inference."""
+    """Runs a single non-daemon ASR worker process for Qwen inference."""
     model = None
     try:
         proc_name = mp.current_process().name
@@ -367,7 +367,7 @@ def batch_transcribe_asr(
 ):
     """Saves chunks to temp_dir and runs batched ASR transcription."""
     asr_lang = "Japanese" if language == "ja" else "Chinese"
-    print(f"[ASR API] Running ASR with Qwen DML+CPU runtime (Batch Size: {asr_batch_size}, Language: {asr_lang})...")
+    print(f"[ASR API] Running ASR with Qwen runtime (Batch Size: {asr_batch_size}, Language: {asr_lang})...")
 
     audio_paths = []
     chunk_indices = []

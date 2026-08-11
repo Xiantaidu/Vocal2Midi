@@ -163,7 +163,7 @@ Notes:
 - legacy `cuda` values are still accepted by some public interfaces, but they are normalized to `dml`
 - on macOS, `llama.cpp` automatically prefers Metal when its shared library was built with Metal; it falls back to CPU if model loading fails
 
-On macOS and Linux, the GUI exposes the CPU device by default because DirectML is a Windows-only execution provider. The ONNX stages use CPU; on Apple Silicon, the Qwen decoder can independently use Metal.
+On macOS and Linux, the GUI exposes the CPU device by default because DirectML is a Windows-only execution provider. The split Qwen ONNX encoder can be selected with `metal` on Apple Silicon, while its int4 decoder remains on CPU; a GGUF Qwen decoder can independently use llama.cpp Metal.
 
 ## macOS / Linux
 
@@ -178,7 +178,13 @@ bash download_models.sh
 python app_fluent.py
 ```
 
-The setup script builds or locates the platform-specific `llama.cpp` shared libraries. On Apple Silicon it enables the Metal backend for Qwen decoding; ONNX model stages continue to use CPU because DirectML is Windows-only. If a Metal-enabled library cannot load, the decoder retries on CPU.
+The setup script builds or locates the platform-specific `llama.cpp` shared libraries. On Apple Silicon it enables the Metal backend for GGUF Qwen decoding; the split ONNX model defaults to CPU because DirectML is Windows-only. If a Metal-enabled library cannot load, the decoder retries on CPU.
+
+The bundled Qwen3-ASR archive is the split ONNX format (`encoder`, `decoder_init`,
+and `decoder_step`). On macOS, `--device metal` lets the encoder try
+`CoreMLExecutionProvider`; the int4 decoder graphs currently run on CPU because
+CoreML cannot compile `decoder_step` reliably on M4. If a GGUF Qwen model is
+provided instead, the llama.cpp decoder uses the compiled Metal backend.
 
 ## Slicing
 
@@ -246,6 +252,9 @@ python scripts/slice_asr_cli.py input output \
   --language ja \
   --no-slice
 ```
+
+On Apple Silicon, replace `--device dml` with `--device metal` to enable the
+CoreML encoder path with a CPU decoder fallback.
 
 
 

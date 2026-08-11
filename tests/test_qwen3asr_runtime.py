@@ -19,6 +19,7 @@ from inference.qwen3asr_dml.llama import (
 from inference.qwen3asr_dml import runtime as runtime_module
 from inference.qwen3asr_dml.runtime import Qwen3ASRDmlModel
 from inference.qwen3asr_dml.runtime import (
+    resolve_model_dir,
     resolve_encoder_filenames,
     resolve_llm_filename,
     resolve_llama_backend,
@@ -99,6 +100,19 @@ def test_runtime_exposes_encoder_and_decoder_runtime_summary():
     assert model.encoder_frontend_providers == ["DmlExecutionProvider", "CPUExecutionProvider"]
     assert model.encoder_backend_providers == ["DmlExecutionProvider", "CPUExecutionProvider"]
     assert model.decoder_backend == "vulkan"
+
+
+def test_resolve_model_dir_accepts_split_onnx_package(tmp_path: Path):
+    for filename in [
+        "embed_tokens.bin",
+        "tokenizer.json",
+        "encoder.int4.onnx",
+        "decoder_init.int4.onnx",
+        "decoder_step.int4.onnx",
+    ]:
+        (tmp_path / filename).write_bytes(b"model")
+
+    assert resolve_model_dir(tmp_path) == tmp_path
 
 
 def test_engine_asr_batch_sends_real_batched_encode_requests():

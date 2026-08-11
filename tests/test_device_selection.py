@@ -70,6 +70,10 @@ def test_default_runtime_device_is_cpu_off_windows(monkeypatch):
     assert device_utils.normalize_runtime_device(None) == "cpu"
 
 
+def test_metal_runtime_device_is_preserved():
+    assert device_utils.normalize_runtime_device("metal") == "metal"
+
+
 def test_game_uses_cpu_provider_when_requested(monkeypatch, tmp_path: Path):
     fake_ort = _FakeOrt(["DmlExecutionProvider", "CPUExecutionProvider"])
     monkeypatch.setattr(game_onnx_runtime, "ort", fake_ort)

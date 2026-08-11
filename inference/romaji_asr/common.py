@@ -39,7 +39,9 @@ def create_session(model_path: Path, provider: str | None = None) -> ort.Inferen
         sess_options.enable_mem_pattern = False
         sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         _, providers = resolve_onnx_providers("dml", label="Romaji ASR ONNX")
-    elif provider == "cpu":
+    elif provider in {"cpu", "metal"}:
+        if provider == "metal":
+            print("[Romaji ASR ONNX] Metal provider is unavailable for this model; using CPUExecutionProvider.")
         providers = ["CPUExecutionProvider"]
     else:
         raise ValueError(f"Unsupported provider: {provider}")

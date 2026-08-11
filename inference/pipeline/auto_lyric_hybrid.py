@@ -114,7 +114,7 @@ def run_qwen_asr_and_fa(
     cancel_checker=None,
 ):
     """
-    Runs ASR using the Qwen DML+CPU runtime with batching and prepares .lab files for HubertFA.
+    Runs ASR using the Qwen runtime with batching and prepares .lab files for HubertFA.
     """
     all_results, chunk_indices = batch_transcribe_asr(
         chunks,
@@ -466,7 +466,7 @@ if __name__ == "__main__":
     @click.argument("audio_path", type=click.Path(exists=True))
     @click.option("--game-model", "-gm", required=True, type=click.Path(exists=True, file_okay=False), help="Path to GAME ONNX model directory")
     @click.option("--hfa-model", "-hm", required=True, type=click.Path(exists=True, file_okay=False), help="Path to HubertFA ONNX model directory")
-    @click.option("--asr-model", "-am", type=str, default="experiments/Qwen3-ASR-1.7B-dml", help="Path for the local Qwen3-ASR DML model directory")
+    @click.option("--asr-model", "-am", type=str, default="experiments/Qwen3-ASR-1.7B-dml", help="Path for the local Qwen3-ASR model directory")
     @click.option("--output-dir", "-o", type=click.Path(), default=".", help="Directory to save the outputs")
     @click.option("--lyrics", "-l", type=str, default="", help="Original reference lyrics for alignment")
     @click.option(
