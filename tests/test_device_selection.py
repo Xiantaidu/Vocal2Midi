@@ -63,6 +63,17 @@ class _FakeOrt:
         return _FakeSession(call["providers"])
 
 
+def test_default_runtime_device_is_cpu_off_windows(monkeypatch):
+    monkeypatch.setattr(device_utils.sys, "platform", "darwin")
+
+    assert device_utils.default_runtime_device() == "cpu"
+    assert device_utils.normalize_runtime_device(None) == "cpu"
+
+
+def test_metal_runtime_device_is_preserved():
+    assert device_utils.normalize_runtime_device("metal") == "metal"
+
+
 def test_game_uses_cpu_provider_when_requested(monkeypatch, tmp_path: Path):
     fake_ort = _FakeOrt(["DmlExecutionProvider", "CPUExecutionProvider"])
     monkeypatch.setattr(game_onnx_runtime, "ort", fake_ort)
@@ -108,6 +119,21 @@ def test_romaji_create_session_uses_cpu_provider_when_requested(monkeypatch, tmp
     monkeypatch.setattr(romaji_common, "ort", fake_ort)
 
     session = romaji_common.create_session(tmp_path / "model.onnx", provider="cpu")
+
+    assert isinstance(session, _FakeSession)
+    assert fake_ort.session_calls[0]["providers"] == ["CPUExecutionProvider"]
+
+
+def test_romaji_create_session_falls_back_to_cpu_without_dml(monkeypatch, tmp_path: Path):
+    fake_ort = _FakeOrt(["CPUExecutionProvider"])
+    monkeypatch.setattr(romaji_common, "ort", fake_ort)
+    monkeypatch.setattr(
+        romaji_common,
+        "resolve_onnx_providers",
+        lambda device, *, label="Romaji ASR ONNX": ("cpu", ["CPUExecutionProvider"]),
+    )
+
+    session = romaji_common.create_session(tmp_path / "model.onnx", provider="dml")
 
     assert isinstance(session, _FakeSession)
     assert fake_ort.session_calls[0]["providers"] == ["CPUExecutionProvider"]

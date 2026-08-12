@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import ctypes
+import sys
 from dataclasses import dataclass
 from functools import lru_cache
 
 import onnxruntime as ort
 
 
-RUNTIME_DEVICE_CHOICES = ("dml", "cpu", "cuda")
-VISIBLE_RUNTIME_DEVICE_CHOICES = ("dml", "cpu")
+RUNTIME_DEVICE_CHOICES = ("dml", "cpu", "cuda", "metal")
+VISIBLE_RUNTIME_DEVICE_CHOICES = ("dml", "cpu") if sys.platform == "win32" else ("cpu", "metal")
 
 ProviderSpec = str | tuple[str, dict[str, str]]
 MIN_GPU_DEDICATED_VRAM_BYTES = 1 << 30
@@ -19,6 +20,7 @@ _DEVICE_ALIASES = {
     "directml": "dml",
     "dml": "dml",
     "gpu": "dml",
+    "metal": "metal",
     "cpu": "cpu",
 }
 _DXGI_ADAPTER_FLAG_SOFTWARE = 0x2
@@ -69,10 +71,16 @@ _IID_IDXGIFactory1 = _GUID(
 )
 
 
-def normalize_runtime_device(device: str | None, default: str = "dml") -> str:
-    value = str(device or default).strip().lower()
+def default_runtime_device() -> str:
+    """Return the accelerated backend only where DirectML is available."""
+    return "dml" if sys.platform == "win32" else "cpu"
+
+
+def normalize_runtime_device(device: str | None, default: str | None = None) -> str:
+    fallback = default if default is not None else default_runtime_device()
+    value = str(fallback if device is None else device).strip().lower()
     if not value:
-        value = default
+        value = fallback
     return _DEVICE_ALIASES.get(value, value)
 
 
@@ -190,6 +198,9 @@ def resolve_onnx_providers(device: str | None, *, label: str = "ONNX") -> tuple[
     available = set(ort.get_available_providers())
     if normalized == "cpu":
         return "cpu", ["CPUExecutionProvider"]
+    if normalized == "metal":
+        print(f"[{label}] Metal/CoreML is not enabled for this ONNX stage; using CPUExecutionProvider.")
+        return "cpu", ["CPUExecutionProvider"]
     if "DmlExecutionProvider" in available:
         adapter = _select_preferred_dml_adapter()
         if adapter is not None:
@@ -208,4 +219,8 @@ def resolve_onnx_providers(device: str | None, *, label: str = "ONNX") -> tuple[
 
 
 def use_dml(device: str | None) -> bool:
-    return normalize_runtime_device(device) != "cpu"
+    if normalize_runtime_device(device) == "cpu":
+        return False
+    if "DmlExecutionProvider" not in set(ort.get_available_providers()):
+        return False
+    return _select_preferred_dml_adapter() is not None

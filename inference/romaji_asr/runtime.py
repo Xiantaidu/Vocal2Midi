@@ -48,7 +48,7 @@ class RomajiASROnnxModel:
     def from_model_path(
         cls,
         model_path: str | Path,
-        device: str = "dml",
+        device: str | None = None,
         provider: str | None = None,
         verbose: bool = False,
     ):
@@ -70,16 +70,10 @@ class RomajiASROnnxModel:
 
         requested_device = normalize_runtime_device(device)
         requested_provider = (provider or requested_device).lower()
-        try:
-            session = create_session(model_file, provider=requested_provider)
-            active_provider = requested_provider
-        except RuntimeError:
-            if requested_provider != "dml":
-                raise
-            if verbose:
-                print("[Romaji ASR] DML provider unavailable, falling back to CPUExecutionProvider.")
-            session = create_session(model_file, provider="cpu")
-            active_provider = "cpu"
+        session = create_session(model_file, provider=requested_provider)
+        active_provider = "dml" if "DmlExecutionProvider" in session.get_providers() else "cpu"
+        if verbose and requested_provider == "dml" and active_provider == "cpu":
+            print("[Romaji ASR] DML provider unavailable, using CPUExecutionProvider.")
 
         id2token, blank_id = load_vocab(vocab_file)
         return cls(

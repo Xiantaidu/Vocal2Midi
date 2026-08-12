@@ -96,7 +96,7 @@ def _repair_pred_dict_short_words(pred_dict) -> None:
     if total_repaired > 0:
         print(f"[HFA Repair] Total repaired short words: {total_repaired}")
 
-def load_hfa_model(model_dir, device="dml"):
+def load_hfa_model(model_dir, device=None):
     """
     Load the HubertFA ONNX model on DirectML by default, with CPU fallback.
     """

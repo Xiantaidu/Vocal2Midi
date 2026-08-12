@@ -28,7 +28,7 @@ class InferenceOnnx(InferenceBase):
         self.mel_cfg = config['mel_spec_config']
         self.vocab_folder = self.model_folder
 
-    def load_model(self, device: str = "dml"):
+    def load_model(self, device: str | None = None):
         self.model = self.create_session(self.model_folder / 'model.onnx', device=device)
 
     def _infer(self, padded_wav, padded_frames, word_seq, ph_seq, ph_idx_to_word_idx, wav_length, non_lexical_phonemes):
@@ -50,7 +50,7 @@ class InferenceOnnx(InferenceBase):
         return dict(zip(output_names, session.run(output_names, input_dict)))
 
     @staticmethod
-    def create_session(onnx_path, device: str = "dml"):
+    def create_session(onnx_path, device: str | None = None):
         _, providers = resolve_onnx_providers(device, label="HubertFA ONNX")
         options = ort.SessionOptions()
         options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL

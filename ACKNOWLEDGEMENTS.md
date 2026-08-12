@@ -17,7 +17,7 @@ Third-party components, vendored code, bundled data, dictionaries, and other emb
 | HubertFA | phoneme-level forced alignment | https://github.com/wolfgitpr/HubertFA |
 | LyricFA | lyric matching and G2P-based lyric alignment helpers | https://github.com/wolfgitpr/LyricFA |
 | FunASR | broader ASR foundation referenced by the Qwen3-ASR integration path | https://github.com/modelscope/FunASR |
-| llama.cpp | CPU decoder runtime used by the Qwen3-ASR DML path | https://github.com/ggml-org/llama.cpp |
+| llama.cpp | Platform-aware decoder runtime used by the Qwen3-ASR path | https://github.com/ggml-org/llama.cpp |
 | ONNX Runtime | DirectML and CPU inference execution | https://github.com/microsoft/onnxruntime |
 | PyQt-Fluent-Widgets | Fluent-style desktop UI components | https://github.com/zhiyiYo/PyQt-Fluent-Widgets |
 

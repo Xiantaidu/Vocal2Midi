@@ -6,7 +6,7 @@ import onnxruntime as ort
 import soundfile as sf
 from scipy.signal import resample_poly
 
-from inference.device_utils import resolve_onnx_providers
+from inference.device_utils import normalize_runtime_device, resolve_onnx_providers
 
 
 DEFAULT_SAMPLE_RATE = 16000
@@ -30,18 +30,18 @@ def load_audio(audio_path: str | Path, sample_rate: int = DEFAULT_SAMPLE_RATE) -
     return np.ascontiguousarray(audio, dtype=np.float32)
 
 
-def create_session(model_path: Path, provider: str = "dml") -> ort.InferenceSession:
-    provider = provider.lower()
+def create_session(model_path: Path, provider: str | None = None) -> ort.InferenceSession:
+    provider = normalize_runtime_device(provider)
     sess_options = ort.SessionOptions()
     sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
     if provider == "dml":
         sess_options.enable_mem_pattern = False
         sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-        provider_name, providers = resolve_onnx_providers("dml", label="Romaji ASR ONNX")
-        if provider_name != "dml":
-            raise RuntimeError("No eligible DirectML adapter is available for romaji ASR.")
-    elif provider == "cpu":
+        _, providers = resolve_onnx_providers("dml", label="Romaji ASR ONNX")
+    elif provider in {"cpu", "metal"}:
+        if provider == "metal":
+            print("[Romaji ASR ONNX] Metal provider is unavailable for this model; using CPUExecutionProvider.")
         providers = ["CPUExecutionProvider"]
     else:
         raise ValueError(f"Unsupported provider: {provider}")

@@ -1,10 +1,10 @@
 # Vocal2Midi
 
-Vocal2Midi is a Windows-first desktop tool and inference pipeline for turning vocal audio into lyric-aligned MIDI, USTX, and supporting editing artifacts.
+Vocal2Midi is a Windows-first desktop tool and inference pipeline for turning vocal audio into lyric-aligned MIDI, USTX, and supporting editing artifacts. macOS and Linux use the CPU path for ONNX models, while Apple Silicon can use Metal for the llama.cpp decoder.
 
 The current runtime is **ONNX-first**:
 
-- `llama.cpp` is used for the Qwen decoder and runs on Vulkan or CPU.
+- `llama.cpp` is used for the Qwen decoder and runs on Metal, Vulkan, or CPU.
 - ONNX models default to **DirectML** and fall back to **CPU** when DirectML is unavailable.
 - The main user-facing entrypoint is the Fluent GUI in [`app_fluent.py`](app_fluent.py).
 
@@ -80,7 +80,7 @@ pip install -r requirements.txt
 
 The main runtime dependencies are:
 
-- `onnxruntime-directml`
+- `onnxruntime-directml` on Windows, or `onnxruntime` on macOS/Linux
 - `PyQt5`
 - `PyQt-Fluent-Widgets`
 - `librosa`
@@ -158,10 +158,33 @@ Visible device options in the current UI are:
 
 Notes:
 
-- `dml` is the default ONNX device
+- `dml` is the default ONNX device on Windows; macOS/Linux default to CPU
 - if DirectML is unavailable, ONNX Runtime falls back to CPU
 - legacy `cuda` values are still accepted by some public interfaces, but they are normalized to `dml`
-- `llama.cpp` remains CPU-based in the current design
+- on macOS, `llama.cpp` automatically prefers Metal when its shared library was built with Metal; it falls back to CPU if model loading fails
+
+On macOS and Linux, the GUI exposes the CPU device by default because DirectML is a Windows-only execution provider. The split Qwen ONNX encoder can be selected with `metal` on Apple Silicon, while its int4 decoder remains on CPU; a GGUF Qwen decoder can independently use llama.cpp Metal.
+
+## macOS / Linux
+
+The repository does not ship model assets or compiled `llama.cpp` libraries. On macOS or Linux, install the platform-marked dependencies and run the Unix model setup script:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+bash download_models.sh
+python app_fluent.py
+```
+
+The setup script builds or locates the platform-specific `llama.cpp` shared libraries. On Apple Silicon it enables the Metal backend for GGUF Qwen decoding; the split ONNX model defaults to CPU because DirectML is Windows-only. If a Metal-enabled library cannot load, the decoder retries on CPU.
+
+The bundled Qwen3-ASR archive is the split ONNX format (`encoder`, `decoder_init`,
+and `decoder_step`). On macOS, `--device metal` lets the encoder try
+`CoreMLExecutionProvider`; the int4 decoder graphs currently run on CPU because
+CoreML cannot compile `decoder_step` reliably on M4. If a GGUF Qwen model is
+provided instead, the llama.cpp decoder uses the compiled Metal backend.
 
 ## Slicing
 
@@ -229,6 +252,9 @@ python scripts/slice_asr_cli.py input output \
   --language ja \
   --no-slice
 ```
+
+On Apple Silicon, replace `--device dml` with `--device metal` to enable the
+CoreML encoder path with a CPU decoder fallback.
 
 
 

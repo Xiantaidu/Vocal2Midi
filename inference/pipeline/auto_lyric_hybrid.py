@@ -24,7 +24,11 @@ from inference.API.hfa_api import load_hfa_model, run_hubert_fa, export_hfa_arti
 from inference.API.game_api import load_game_model, extract_pitches_and_align_torch, extract_pitches_only_torch
 from inference.API.rmvpe_api import RmvpeTranscriber
 from inference.API.ustx_api import save_ustx
-from inference.device_utils import RUNTIME_DEVICE_CHOICES, normalize_runtime_device
+from inference.device_utils import (
+    RUNTIME_DEVICE_CHOICES,
+    default_runtime_device,
+    normalize_runtime_device,
+)
 
 ROMAJI_ASR_DEFAULT_DIR = pathlib.Path(__file__).resolve().parents[2] / "experiments" / "romajiASR"
 
@@ -110,7 +114,7 @@ def run_qwen_asr_and_fa(
     cancel_checker=None,
 ):
     """
-    Runs ASR using the Qwen DML+CPU runtime with batching and prepares .lab files for HubertFA.
+    Runs ASR using the Qwen runtime with batching and prepares .lab files for HubertFA.
     """
     all_results, chunk_indices = batch_transcribe_asr(
         chunks,
@@ -462,10 +466,15 @@ if __name__ == "__main__":
     @click.argument("audio_path", type=click.Path(exists=True))
     @click.option("--game-model", "-gm", required=True, type=click.Path(exists=True, file_okay=False), help="Path to GAME ONNX model directory")
     @click.option("--hfa-model", "-hm", required=True, type=click.Path(exists=True, file_okay=False), help="Path to HubertFA ONNX model directory")
-    @click.option("--asr-model", "-am", type=str, default="experiments/Qwen3-ASR-1.7B-dml", help="Path for the local Qwen3-ASR DML model directory")
+    @click.option("--asr-model", "-am", type=str, default="experiments/Qwen3-ASR-1.7B-dml", help="Path for the local Qwen3-ASR model directory")
     @click.option("--output-dir", "-o", type=click.Path(), default=".", help="Directory to save the outputs")
     @click.option("--lyrics", "-l", type=str, default="", help="Original reference lyrics for alignment")
-    @click.option("--device", type=click.Choice(list(RUNTIME_DEVICE_CHOICES)), default="dml", help="Runtime device (legacy 'cuda' maps to 'dml')")
+    @click.option(
+        "--device",
+        type=click.Choice(list(RUNTIME_DEVICE_CHOICES)),
+        default=default_runtime_device(),
+        help="Runtime device (legacy 'cuda' maps to 'dml')",
+    )
     @click.option("--t0", type=float, default=0.0, help="D3PM starting t0")
     @click.option("--nsteps", type=int, default=8, help="D3PM sampling steps")
     @click.option("--debug", is_flag=True, help="Enable debug mode to print GAME inputs")

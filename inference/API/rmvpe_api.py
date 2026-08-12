@@ -36,7 +36,7 @@ class RmvpeResult:
 
 
 class RmvpeTranscriber:
-    def __init__(self, model_path: str | Path, device: str = "dml", batch_size: int = 8, threshold: float = 0.03):
+    def __init__(self, model_path: str | Path, device: str | None = None, batch_size: int = 8, threshold: float = 0.03):
         self.model_path = Path(model_path)
         self.requested_device = str(device)
         self.batch_size = max(1, int(batch_size))
