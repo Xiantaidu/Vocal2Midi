@@ -130,21 +130,12 @@ class AutoLyricInterface(ScrollArea):
         combo_row2.addWidget(self.cb_output_lyrics)
 
         combo_row2.addSpacing(28)
-        combo_row2.addWidget(BodyLabel("导出 USTX", self))
-        self.cb_ustx = SwitchButton("On", self, self)
-        self.cb_ustx.setOffText("Off")
-        self.cb_ustx.setChecked(self.global_settings.settings.value("debug_ustx", False, type=bool))
-        self.cb_ustx.checkedChanged.connect(self.on_ustx_changed)
-        combo_row2.addWidget(self.cb_ustx)
-
-        combo_row2.addSpacing(20)
-        combo_row2.addWidget(BodyLabel("导出 VSQX", self))
-        self.cb_vsqx = SwitchButton("On", self, self)
-        self.cb_vsqx.setOffText("Off")
-        self.cb_vsqx.setChecked(self.global_settings.settings.value("debug_vsqx", False, type=bool))
-        self.cb_vsqx.checkedChanged.connect(lambda v: self.global_settings.settings.setValue("debug_vsqx", v))
-        self.cb_vsqx.checkedChanged.connect(self.on_vsqx_changed)
-        combo_row2.addWidget(self.cb_vsqx)
+        combo_row2.addWidget(BodyLabel("导出格式", self))
+        self.export_format_combo = ComboBox(self)
+        self.export_format_combo.addItems(["MIDI", "USTX", "VSQX"])
+        self.export_format_combo.setCurrentText(self._initial_export_format_label())
+        self.export_format_combo.currentTextChanged.connect(self.on_export_format_changed)
+        combo_row2.addWidget(self.export_format_combo)
 
         combo_row2.addSpacing(28)
         self.pitch_curve_label = BodyLabel("输出音高曲线", self)
@@ -228,8 +219,7 @@ class AutoLyricInterface(ScrollArea):
         self.update_lyrics_visibility()
         self.update_lyric_output_options(self.lang_combo.currentText())
         self.apply_device_batch_defaults(self.device_combo.currentText())
-        self.on_ustx_changed(self.cb_ustx.isChecked())
-        self.on_vsqx_changed(self.cb_vsqx.isChecked())
+        self.on_export_format_changed(self.export_format_combo.currentText())
 
     def apply_device_batch_defaults(self, device: str):
         self.global_settings.batch_spin.setValue(1)
@@ -265,15 +255,33 @@ class AutoLyricInterface(ScrollArea):
         self.global_settings.settings.setValue("enable_lyrics_match", enabled)
         self.update_lyrics_visibility()
 
-    def on_ustx_changed(self, enabled: bool):
-        self.global_settings.settings.setValue("debug_ustx", enabled)
-        self._update_pitch_curve_enabled()
+    def _initial_export_format_label(self) -> str:
+        """Load the selected format, migrating the former export switches."""
+        saved_format = self.global_settings.settings.value("export_format", "")
+        saved_format = str(saved_format).strip().lower()
+        format_labels = {"mid": "MIDI", "midi": "MIDI", "ustx": "USTX", "vsqx": "VSQX"}
+        if saved_format in format_labels:
+            return format_labels[saved_format]
 
-    def on_vsqx_changed(self, enabled: bool):
+        if self.global_settings.settings.value("debug_vsqx", False, type=bool):
+            return "VSQX"
+        if self.global_settings.settings.value("debug_ustx", False, type=bool):
+            return "USTX"
+        return "MIDI"
+
+    def get_export_format(self) -> str:
+        return {
+            "MIDI": "mid",
+            "USTX": "ustx",
+            "VSQX": "vsqx",
+        }.get(self.export_format_combo.currentText(), "mid")
+
+    def on_export_format_changed(self, _text: str):
+        self.global_settings.settings.setValue("export_format", self.get_export_format())
         self._update_pitch_curve_enabled()
 
     def _update_pitch_curve_enabled(self):
-        enabled = self.cb_ustx.isChecked() or self.cb_vsqx.isChecked()
+        enabled = self.get_export_format() in {"ustx", "vsqx"}
         self.pitch_curve_label.setEnabled(enabled)
         self.cb_pitch_curve.setEnabled(enabled)
 
@@ -332,18 +340,14 @@ class AutoLyricInterface(ScrollArea):
             self.log_msg("错误: 请至少上传一个音频文件。")
             return
 
-        output_formats = ["mid"]
+        selected_export_format = self.get_export_format()
+        output_formats = [selected_export_format]
         if self.global_settings.cb_txt.isChecked():
             output_formats.append("txt")
         if self.global_settings.cb_csv.isChecked():
             output_formats.append("csv")
         if self.global_settings.cb_chunks.isChecked():
             output_formats.append("chunks")
-        if self.cb_ustx.isChecked():
-            output_formats.append("ustx")
-        if self.cb_vsqx.isChecked():
-            output_formats.append("vsqx")
-
         save_dir = self.save_dir_edit.text()
         if not save_dir:
             self.log_msg("错误: 请选择或输入一个保存目录。")
@@ -387,7 +391,7 @@ class AutoLyricInterface(ScrollArea):
             original_lyrics=self.lyrics_edit.toPlainText().strip() if self.cb_match_lyrics.isChecked() else "",
             output_formats=output_formats,
             output_lyrics=self.cb_output_lyrics.isChecked(),
-            output_pitch_curve=self.cb_pitch_curve.isChecked() if self.cb_ustx.isChecked() or self.cb_vsqx.isChecked() else False,
+            output_pitch_curve=self.cb_pitch_curve.isChecked() if selected_export_format in {"ustx", "vsqx"} else False,
             slicing_method=self.slicing_combo.currentText(),
             slice_min_sec=slice_min_sec,
             slice_max_sec=slice_max_sec,
