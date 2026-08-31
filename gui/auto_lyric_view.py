@@ -137,6 +137,15 @@ class AutoLyricInterface(ScrollArea):
         self.cb_ustx.checkedChanged.connect(self.on_ustx_changed)
         combo_row2.addWidget(self.cb_ustx)
 
+        combo_row2.addSpacing(20)
+        combo_row2.addWidget(BodyLabel("导出 VSQX", self))
+        self.cb_vsqx = SwitchButton("On", self, self)
+        self.cb_vsqx.setOffText("Off")
+        self.cb_vsqx.setChecked(self.global_settings.settings.value("debug_vsqx", False, type=bool))
+        self.cb_vsqx.checkedChanged.connect(lambda v: self.global_settings.settings.setValue("debug_vsqx", v))
+        self.cb_vsqx.checkedChanged.connect(self.on_vsqx_changed)
+        combo_row2.addWidget(self.cb_vsqx)
+
         combo_row2.addSpacing(28)
         self.pitch_curve_label = BodyLabel("输出音高曲线", self)
         combo_row2.addWidget(self.pitch_curve_label)
@@ -220,6 +229,7 @@ class AutoLyricInterface(ScrollArea):
         self.update_lyric_output_options(self.lang_combo.currentText())
         self.apply_device_batch_defaults(self.device_combo.currentText())
         self.on_ustx_changed(self.cb_ustx.isChecked())
+        self.on_vsqx_changed(self.cb_vsqx.isChecked())
 
     def apply_device_batch_defaults(self, device: str):
         self.global_settings.batch_spin.setValue(1)
@@ -257,6 +267,13 @@ class AutoLyricInterface(ScrollArea):
 
     def on_ustx_changed(self, enabled: bool):
         self.global_settings.settings.setValue("debug_ustx", enabled)
+        self._update_pitch_curve_enabled()
+
+    def on_vsqx_changed(self, enabled: bool):
+        self._update_pitch_curve_enabled()
+
+    def _update_pitch_curve_enabled(self):
+        enabled = self.cb_ustx.isChecked() or self.cb_vsqx.isChecked()
         self.pitch_curve_label.setEnabled(enabled)
         self.cb_pitch_curve.setEnabled(enabled)
 
@@ -324,6 +341,8 @@ class AutoLyricInterface(ScrollArea):
             output_formats.append("chunks")
         if self.cb_ustx.isChecked():
             output_formats.append("ustx")
+        if self.cb_vsqx.isChecked():
+            output_formats.append("vsqx")
 
         save_dir = self.save_dir_edit.text()
         if not save_dir:
@@ -368,7 +387,7 @@ class AutoLyricInterface(ScrollArea):
             original_lyrics=self.lyrics_edit.toPlainText().strip() if self.cb_match_lyrics.isChecked() else "",
             output_formats=output_formats,
             output_lyrics=self.cb_output_lyrics.isChecked(),
-            output_pitch_curve=self.cb_pitch_curve.isChecked() if self.cb_ustx.isChecked() else False,
+            output_pitch_curve=self.cb_pitch_curve.isChecked() if self.cb_ustx.isChecked() or self.cb_vsqx.isChecked() else False,
             slicing_method=self.slicing_combo.currentText(),
             slice_min_sec=slice_min_sec,
             slice_max_sec=slice_max_sec,

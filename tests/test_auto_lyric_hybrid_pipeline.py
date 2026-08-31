@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from inference.io.note_io import NoteInfo
+from inference.API.rmvpe_api import RmvpeResult
 from inference.pipeline import auto_lyric_hybrid as pipeline
 
 
@@ -137,6 +138,45 @@ def test_no_lyrics_mode_skips_asr_and_hfa(monkeypatch, tmp_path):
     assert extract_only.call_args.args[0] is chunks
     save_text.assert_called_once()
     assert (tmp_path / "out").is_dir()
+
+
+def test_pitch_curve_runs_for_ustx_or_vsqx(monkeypatch, tmp_path):
+    _patch_common(monkeypatch)
+    monkeypatch.setattr(
+        pipeline,
+        "extract_pitches_only_torch",
+        lambda *args, **kwargs: [NoteInfo(0.0, 0.5, 60.0, "a")],
+    )
+    result = RmvpeResult(
+        time_step_seconds=0.01,
+        midi_pitch=np.full(50, 60.25, dtype=np.float32),
+        voiced_mask=np.ones(50, dtype=bool),
+    )
+    transcriber = MagicMock()
+    transcriber.infer.return_value = result
+    constructor = MagicMock(return_value=transcriber)
+    save_ustx = MagicMock()
+    save_vsqx = MagicMock()
+    monkeypatch.setattr(pipeline, "RmvpeTranscriber", constructor)
+    monkeypatch.setattr(pipeline, "save_ustx", save_ustx)
+    monkeypatch.setattr(pipeline, "save_vsqx", save_vsqx)
+
+    for formats in (["ustx"], ["vsqx"], ["ustx", "vsqx"]):
+        kwargs = _base_kwargs(tmp_path)
+        kwargs.update(
+            output_lyrics=False,
+            output_formats=formats,
+            output_pitch_curve=True,
+            rmvpe_model_path="rmvpe.onnx",
+        )
+        pipeline.auto_lyric_hybrid_pipeline(**kwargs)
+
+    assert constructor.call_count == 3
+    assert transcriber.infer.call_count == 3
+    assert save_ustx.call_count == 2
+    assert save_vsqx.call_count == 2
+    assert all(call.kwargs["rmvpe_result"] is result for call in save_ustx.call_args_list)
+    assert all(call.kwargs["rmvpe_result"] is result for call in save_vsqx.call_args_list)
 
 
 def test_invalid_batch_sizes_fail_fast(tmp_path):
