@@ -1,6 +1,6 @@
 # Vocal2Midi
 
-Vocal2Midi is a Windows-first desktop tool and inference pipeline for turning vocal audio into lyric-aligned MIDI, USTX, and supporting editing artifacts. macOS and Linux use the CPU path for ONNX models, while Apple Silicon can use Metal for the llama.cpp decoder.
+Vocal2Midi is a Windows-first desktop tool and inference pipeline for turning vocal audio into lyric-aligned MIDI, USTX, VSQX, and supporting editing artifacts. macOS and Linux use the CPU path for ONNX models, while Apple Silicon can use Metal for the llama.cpp decoder.
 
 The current runtime is **ONNX-first**:
 
@@ -121,7 +121,7 @@ The GUI is the main way to use Vocal2Midi interactively. It lets you:
 - set slicing mode and slice length bounds
 - choose language and lyric output mode
 - provide optional reference lyrics
-- export MIDI, USTX, text, CSV, chunk audio, and alignment artifacts
+- export MIDI, USTX, VSQX, text, CSV, chunk audio, and alignment artifacts
 
 The application-layer job entrypoint is `run_auto_lyric_job()` in [`application/pipeline.py`](application/pipeline.py), which dispatches into the hybrid inference pipeline in [`inference/pipeline/auto_lyric_hybrid.py`](inference/pipeline/auto_lyric_hybrid.py).
 
@@ -273,6 +273,7 @@ Depending on the selected workflow, Vocal2Midi can export:
 
 - `.mid`
 - `.ustx`
+- `.vsqx`
 - `.txt`
 - `.csv`
 - `TextGrid`

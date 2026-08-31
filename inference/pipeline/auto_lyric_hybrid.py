@@ -24,6 +24,7 @@ from inference.API.hfa_api import load_hfa_model, run_hubert_fa, export_hfa_arti
 from inference.API.game_api import load_game_model, extract_pitches_and_align_torch, extract_pitches_only_torch
 from inference.API.rmvpe_api import RmvpeTranscriber
 from inference.API.ustx_api import save_ustx
+from inference.API.vsqx_api import save_vsqx
 from inference.device_utils import (
     RUNTIME_DEVICE_CHOICES,
     default_runtime_device,
@@ -230,7 +231,7 @@ def auto_lyric_hybrid_pipeline(
     _check_cancel()
 
     rmvpe_result = None
-    if "ustx" in output_format_set and output_pitch_curve:
+    if ("ustx" in output_format_set or "vsqx" in output_format_set) and output_pitch_curve:
         rmvpe_model = _resolve_rmvpe_path(rmvpe_model_path)
         print(f"[Hybrid Pipeline] Running RMVPE from: {rmvpe_model}")
         rmvpe = RmvpeTranscriber(rmvpe_model, device=device)
@@ -457,6 +458,8 @@ def auto_lyric_hybrid_pipeline(
         _save_text(all_notes, output_dir / f"{output_key}.csv", "csv", pitch_format, round_pitch)
     if "ustx" in output_format_set:
         save_ustx(all_notes, output_dir / f"{output_key}.ustx", tempo=float(tempo), rmvpe_result=rmvpe_result)
+    if "vsqx" in output_format_set:
+        save_vsqx(all_notes, output_dir / f"{output_key}.vsqx", tempo=float(tempo), language=language, rmvpe_result=rmvpe_result)
 
 
 if __name__ == "__main__":
