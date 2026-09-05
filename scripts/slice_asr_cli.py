@@ -586,7 +586,7 @@ def build_argparser() -> argparse.ArgumentParser:
         choices=list(RUNTIME_DEVICE_CHOICES),
         help="Runtime device. Legacy 'cuda' is accepted and mapped to 'dml'.",
     )
-    parser.add_argument("--language", default="zh", choices=["zh", "ja"], help="ASR language")
+    parser.add_argument("--language", default="zh", choices=["zh", "ja", "en"], help="ASR language")
     parser.add_argument(
         "--slicing-method",
         default=DEFAULT_SLICE_METHOD,

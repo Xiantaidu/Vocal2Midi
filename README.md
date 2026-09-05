@@ -11,7 +11,7 @@ The current runtime is **ONNX-first**:
 ## Highlights
 
 - End-to-end vocal-to-MIDI workflow in one project
-- Chinese and Japanese lyric handling
+- Chinese, Japanese, and English lyric handling
 - GUI workflow for interactive use
 - Batch slice + ASR CLI for folder processing
 - Portable-folder packaging flow for Windows distribution
@@ -148,6 +148,18 @@ The current Japanese mora / romaji ASR integration in this repository is based o
 [Xiantaidu/RomajiASR](https://github.com/Xiantaidu/RomajiASR), the separate
 Japanese singing ASR project used for the `experiments/romajiASR` model path
 and the `inference/romaji_asr/` runtime integration.
+
+### English
+
+- Qwen3-ASR transcribes with the `English` language prompt; CJK bleed-over,
+  digits, and punctuation are stripped so only dictionary-friendly words remain.
+- The `word` lyric output mode assigns one note per English word.
+- If reference lyrics are provided, they are matched word-by-word against the
+  ASR output before alignment.
+- HubertFA aligns through the DiffSinger CMU dict (`ds_cmudict-07b.txt`) shipped
+  inside the HubertFA model folder; words missing from the dictionary are warned
+  and skipped.
+- Breath detection (`AP`) is enabled for English, mirroring the Chinese path.
 
 ## Runtime Device Rules
 

@@ -96,6 +96,15 @@ def _repair_pred_dict_short_words(pred_dict) -> None:
     if total_repaired > 0:
         print(f"[HFA Repair] Total repaired short words: {total_repaired}")
 
+# Per-language dictionary files shipped inside the HFA model folder.
+# English uses the DiffSinger CMU dict (no stress digits, reduced vowels).
+_HFA_DICT_FILES = {
+    "zh": "ds-zh-pinyin-lite.txt",
+    "ja": "japanese_dict_full.txt",
+    "en": "ds_cmudict-07b.txt",
+}
+
+
 def load_hfa_model(model_dir, device=None):
     """
     Load the HubertFA ONNX model on DirectML by default, with CPU fallback.
@@ -121,7 +130,9 @@ def run_hubert_fa(hfa_model, temp_dir, language="zh", cancel_checker=None, use_p
     hfa_model.dataset = []
     hfa_model.predictions = []
     
-    dict_file = "ds-zh-pinyin-lite.txt" if language == "zh" else "japanese_dict_full.txt"
+    dict_file = _HFA_DICT_FILES.get(language)
+    if dict_file is None:
+        dict_file = (hfa_model.vocab.get("dictionaries") or {}).get(language) or _HFA_DICT_FILES["zh"]
     dict_path = hfa_model.vocab_folder / dict_file
 
     if use_phoneme_g2p:
@@ -135,7 +146,9 @@ def run_hubert_fa(hfa_model, temp_dir, language="zh", cancel_checker=None, use_p
     if cancel_checker and cancel_checker():
         raise InterruptedError("HFA 任务已取消")
     if len(hfa_model.dataset) > 0:
-        nl_phonemes = "AP" if language == "zh" else ""
+        # Detect breaths (AP) for Chinese and English; Japanese relies on its own
+        # mora dictionary without non-lexical detection.
+        nl_phonemes = "AP" if language in {"zh", "en"} else ""
         hfa_model.infer(non_lexical_phonemes=nl_phonemes, pad_times=1, pad_length=5)
 
     pred_dict = {p[0].stem: p for p in hfa_model.predictions}

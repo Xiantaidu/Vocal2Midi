@@ -98,3 +98,27 @@ def test_extract_vowel_boundaries_zh_does_not_use_coda_as_vowel_start():
     assert word_durs == pytest.approx([0.36, 0.24])
     assert word_vuvs == [1, 1]
     assert lyrics == ["昂", "你"]
+
+
+def test_extract_vowel_boundaries_en_uses_arpabet_vowels():
+    words = [
+        _make_word(0.0, 0.40, "fall", [(0.0, 0.05, "f"), (0.05, 0.30, "ao"), (0.30, 0.40, "l")]),
+        _make_word(0.40, 0.70, "fly", [(0.40, 0.45, "f"), (0.45, 0.50, "l"), (0.50, 0.70, "ay")]),
+    ]
+
+    word_durs, word_vuvs, lyrics = extract_vowel_boundaries(
+        words, ["fall", "fly"], language="en"
+    )
+
+    assert word_durs == pytest.approx([0.05, 0.45, 0.20])
+    assert word_vuvs == [0, 1, 1]
+    assert lyrics == ["", "fall", "fly"]
+
+
+def test_en_singable_phones_reject_consonant_v_names():
+    from inference.API.game_api import _is_singable_phone
+
+    assert _is_singable_phone("en/ao", "en")
+    assert _is_singable_phone("ay", "en")
+    assert not _is_singable_phone("en/v", "en")
+    assert not _is_singable_phone("en/_r", "en")

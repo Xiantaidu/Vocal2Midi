@@ -22,9 +22,17 @@ DEFAULT_QWEN_ASR_PROMPT = (
     "请专注于识别歌曲中的歌词内容。"
     "避免乱猜歌词。"
 )
+DEFAULT_QWEN_ASR_PROMPT_EN = (
+    "You are a professional lyrics transcription assistant focused on accurately "
+    "extracting lyric text from audio. Transcribe the sung English lyrics exactly "
+    "as heard. Avoid guessing or inventing lyrics."
+)
 _ASCII_WORD_RE = re.compile(r"[A-Za-z]+(?:['’\-][A-Za-z]+)*")
 _ASCII_PUNCT_RE = re.compile(r"[!\"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]+")
 _CJK_KANA_SPACE_RE = re.compile(r"(?<=[\u3400-\u9fff\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f])\s+(?=[\u3400-\u9fff\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f])")
+# English words for the HFA CMU dictionary: letters joined by apostrophes/hyphens
+# (e.g. don't, world-class). Curly apostrophes are normalized to straight ones.
+_ENGLISH_DICT_WORD_RE = re.compile(r"[A-Za-z]+(?:['\-][A-Za-z]+)*")
 
 
 def _normalize_lyric_language(language: str | None) -> str:
@@ -33,14 +41,29 @@ def _normalize_lyric_language(language: str | None) -> str:
         return "ja"
     if value in {"zh", "cn", "chinese"}:
         return "zh"
+    if value in {"en", "english"}:
+        return "en"
     return value
+
+
+# Language name passed to the Qwen ASR prompt for each pipeline language.
+QWEN_ASR_LANGUAGE_NAMES = {
+    "ja": "Japanese",
+    "zh": "Chinese",
+    "en": "English",
+}
 
 
 def _filter_qwen_asr_text_for_lyric_flow(text: str, language: str | None) -> str:
     cleaned = str(text or "").strip()
     if not cleaned:
         return ""
-    if _normalize_lyric_language(language) not in {"zh", "ja"}:
+    normalized_language = _normalize_lyric_language(language)
+    if normalized_language == "en":
+        # Keep only dictionary-friendly English words: drops CJK bleed-over,
+        # digits, and punctuation that would break CMU dict lookups.
+        return " ".join(_ENGLISH_DICT_WORD_RE.findall(cleaned.replace("’", "'")))
+    if normalized_language not in {"zh", "ja"}:
         return cleaned
 
     filtered = _ASCII_WORD_RE.sub(" ", cleaned)
@@ -363,10 +386,18 @@ def batch_transcribe_asr(
     device=None,
     force_subprocess=False,
     asr_timeout_sec=180,
-    asr_prompt: str = DEFAULT_QWEN_ASR_PROMPT,
+    asr_prompt: str | None = None,
 ):
     """Saves chunks to temp_dir and runs batched ASR transcription."""
-    asr_lang = "Japanese" if language == "ja" else "Chinese"
+    asr_lang = QWEN_ASR_LANGUAGE_NAMES.get(
+        _normalize_lyric_language(language), QWEN_ASR_LANGUAGE_NAMES["zh"]
+    )
+    if not asr_prompt:
+        asr_prompt = (
+            DEFAULT_QWEN_ASR_PROMPT_EN
+            if asr_lang == "English"
+            else DEFAULT_QWEN_ASR_PROMPT
+        )
     print(f"[ASR API] Running ASR with Qwen runtime (Batch Size: {asr_batch_size}, Language: {asr_lang})...")
 
     audio_paths = []

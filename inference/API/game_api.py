@@ -17,6 +17,11 @@ from inference.game.onnx_runtime import GameOnnxModel
 
 _SINGABLE_JA_PHONEMES = {"a", "i", "u", "e", "o"}
 _SINGABLE_ZH_FALLBACK_VOWELS = set("aeiouv")
+# ARPABET vowel inventory used by the English CMU dict (ds_cmudict-07b.txt).
+_SINGABLE_EN_PHONEMES = {
+    "aa", "ae", "ah", "ao", "aw", "ax", "ay",
+    "eh", "er", "ey", "ih", "iy", "ow", "oy", "uh", "uw",
+}
 _NON_SINGABLE_WORD_TOKENS = {"SP", "AP", "EP", "br", "sil", "pau"}
 
 
@@ -48,6 +53,10 @@ def _is_singable_phone(phone_text: str, language: str | None) -> bool:
         return False
     if lang == "ja":
         return phone in _SINGABLE_JA_PHONEMES or phone_raw == "N"
+    if lang == "en":
+        # ARPABET: consonants like "v" must not be treated as vowels (the zh
+        # fallback would match the letter "v" inside the phone name).
+        return phone in _SINGABLE_EN_PHONEMES
 
     if phone in {"n", "ng", "m"}:
         return False

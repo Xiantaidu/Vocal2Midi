@@ -105,3 +105,39 @@ def test_process_asr_to_phonemes_converts_direct_moras_to_kana(tmp_path):
 
     assert chars_dict == {"chunk_0": ["か", "き"]}
     assert (tmp_path / "chunk_0.lab").read_text(encoding="utf-8") == "ka ki"
+
+
+def test_process_asr_to_phonemes_en_uses_words_for_lab(tmp_path):
+    chars_dict, chunk_logs = lfa_api.process_asr_to_phonemes(
+        all_results=[{"text": "Hello, World! I don't know."}],
+        chunk_indices=[0],
+        temp_dir_path=tmp_path,
+        language="en",
+        matcher=None,
+        lyric_output_mode="word",
+    )
+
+    assert chars_dict == {"chunk_0": ["hello", "world", "i", "don't", "know"]}
+    assert (tmp_path / "chunk_0.lab").read_text(encoding="utf-8") == "hello world i don't know"
+    assert "Direct ASR (No original lyrics)" in chunk_logs[0]
+
+
+def test_process_asr_to_phonemes_en_matches_reference_lyrics(tmp_path):
+    matcher = lfa_api.create_lyric_matcher("en", "Hello world, how are you?")
+
+    chars_dict, _ = lfa_api.process_asr_to_phonemes(
+        all_results=[{"text": "hello world how are you"}],
+        chunk_indices=[0],
+        temp_dir_path=tmp_path,
+        language="en",
+        matcher=matcher,
+        lyric_output_mode="word",
+    )
+
+    assert chars_dict == {"chunk_0": ["hello", "world", "how", "are", "you"]}
+    assert (tmp_path / "chunk_0.lab").read_text(encoding="utf-8") == "hello world how are you"
+
+
+def test_normalize_lyric_output_mode_en_defaults_to_word():
+    assert lfa_api._normalize_lyric_output_mode("en", None) == "word"
+    assert lfa_api._normalize_lyric_output_mode("en", "romaji") == "word"
