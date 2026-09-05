@@ -265,3 +265,23 @@ def test_batch_transcribe_asr_sanitizes_subprocess_results(monkeypatch, tmp_path
     assert results == [{"text": "北京欢迎你"}]
     assert worker.started is True
     assert task_queue.items[0]["asr_prompt"] == asr_api.DEFAULT_QWEN_ASR_PROMPT
+
+
+def test_english_asr_text_filter_keeps_dictionary_words():
+    from inference.API.asr_api import _filter_qwen_asr_text_for_lyric_flow
+
+    assert (
+        _filter_qwen_asr_text_for_lyric_flow("Hello, 世界! I don’t know.", "en")
+        == "Hello I don't know"
+    )
+    assert _filter_qwen_asr_text_for_lyric_flow("北京欢迎你", "en") == ""
+    # zh/ja behavior is unchanged.
+    assert _filter_qwen_asr_text_for_lyric_flow("hello 世界 nihongo", "zh") == "世界"
+
+
+def test_qwen_asr_language_names_cover_english():
+    from inference.API.asr_api import QWEN_ASR_LANGUAGE_NAMES
+
+    assert QWEN_ASR_LANGUAGE_NAMES["en"] == "English"
+    assert QWEN_ASR_LANGUAGE_NAMES["ja"] == "Japanese"
+    assert QWEN_ASR_LANGUAGE_NAMES["zh"] == "Chinese"

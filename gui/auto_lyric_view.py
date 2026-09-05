@@ -91,7 +91,7 @@ class AutoLyricInterface(ScrollArea):
         combo_row1.addSpacing(28)
         combo_row1.addWidget(BodyLabel("目标语言", self))
         self.lang_combo = ComboBox(self)
-        self.lang_combo.addItems(["zh", "ja"])
+        self.lang_combo.addItems(["zh", "ja", "en"])
         self.lang_combo.currentTextChanged.connect(self.update_lyric_output_options)
         combo_row1.addWidget(self.lang_combo)
 
@@ -234,8 +234,15 @@ class AutoLyricInterface(ScrollArea):
     def _lyric_output_setting_key(self, language: str):
         return f"lyric_output_mode_{language}"
 
+    _LYRIC_OUTPUT_OPTIONS = {
+        "zh": ["拼音", "汉字"],
+        "ja": ["罗马音", "假名"],
+        "en": ["单词"],
+    }
+
     def _default_lyric_output_text(self, language: str):
-        return "汉字" if language == "zh" else "罗马音"
+        defaults = {"zh": "汉字", "ja": "罗马音", "en": "单词"}
+        return defaults.get(language, "汉字")
 
     def save_lyric_output_preference(self, text: str):
         language = self.lang_combo.currentText()
@@ -286,7 +293,7 @@ class AutoLyricInterface(ScrollArea):
         self.cb_pitch_curve.setEnabled(enabled)
 
     def update_lyric_output_options(self, language: str):
-        options = ["拼音", "汉字"] if language == "zh" else ["罗马音", "假名"]
+        options = self._LYRIC_OUTPUT_OPTIONS.get(language, self._LYRIC_OUTPUT_OPTIONS["zh"])
         saved_text = self.global_settings.settings.value(
             self._lyric_output_setting_key(language),
             self._default_lyric_output_text(language),
@@ -304,12 +311,14 @@ class AutoLyricInterface(ScrollArea):
 
     def get_lyric_output_mode(self):
         text = self.lyric_output_combo.currentText()
+        default_by_language = {"zh": "hanzi", "ja": "romaji", "en": "word"}
         return {
             "拼音": "pinyin",
             "汉字": "hanzi",
             "罗马音": "romaji",
             "假名": "kana",
-        }.get(text, "hanzi" if self.lang_combo.currentText() == "zh" else "romaji")
+            "单词": "word",
+        }.get(text, default_by_language.get(self.lang_combo.currentText(), "hanzi"))
 
     def browse_dir(self, line_edit):
         dir_path = QFileDialog.getExistingDirectory(self, "选择文件夹", line_edit.text())

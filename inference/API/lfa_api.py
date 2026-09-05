@@ -2,9 +2,21 @@ from inference.LyricFA.tools.ZhG2p import ZhG2p
 from inference.LyricFA.tools.JaG2p import JaG2p, KATA_TO_ROMAJI
 from inference.LyricFA.tools.lyric_matcher import LyricMatcher
 
+import re
+
 _zh_g2p = None
 _ja_g2p = None
 _ROMAJI_TO_KANA_MORA = {}
+
+# English words for the HFA CMU dictionary: letters joined by apostrophes/hyphens
+# (e.g. don't, world-class), lowercased. Curly apostrophes are normalized.
+_ENGLISH_DICT_WORD_RE = re.compile(r"[A-Za-z]+(?:['\-][A-Za-z]+)*")
+
+
+def _split_english_words(text: str) -> list[str]:
+    """Split English ASR/reference text into lowercase CMU-dictionary-friendly words."""
+    cleaned = str(text or "").replace("’", "'")
+    return [word.lower() for word in _ENGLISH_DICT_WORD_RE.findall(cleaned)]
 
 for _kata_token, _romaji_token in KATA_TO_ROMAJI.items():
     _ROMAJI_TO_KANA_MORA.setdefault(_romaji_token.lower(), JaG2p._katakana_to_hiragana(_kata_token))
@@ -143,18 +155,22 @@ def _normalize_lyric_output_mode(language, lyric_output_mode):
         "汉字": "hanzi",
         "罗马音": "romaji",
         "假名": "kana",
+        "单词": "word",
     }
     mode = aliases.get(lyric_output_mode, mode)
     valid_modes = {
         "zh": {"pinyin", "hanzi"},
         "ja": {"romaji", "kana"},
+        "en": {"word"},
     }
-    defaults = {"zh": "hanzi", "ja": "romaji"}
+    defaults = {"zh": "hanzi", "ja": "romaji", "en": "word"}
     return mode if mode in valid_modes.get(language, set()) else defaults.get(language, "hanzi")
 
 
 def _build_display_tokens(text, language, lyric_output_mode, g2p_model):
     mode = _normalize_lyric_output_mode(language, lyric_output_mode)
+    if language == "en":
+        return _split_english_words(text)
     if language == "ja":
         if mode == "kana" and hasattr(g2p_model, "split_kana_no_regex"):
             return g2p_model.split_kana_no_regex(text)
@@ -167,14 +183,18 @@ def _build_display_tokens(text, language, lyric_output_mode, g2p_model):
 
 def _select_matched_display_tokens(language, lyric_output_mode, matched_text, matched_phonetic):
     mode = _normalize_lyric_output_mode(language, lyric_output_mode)
-    phonetic_mode = (language == "zh" and mode == "pinyin") or (language == "ja" and mode == "romaji")
+    phonetic_mode = (
+        (language == "zh" and mode == "pinyin")
+        or (language == "ja" and mode == "romaji")
+        or language == "en"
+    )
     source = matched_phonetic if phonetic_mode else matched_text
     return source.split() if source else []
 
 
 def _join_display_tokens(language, lyric_output_mode, tokens):
     mode = _normalize_lyric_output_mode(language, lyric_output_mode)
-    if (language == "zh" and mode == "pinyin") or (language == "ja" and mode == "romaji"):
+    if (language == "zh" and mode == "pinyin") or (language == "ja" and mode == "romaji") or language == "en":
         return " ".join(tokens)
     return "".join(tokens)
 
@@ -217,7 +237,19 @@ def process_asr_to_phonemes(
     Processes batched ASR text, aligns with original lyrics if available, 
     and generates .lab phoneme files.
     """
-    g2p_model = get_ja_g2p() if language == "ja" else get_zh_g2p()
+    # English uses dictionary word lookups inside HubertFA, so its G2P model is
+    # unnecessary here; the .lab content is the lowercased word sequence itself.
+    g2p_model = None
+    if language == "ja":
+        g2p_model = get_ja_g2p()
+    elif language != "en":
+        g2p_model = get_zh_g2p()
+
+    def _convert_to_lab_text(text_value: str) -> str:
+        if language == "en":
+            return " ".join(_split_english_words(text_value))
+        return g2p_model.convert(text_value, include_tone=False, convert_number=True)
+
     chars_dict = {}
     chunk_logs = []
 
@@ -309,15 +341,15 @@ def process_asr_to_phonemes(
                     matched_lyric_phonetic = matched_phonetic
                     match_status = "Matched with original lyrics"
                 else:
-                    pinyin_str = g2p_model.convert(text, include_tone=False, convert_number=True)
+                    pinyin_str = _convert_to_lab_text(text)
                     chars = _build_display_tokens(text, language, lyric_output_mode, g2p_model)
                     match_status = "Fallback to ASR (No match found)"
             else:
-                pinyin_str = g2p_model.convert(text, include_tone=False, convert_number=True)
+                pinyin_str = _convert_to_lab_text(text)
                 chars = _build_display_tokens(text, language, lyric_output_mode, g2p_model)
                 match_status = "Fallback to ASR (No phonetics)"
         else:
-            pinyin_str = g2p_model.convert(text, include_tone=False, convert_number=True)
+            pinyin_str = _convert_to_lab_text(text)
             chars = _build_display_tokens(text, language, lyric_output_mode, g2p_model)
             match_status = "Direct ASR (No original lyrics)"
 
