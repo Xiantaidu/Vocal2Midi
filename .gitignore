@@ -26,6 +26,8 @@ dist/
 *.egg-info/
 pip-wheel-metadata/
 
+/_ffmpeg_build/
+
 *.ckpt
 *.pth
 *.pt

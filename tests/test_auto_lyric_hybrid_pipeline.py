@@ -10,11 +10,11 @@ from inference.API.rmvpe_api import RmvpeResult
 from inference.pipeline import auto_lyric_hybrid as pipeline
 
 
-def _patch_librosa_load(monkeypatch):
+def _patch_load_audio(monkeypatch):
     monkeypatch.setattr(
         pipeline,
-        "librosa",
-        types.SimpleNamespace(load=lambda *args, **kwargs: (np.zeros(4410, dtype=np.float32), 44100)),
+        "load_audio",
+        lambda *args, **kwargs: (np.zeros(4410, dtype=np.float32), 44100),
     )
 
 
@@ -50,7 +50,7 @@ def _base_kwargs(tmp_path: Path) -> dict:
 
 def _patch_common(monkeypatch):
     chunks = [{"waveform": np.zeros(1600, dtype=np.float32), "offset": 0.0}]
-    _patch_librosa_load(monkeypatch)
+    _patch_load_audio(monkeypatch)
     monkeypatch.setattr(pipeline, "slice_audio", lambda *args, **kwargs: chunks)
     monkeypatch.setattr(pipeline, "free_memory", lambda: None)
     monkeypatch.setattr(pipeline, "load_game_model", lambda *args, **kwargs: MagicMock())
@@ -197,7 +197,7 @@ def test_invalid_slice_bounds_fail_fast(tmp_path):
 
 
 def test_empty_chunks_fail_before_models(monkeypatch, tmp_path):
-    _patch_librosa_load(monkeypatch)
+    _patch_load_audio(monkeypatch)
     monkeypatch.setattr(pipeline, "slice_audio", lambda *args, **kwargs: [])
     load_game = MagicMock()
     monkeypatch.setattr(pipeline, "load_game_model", load_game)
@@ -255,7 +255,7 @@ def test_missing_hfa_chunk_uses_pitch_only_fallback(monkeypatch, tmp_path):
         {"waveform": np.zeros(1600, dtype=np.float32), "offset": 0.0},
         {"waveform": np.zeros(1600, dtype=np.float32), "offset": 1.0},
     ]
-    _patch_librosa_load(monkeypatch)
+    _patch_load_audio(monkeypatch)
     monkeypatch.setattr(pipeline, "slice_audio", lambda *args, **kwargs: chunks)
     monkeypatch.setattr(pipeline, "free_memory", lambda: None)
     monkeypatch.setattr(pipeline, "load_game_model", lambda *args, **kwargs: MagicMock())
@@ -286,7 +286,7 @@ def test_missing_hfa_chunk_uses_pitch_only_fallback(monkeypatch, tmp_path):
 
 def test_unproductive_aligned_chunk_uses_pitch_only_fallback(monkeypatch, tmp_path):
     chunks = [{"waveform": np.zeros(1600, dtype=np.float32), "offset": 0.0}]
-    _patch_librosa_load(monkeypatch)
+    _patch_load_audio(monkeypatch)
     monkeypatch.setattr(pipeline, "slice_audio", lambda *args, **kwargs: chunks)
     monkeypatch.setattr(pipeline, "free_memory", lambda: None)
     monkeypatch.setattr(pipeline, "load_game_model", lambda *args, **kwargs: MagicMock())
@@ -314,7 +314,7 @@ def test_unproductive_aligned_chunk_uses_pitch_only_fallback(monkeypatch, tmp_pa
 def test_slice_bounds_are_forwarded_to_slicer(monkeypatch, tmp_path):
     chunks = [{"waveform": np.zeros(1600, dtype=np.float32), "offset": 0.0}]
     slice_audio = MagicMock(return_value=chunks)
-    _patch_librosa_load(monkeypatch)
+    _patch_load_audio(monkeypatch)
     monkeypatch.setattr(pipeline, "slice_audio", slice_audio)
     monkeypatch.setattr(pipeline, "free_memory", lambda: None)
     monkeypatch.setattr(pipeline, "load_game_model", lambda *args, **kwargs: MagicMock())

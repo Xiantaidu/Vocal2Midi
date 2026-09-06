@@ -20,13 +20,11 @@ import importlib
 import json
 import math
 import os
-import shutil
 import sys
 import tempfile
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-import librosa
 import soundfile as sf
 
 
@@ -38,6 +36,9 @@ asr_api = importlib.import_module("inference.API.asr_api")
 rmvpe_api = importlib.import_module("inference.API.rmvpe_api")
 slicer_api = importlib.import_module("inference.API.slicer_api")
 device_utils = importlib.import_module("inference.device_utils")
+audio_io = importlib.import_module("inference.io.audio_io")
+
+audio_load_audio = audio_io.load_audio
 
 batch_transcribe_asr = asr_api.batch_transcribe_asr
 load_qwen_model = asr_api.load_qwen_model
@@ -50,7 +51,9 @@ DEFAULT_RUNTIME_DEVICE = getattr(device_utils, "default_runtime_device", lambda:
 normalize_runtime_device = device_utils.normalize_runtime_device
 
 DEFAULT_RMVPE_MODEL = ROOT_DIR / "experiments" / "RMVPE" / "rmvpe.onnx"
-INPUT_AUDIO_EXTENSIONS = {".wav", ".m4a", ".mp3"}
+INPUT_AUDIO_EXTENSIONS = {
+    ".wav", ".m4a", ".mp3", ".flac", ".ogg", ".opus", ".aif", ".aiff", ".wma", ".webm",
+}
 SOURCE_INDEX_NAME = "_source_index.json"
 DEFAULT_SAMPLE_RATE = 44100
 DEFAULT_SLICE_METHOD = "default"
@@ -84,18 +87,6 @@ def batch_iter(items: List[Path], batch_size: int) -> Iterable[List[Path]]:
         raise ValueError("batch_size must be greater than 0")
     for start in range(0, len(items), batch_size):
         yield items[start : start + batch_size]
-
-
-def ensure_ffmpeg_on_path() -> None:
-    ffmpeg_bin = ROOT_DIR / "_ffmpeg" / "bin"
-    if not ffmpeg_bin.is_dir():
-        return
-
-    current_path = os.environ.get("PATH", "")
-    parts = current_path.split(os.pathsep) if current_path else []
-    ffmpeg_bin_str = str(ffmpeg_bin)
-    if ffmpeg_bin_str not in parts:
-        os.environ["PATH"] = ffmpeg_bin_str + (os.pathsep + current_path if current_path else "")
 
 
 def repair_text_candidates(text: str) -> list[str]:
@@ -163,19 +154,7 @@ def collect_audio_files(input_dir: Path, recursive: bool = True) -> List[Path]:
 
 
 def load_audio(path: Path, sr: int = DEFAULT_SAMPLE_RATE):
-    ensure_ffmpeg_on_path()
-    try:
-        return librosa.load(str(path), sr=sr, mono=True)
-    except Exception as exc:
-        if path.suffix.lower() == ".m4a":
-            ffmpeg_found = shutil.which("ffmpeg") is not None
-            ffmpeg_status = "ffmpeg was found on PATH." if ffmpeg_found else "ffmpeg was not found on PATH."
-            raise RuntimeError(
-                f"Failed to read M4A file: {path}\n"
-                f"{ffmpeg_status}\n"
-                "Install FFmpeg and add it to PATH, or place ffmpeg.exe under _ffmpeg/bin/."
-            ) from exc
-        raise
+    return audio_load_audio(str(path), sr)
 
 
 def extract_text(result) -> str:
@@ -663,7 +642,6 @@ def validate_args(args) -> None:
 
 def main():
     args = build_argparser().parse_args()
-    ensure_ffmpeg_on_path()
     validate_args(args)
 
     if args.from_json is not None:

@@ -3,10 +3,10 @@ import pathlib
 import warnings
 from collections import defaultdict
 
-import librosa
 import numpy as np
 from tqdm import tqdm
 
+from inference.io.audio_io import load_audio
 from .align_word import WordList, Word, Phoneme
 from .decoder import AlignmentDecoder, NonLexicalDecoder
 from .export_tool import Exporter
@@ -193,7 +193,7 @@ class InferenceBase:
             wav_path, ph_seq, word_seq, ph_idx_to_word_idx = self.dataset[i]
 
             # Load and resample audio
-            wav, sr = librosa.load(wav_path, sr=self.mel_cfg['sample_rate'], mono=True)
+            wav, sr = load_audio(wav_path, sr=self.mel_cfg['sample_rate'])
             wav_length = len(wav) / self.mel_cfg['sample_rate']
 
             words_list: list[WordList] = []
