@@ -2,7 +2,6 @@ import pathlib
 import sys
 import tempfile
 
-import librosa
 from application.config import (
     DEFAULT_SLICE_MAX_SEC,
     DEFAULT_SLICE_MIN_SEC,
@@ -15,6 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from inference.API.slicer_api import slice_audio_with_custom_bounds as slice_audio
+from inference.io.audio_io import load_audio
 from inference.io.note_io import _save_midi, _save_text
 from inference.quant.quantization import quantize_notes, should_apply_quantization
 
@@ -227,7 +227,7 @@ def auto_lyric_hybrid_pipeline(
 
     _check_cancel()
     sr = 44100
-    waveform, sr = librosa.load(audio_path, sr=sr, mono=True)
+    waveform, sr = load_audio(audio_path, sr)
     _check_cancel()
 
     rmvpe_result = None

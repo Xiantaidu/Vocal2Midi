@@ -326,7 +326,10 @@ class AutoLyricInterface(ScrollArea):
             line_edit.setText(dir_path)
 
     def add_audio_files(self):
-        file, _ = QFileDialog.getOpenFileName(self, "选择音频文件", "", "Audio Files (*.wav *.m4a *.flac *.mp3 *.ogg)")
+        file, _ = QFileDialog.getOpenFileName(
+            self, "选择音频文件", "",
+            "Audio Files (*.wav *.m4a *.flac *.mp3 *.ogg *.opus *.wma *.webm *.aif *.aiff)"
+        )
         if file:
             self.audio_list.clear()
             self.audio_list.addItem(file)
