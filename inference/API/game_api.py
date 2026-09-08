@@ -36,6 +36,8 @@ def _normalize_ts(ts) -> list[float]:
 
 
 def _resolve_game_language_id(game_model: GameOnnxModel, language: str | None = None) -> int:
+    # The GAME model config carries a language id map (en/ja/yue/zh), but it is
+    # intentionally NOT used: GAME runs language-neutral.
     del game_model, language
     return 0
 
@@ -71,6 +73,126 @@ def _find_word_nucleus_start(word, language: str | None) -> float | None:
     return None
 
 
+# Stops begin a new syllable chunk; other inter-vowel consonants (fricatives,
+# nasals, liquids) close the previous chunk as its coda.
+_EN_STOPS = {"p", "b", "t", "d", "k", "g", "dx", "jh", "ch"}
+
+
+def _english_syllable_chunks(word):
+    """Split one aligned English word into per-syllable time chunks.
+
+    Each vowel nucleus owns one chunk. The boundary before a nucleus falls
+    immediately before the last stop consonant (p/b/t/d/k/g/dx) of the
+    consonant run that precedes it, so the stop begins the next chunk while
+    fricatives and sonorants close the previous one as coda
+    (impossible -> [ih m][p aa s ax][b ax l] = im/poss/ible). A run without a
+    stop creates no boundary, which keeps a word-final "ax"+sonorant
+    (syllabic consonant, e.g. -le/-en) inside the last chunk automatically.
+
+    Returns [(start, end), ...] or None when the word has no singable vowel.
+    """
+    phones = getattr(word, "phonemes", None) or []
+    if not phones:
+        return None
+
+    vowel_idx = [i for i, ph in enumerate(phones) if _is_singable_phone(getattr(ph, "text", ""), "en")]
+    if not vowel_idx:
+        return None
+
+    bounds = [float(phones[0].start)]
+    for k in range(1, len(vowel_idx)):
+        run = phones[vowel_idx[k - 1] + 1 : vowel_idx[k]]
+        stop_start = None
+        for ph in run:
+            if _normalize_phone_text(ph.text) in _EN_STOPS:
+                stop_start = float(ph.start)
+        if stop_start is not None:
+            bounds.append(stop_start)
+        else:
+            bounds.append(float(phones[vowel_idx[k]].start))
+    bounds.append(float(word.end))
+
+    # A chunk made of a single lone vowel (no onset, no coda — e.g. the "i" of
+    # -ible squeezed between two stops) has no note of its own; fold it into
+    # the following chunk so it does not become a phantom syllable.
+    merged = []
+    spans = list(zip(bounds, bounds[1:]))
+    i = 0
+    while i < len(spans):
+        start, end = spans[i]
+        span_phones = [ph for ph in phones if start <= ph.start < end]
+        if (
+            len(span_phones) == 1
+            and _is_singable_phone(getattr(span_phones[0], "text", ""), "en")
+            and i + 1 < len(spans)
+        ):
+            merged.append((start, spans[i + 1][1]))
+            i += 2
+            continue
+        merged.append((start, end))
+        i += 1
+    return merged
+
+
+def _extract_vowel_boundaries_english(result_word, original_chars: list[str]):
+    """Per-syllable chunk boundaries for English.
+
+    Each chunk becomes one align unit for GAME; chunk 0 carries the whole word
+    as its lyric and every later chunk carries "+" (the syllable-position
+    marker). Melisma/转音 notes inside a chunk fall back to the sustain symbol
+    assigned by the caller.
+    """
+    word_durs = []
+    word_vuvs = []
+    lyrics = []
+
+    char_idx = 0
+    last_end = 0.0
+
+    for word in result_word:
+        if word.text in _NON_SINGABLE_WORD_TOKENS:
+            if word.end > last_end:
+                word_durs.append(word.end - last_end)
+                word_vuvs.append(0)
+                lyrics.append("")
+                last_end = word.end
+            continue
+
+        lyric = word.text
+        if char_idx < len(original_chars):
+            while char_idx < len(original_chars) and original_chars[char_idx].lower() != word.text.lower():
+                char_idx += 1
+            if char_idx < len(original_chars):
+                lyric = original_chars[char_idx]
+                char_idx += 1
+
+        chunks = _english_syllable_chunks(word)
+        if chunks is None:
+            if word.end > last_end:
+                word_durs.append(word.end - last_end)
+                word_vuvs.append(0)
+                lyrics.append("")
+                last_end = word.end
+            continue
+
+        if chunks[0][0] > last_end + 0.005:
+            word_durs.append(chunks[0][0] - last_end)
+            word_vuvs.append(0)
+            lyrics.append("")
+        elif chunks[0][0] < last_end:
+            chunks[0] = (last_end, max(chunks[0][1], last_end + 0.001))
+
+        for k, (chunk_start, chunk_end) in enumerate(chunks):
+            if chunk_end <= chunk_start:
+                continue
+            word_durs.append(chunk_end - chunk_start)
+            word_vuvs.append(1)
+            lyrics.append(lyric if k == 0 else "+")
+        last_end = chunks[-1][1]
+
+    return word_durs, word_vuvs, lyrics
+
+
 def load_game_model(model_dir: str, device=None):
     """
     Loads the GAME ONNX model suite.
@@ -89,6 +211,9 @@ def load_game_model(model_dir: str, device=None):
 
 
 def extract_vowel_boundaries(result_word, original_chars: list[str], language: str | None = None):
+    if (language or "").lower() == "en":
+        return _extract_vowel_boundaries_english(result_word, original_chars)
+
     word_durs = []
     word_vuvs = []
     lyrics = []
@@ -213,6 +338,10 @@ def extract_pitches_and_align_torch(
     Extract pitches using the GAME ONNX runtime and align them to lyrics.
     """
     del device, debug_mode
+    # Melisma/转音 notes keep '-' for every language; for English the '+' on
+    # syllable positions comes from the per-syllable chunk lyrics instead
+    # (see _extract_vowel_boundaries_english).
+    sustain_lyric = "-"
     print("[Hybrid Pipeline] Extracting pitches with GAME ONNX...")
 
     all_notes = []
@@ -301,6 +430,7 @@ def extract_pitches_and_align_torch(
                 note_seq,
                 note_dur,
                 apply_word_uv=True,
+                assign_by_onset=(language or "").lower() == "en",
             )
 
             lyric_idx = 0
@@ -323,10 +453,10 @@ def extract_pitches_and_align_torch(
                         lyric_to_assign = pending_lyric
                         pending_lyric = ""
                     else:
-                        lyric_to_assign = "-"
+                        lyric_to_assign = sustain_lyric
 
                     is_contiguous = len(all_notes) > 0 and abs(all_notes[-1].offset - current_onset) < 0.01
-                    can_merge = is_contiguous and abs(all_notes[-1].pitch - pitch) < 0.1 and lyric_to_assign == "-"
+                    can_merge = is_contiguous and abs(all_notes[-1].pitch - pitch) < 0.1 and lyric_to_assign == sustain_lyric
 
                     if can_merge:
                         all_notes[-1].offset += n_dur

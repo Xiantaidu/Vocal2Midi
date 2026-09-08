@@ -7,6 +7,7 @@ import time
 import soundfile as sf
 
 from inference.device_utils import normalize_runtime_device
+from inference.pinyin_asr.runtime import PinyinASROnnxModel, resolve_model_dir as resolve_pinyin_model_dir
 from inference.qwen3asr_dml.runtime import Qwen3ASRDmlModel
 from inference.romaji_asr.runtime import RomajiASROnnxModel, resolve_model_dir
 
@@ -17,6 +18,8 @@ _ROMAJI_MODEL_CACHE = {}
 _ROMAJI_MODEL_CACHE_LOCK = threading.Lock()
 _PHONEME_MODEL_CACHE = _ROMAJI_MODEL_CACHE
 _PHONEME_MODEL_CACHE_LOCK = _ROMAJI_MODEL_CACHE_LOCK
+_PINYIN_MODEL_CACHE = {}
+_PINYIN_MODEL_CACHE_LOCK = threading.Lock()
 DEFAULT_QWEN_ASR_PROMPT = (
     "你是一位专业的歌词转录助手，专注于从音频中准确提取歌词文本。"
     "请专注于识别歌曲中的歌词内容。"
@@ -192,6 +195,78 @@ def clear_romaji_model_cache():
     import gc
 
     gc.collect()
+
+
+def load_pinyin_asr_model(model_dir, device=None, use_cache=True):
+    """Load the Chinese pinyin ASR ONNX runtime from a model directory."""
+    resolved_dir = str(resolve_pinyin_model_dir(model_dir))
+    requested_device = normalize_runtime_device(device)
+    cache_key = (resolved_dir, requested_device)
+    cache_enabled = bool(use_cache) and requested_device == "cpu"
+    if not cache_enabled:
+        with _PINYIN_MODEL_CACHE_LOCK:
+            _PINYIN_MODEL_CACHE.pop(cache_key, None)
+        if use_cache and requested_device != "cpu":
+            print("[Pinyin ASR] In-process cache is disabled on DML for stability; creating a fresh session.")
+
+    if cache_enabled:
+        with _PINYIN_MODEL_CACHE_LOCK:
+            cached = _PINYIN_MODEL_CACHE.get(cache_key)
+        if cached is not None:
+            print(f"Reusing cached pinyin ASR model from '{resolved_dir}' on {requested_device}.")
+            return cached
+
+    print(f"Loading pinyin ASR ONNX model from '{resolved_dir}' on {requested_device}...")
+    model = PinyinASROnnxModel.from_model_path(resolved_dir, device=requested_device, verbose=True)
+
+    payload = {
+        "model": model,
+        "sample_rate": int(model.sample_rate),
+        "provider": model.provider,
+    }
+    if cache_enabled:
+        with _PINYIN_MODEL_CACHE_LOCK:
+            _PINYIN_MODEL_CACHE[cache_key] = payload
+    return payload
+
+
+def clear_pinyin_model_cache():
+    with _PINYIN_MODEL_CACHE_LOCK:
+        _PINYIN_MODEL_CACHE.clear()
+    import gc
+
+    gc.collect()
+
+
+def batch_transcribe_pinyin_asr(
+    chunks,
+    sr,
+    temp_dir_path,
+    model_dir,
+    device=None,
+    asr_batch_size=1,
+    cancel_checker=None,
+):
+    """Run pinyin ASR directly and return token lists per chunk."""
+    print("[ASR API] Running pinyin ASR (ONNX Runtime) for Chinese-pinyin lyric mode...")
+    asr = load_pinyin_asr_model(model_dir, device=device, use_cache=True)
+    model = asr["model"]
+
+    audio_paths = []
+    chunk_indices = []
+    for chunk_idx, chunk in enumerate(chunks):
+        if cancel_checker and cancel_checker():
+            raise InterruptedError("ASR task cancelled")
+        chunk_path = temp_dir_path / f"chunk_{chunk_idx}.wav"
+        sf.write(chunk_path, chunk["waveform"], sr)
+        audio_paths.append(str(chunk_path))
+        chunk_indices.append(chunk_idx)
+
+    if not audio_paths:
+        return [], []
+
+    all_results = model.transcribe(audio_paths, batch_size=max(1, int(asr_batch_size)))
+    return all_results, chunk_indices
 
 
 def batch_transcribe_romaji_asr(

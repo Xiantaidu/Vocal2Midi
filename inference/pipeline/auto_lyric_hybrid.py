@@ -18,7 +18,11 @@ from inference.io.audio_io import load_audio
 from inference.io.note_io import _save_midi, _save_text
 from inference.quant.quantization import quantize_notes, should_apply_quantization
 
-from inference.API.asr_api import batch_transcribe_asr, batch_transcribe_romaji_asr
+from inference.API.asr_api import (
+    batch_transcribe_asr,
+    batch_transcribe_pinyin_asr,
+    batch_transcribe_romaji_asr,
+)
 from inference.API.lfa_api import create_lyric_matcher, process_asr_to_phonemes, _normalize_lyric_output_mode
 from inference.API.hfa_api import load_hfa_model, run_hubert_fa, export_hfa_artifacts
 from inference.API.game_api import load_game_model, extract_pitches_and_align_torch, extract_pitches_only_torch
@@ -32,6 +36,11 @@ from inference.device_utils import (
 )
 
 ROMAJI_ASR_DEFAULT_DIR = pathlib.Path(__file__).resolve().parents[2] / "experiments" / "romajiASR"
+PINYIN_ASR_DEFAULT_DIR = pathlib.Path(__file__).resolve().parents[2] / "experiments" / "pinyinASR"
+
+# Language value that routes Chinese lyric extraction through the direct
+# pinyin ASR instead of Qwen text ASR.
+PINYIN_ASR_LANGUAGE = "zh-pinyin"
 
 
 def _normalize_output_formats(output_formats) -> list[str]:
@@ -60,6 +69,26 @@ def _select_romaji_asr_path(phoneme_asr_model_path: str) -> str | None:
 
 def _select_phoneme_asr_path(phoneme_asr_model_path: str) -> str | None:
     return _select_romaji_asr_path(phoneme_asr_model_path)
+
+
+def _select_pinyin_asr_path(pinyin_asr_model_path: str) -> str | None:
+    if pinyin_asr_model_path:
+        return pinyin_asr_model_path
+    if PINYIN_ASR_DEFAULT_DIR.exists():
+        return str(PINYIN_ASR_DEFAULT_DIR)
+    return None
+
+
+def normalize_pipeline_language(language: str | None) -> tuple[str, bool]:
+    """Map user-facing language to the pipeline value and the pinyin-ASR flag.
+
+    '中文-拼音' / 'zh-pinyin' selects the direct pinyin ASR engine; every other
+    language keeps its existing engine (ja romaji ASR or Qwen text ASR).
+    """
+    value = str(language or "").strip().lower()
+    if value in {PINYIN_ASR_LANGUAGE, "中文-拼音", "中文拼音"}:
+        return PINYIN_ASR_LANGUAGE, True
+    return value or "zh", False
 
 
 def _validate_runtime_options(tempo: float, batch_size: int, asr_batch_size: int) -> None:
@@ -176,6 +205,39 @@ def run_romaji_asr(
 def run_phoneme_asr_and_fa(*args, **kwargs):
     return run_romaji_asr(*args, **kwargs)
 
+
+def run_pinyin_asr(
+    chunks,
+    sr,
+    temp_dir_path,
+    matcher,
+    asr_model_path,
+    device,
+    language=PINYIN_ASR_LANGUAGE,
+    lyric_output_mode=None,
+    asr_batch_size=1,
+    cancel_checker=None,
+):
+    all_results, chunk_indices = batch_transcribe_pinyin_asr(
+        chunks,
+        sr,
+        temp_dir_path=temp_dir_path,
+        model_dir=asr_model_path,
+        device=device,
+        asr_batch_size=asr_batch_size,
+        cancel_checker=cancel_checker,
+    )
+    chars_dict, chunk_logs = process_asr_to_phonemes(
+        all_results,
+        chunk_indices,
+        temp_dir_path,
+        language,
+        matcher,
+        lyric_output_mode=lyric_output_mode,
+        use_asr_phonemes=True,
+    )
+    return chars_dict, chunk_logs
+
 def auto_lyric_hybrid_pipeline(
     audio_path: str,
     output_filename: str,
@@ -207,6 +269,7 @@ def auto_lyric_hybrid_pipeline(
     debug_mode: bool = False,
     rmvpe_model_path: str = "",
     phoneme_asr_model_path: str = "",
+    pinyin_asr_model_path: str = "",
     cancel_checker=None,
 ):
     """Auto Lyric Hybrid ONNX pipeline."""
@@ -217,8 +280,10 @@ def auto_lyric_hybrid_pipeline(
     output_format_set = set(output_formats)
     output_dir = pathlib.Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    language = (language or "zh").lower()
+    language, use_pinyin_asr = normalize_pipeline_language(language)
     lyric_output_mode = _normalize_lyric_output_mode(language, lyric_output_mode)
+    # HFA/GAME/VSQX only know the base languages; the pinyin ASR is a zh variant.
+    fa_language = "zh" if language == PINYIN_ASR_LANGUAGE else language
     print(f"\n[Hybrid Pipeline] Processing audio: {audio_path}")
 
     def _check_cancel():
@@ -281,9 +346,14 @@ def auto_lyric_hybrid_pipeline(
         chars_dict = {}
 
         if run_lyric_alignment:
-            use_phoneme_asr = language == "ja" and lyric_output_mode in {"romaji", "kana"}
+            phoneme_asr_engine = None
+            if language == "ja" and lyric_output_mode in {"romaji", "kana"}:
+                phoneme_asr_engine = "romaji"
+            elif use_pinyin_asr:
+                phoneme_asr_engine = "pinyin"
+
             phoneme_asr_path = None
-            if use_phoneme_asr:
+            if phoneme_asr_engine == "romaji":
                 print("\n--- Stage 1/3: Running mora ASR for Japanese lyric mode ---")
                 phoneme_asr_path = _select_romaji_asr_path(phoneme_asr_model_path)
                 if phoneme_asr_path is None:
@@ -291,10 +361,32 @@ def auto_lyric_hybrid_pipeline(
                         "[Warning] Romaji ASR model not found; "
                         "falling back to text ASR + Japanese G2P."
                     )
-                    use_phoneme_asr = False
+                    phoneme_asr_engine = None
+            elif phoneme_asr_engine == "pinyin":
+                print("\n--- Stage 1/3: Running pinyin ASR for Chinese-pinyin lyric mode ---")
+                phoneme_asr_path = _select_pinyin_asr_path(pinyin_asr_model_path)
+                if phoneme_asr_path is None:
+                    print(
+                        "[Warning] Pinyin ASR model not found; "
+                        "falling back to text ASR (Qwen) + Chinese G2P."
+                    )
+                    phoneme_asr_engine = None
 
-            if use_phoneme_asr:
+            if phoneme_asr_engine == "romaji":
                 chars_dict, chunk_logs = run_romaji_asr(
+                    chunks,
+                    sr,
+                    temp_dir_path,
+                    matcher,
+                    asr_model_path=phoneme_asr_path,
+                    device=device,
+                    language=language,
+                    lyric_output_mode=lyric_output_mode,
+                    asr_batch_size=asr_batch_size,
+                    cancel_checker=cancel_checker,
+                )
+            elif phoneme_asr_engine == "pinyin":
+                chars_dict, chunk_logs = run_pinyin_asr(
                     chunks,
                     sr,
                     temp_dir_path,
@@ -309,6 +401,8 @@ def auto_lyric_hybrid_pipeline(
             else:
                 if language == "ja" and lyric_output_mode in {"romaji", "kana"}:
                     print("\n--- Stage 1/3: Mora ASR unavailable; fallback to text ASR + Japanese G2P ---")
+                elif use_pinyin_asr:
+                    print("\n--- Stage 1/3: Pinyin ASR unavailable; fallback to text ASR + Chinese G2P ---")
                 else:
                     print("\n--- Stage 1/3: Running ASR in subprocess isolation mode ---")
                 chars_dict, chunk_logs = run_qwen_asr_and_fa(
@@ -344,7 +438,7 @@ def auto_lyric_hybrid_pipeline(
                     pred_dict = run_hubert_fa(
                         hfa_model,
                         temp_dir_path,
-                        language=language,
+                        language=fa_language,
                         cancel_checker=cancel_checker,
                     )
                     _check_cancel()
@@ -398,7 +492,7 @@ def auto_lyric_hybrid_pipeline(
                     seg_threshold, seg_radius, est_threshold, batch_size,
                     debug_mode=debug_mode,
                     cancel_checker=cancel_checker,
-                    language=language,
+                    language=fa_language,
                 )
                 if isinstance(aligned_result, tuple):
                     all_notes, processed_aligned_chunks = aligned_result
@@ -420,7 +514,7 @@ def auto_lyric_hybrid_pipeline(
                             seg_threshold, seg_radius, est_threshold, batch_size,
                             debug_mode=debug_mode,
                             cancel_checker=cancel_checker,
-                            language=language,
+                            language=fa_language,
                         )
                     )
             else:
@@ -429,7 +523,7 @@ def auto_lyric_hybrid_pipeline(
                     seg_threshold, seg_radius, est_threshold, batch_size,
                     debug_mode=debug_mode,
                     cancel_checker=cancel_checker,
-                    language=language,
+                    language=fa_language,
                 )
             _check_cancel()
         finally:
@@ -459,7 +553,7 @@ def auto_lyric_hybrid_pipeline(
     if "ustx" in output_format_set:
         save_ustx(all_notes, output_dir / f"{output_key}.ustx", tempo=float(tempo), rmvpe_result=rmvpe_result)
     if "vsqx" in output_format_set:
-        save_vsqx(all_notes, output_dir / f"{output_key}.vsqx", tempo=float(tempo), language=language, rmvpe_result=rmvpe_result)
+        save_vsqx(all_notes, output_dir / f"{output_key}.vsqx", tempo=float(tempo), language=fa_language, rmvpe_result=rmvpe_result)
 
 
 if __name__ == "__main__":

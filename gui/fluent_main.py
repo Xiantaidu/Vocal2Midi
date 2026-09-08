@@ -8,6 +8,7 @@ from PyQt5.QtGui import QIcon
 from qfluentwidgets import FluentWindow, NavigationItemPosition, setTheme, Theme, FluentIcon
 
 from gui.global_settings_view import GlobalSettingsInterface
+from gui.model_config_view import ModelConfigInterface
 from gui.auto_lyric_view import AutoLyricInterface
 
 
@@ -31,12 +32,22 @@ class MainWindow(FluentWindow):
         setTheme(Theme.LIGHT)
 
         self.globalSettingsInterface = GlobalSettingsInterface(self)
-        self.autoLyricInterface = AutoLyricInterface(self.globalSettingsInterface, self)
+        self.modelConfigInterface = ModelConfigInterface(
+            self.globalSettingsInterface.settings,
+            self.globalSettingsInterface.project_root,
+            self,
+        )
+        self.autoLyricInterface = AutoLyricInterface(
+            self.globalSettingsInterface,
+            self.modelConfigInterface,
+            self,
+        )
 
         self.initNavigation()
 
     def initNavigation(self):
         self.addSubInterface(self.autoLyricInterface, FluentIcon.MUSIC, "自动提取与灌注")
+        self.addSubInterface(self.modelConfigInterface, FluentIcon.DEVELOPER_TOOLS, "模型配置")
         self.addSubInterface(self.globalSettingsInterface, FluentIcon.SETTING, "全局设置", position=NavigationItemPosition.BOTTOM)
 
         # Hide the hamburger/menu button at the top of the sidebar.
