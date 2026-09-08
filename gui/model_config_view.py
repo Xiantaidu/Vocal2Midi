@@ -97,7 +97,9 @@ class ModelConfigInterface(ScrollArea):
             try:
                 value = str(p.resolve().relative_to(self.project_root)).replace("\\", "/")
             except ValueError:
-                value = fallback_relative
+                # Path outside the project (e.g. models on another drive):
+                # keep the user's absolute path; never silently reset it.
+                value = str(p.resolve())
         self.settings.setValue(key, value)
         return value
 

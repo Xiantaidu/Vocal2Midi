@@ -246,9 +246,10 @@ class GlobalSettingsInterface(ScrollArea):
         self.cb_txt.setChecked(self.default_values["debug_txt"])
         self.cb_csv.setChecked(self.default_values["debug_csv"])
         self.cb_chunks.setChecked(self.default_values["debug_chunks"])
-        self.settings.setValue("enable_lyrics_match", self.default_values["enable_lyrics_match"])
         self.pitch_combo.setCurrentText(self.default_values["pitch_format"])
         self.cb_round.setChecked(self.default_values["round_pitch"])
+        # Note: enable_lyrics_match / output_lyrics live in AutoLyricInterface;
+        # this view deliberately does not reset them (UI would desync).
 
     def get_slice_bounds(self) -> tuple[float, float]:
         slice_min_sec = float(self.slice_min_spin.value())

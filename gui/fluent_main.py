@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QMessageBox
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QIcon
 
@@ -60,6 +60,25 @@ class MainWindow(FluentWindow):
 
         self.navigationInterface.setCurrentItem(self.autoLyricInterface.objectName())
         self.stackedWidget.setCurrentWidget(self.autoLyricInterface)
+
+    def closeEvent(self, event):
+        # Destroying a running QThread crashes at exit ("QThread: Destroyed
+        # while thread is still running"); stop the worker first.
+        worker = getattr(self.autoLyricInterface, "worker", None)
+        if worker is not None and worker.isRunning():
+            answer = QMessageBox.question(
+                self,
+                "任务仍在运行",
+                "提取任务尚未结束，关闭窗口将强制停止任务。确定关闭吗？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                event.ignore()
+                return
+            worker.stop()
+            worker.wait(5000)
+        event.accept()
 
 
 def run_app():

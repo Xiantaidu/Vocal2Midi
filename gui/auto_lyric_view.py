@@ -215,12 +215,18 @@ class AutoLyricInterface(ScrollArea):
         self.setWidgetResizable(True)
 
         self.worker = None
+        self._last_device = None
         self.update_lyrics_visibility()
         self.update_lyric_output_options(self.lang_combo.currentText())
-        self.apply_device_batch_defaults(self.device_combo.currentText())
+        self._last_device = self.device_combo.currentText()  # baseline; don't wipe saved batches on startup
         self.on_export_format_changed(self.export_format_combo.currentText())
 
     def apply_device_batch_defaults(self, device: str):
+        # Apply conservative batch defaults only when the device actually
+        # changes; never wipe a value the user persisted in global settings.
+        if device == self._last_device:
+            return
+        self._last_device = device
         self.global_settings.batch_spin.setValue(1)
         self.global_settings.asr_batch_spin.setValue(2)
 
@@ -339,12 +345,11 @@ class AutoLyricInterface(ScrollArea):
             line_edit.setText(dir_path)
 
     def add_audio_files(self):
-        file, _ = QFileDialog.getOpenFileName(
+        files, _ = QFileDialog.getOpenFileNames(
             self, "选择音频文件", "",
             "Audio Files (*.wav *.m4a *.flac *.mp3 *.ogg *.opus *.wma *.webm *.aif *.aiff)"
         )
-        if file:
-            self.audio_list.clear()
+        for file in files:
             self.audio_list.addItem(file)
 
     def clear_audio_files(self):
