@@ -160,10 +160,11 @@ def _normalize_lyric_output_mode(language, lyric_output_mode):
     mode = aliases.get(lyric_output_mode, mode)
     valid_modes = {
         "zh": {"pinyin", "hanzi"},
+        "zh-pinyin": {"pinyin"},
         "ja": {"romaji", "kana"},
         "en": {"word"},
     }
-    defaults = {"zh": "hanzi", "ja": "romaji", "en": "word"}
+    defaults = {"zh": "hanzi", "zh-pinyin": "pinyin", "ja": "romaji", "en": "word"}
     return mode if mode in valid_modes.get(language, set()) else defaults.get(language, "hanzi")
 
 
@@ -185,6 +186,7 @@ def _select_matched_display_tokens(language, lyric_output_mode, matched_text, ma
     mode = _normalize_lyric_output_mode(language, lyric_output_mode)
     phonetic_mode = (
         (language == "zh" and mode == "pinyin")
+        or (language == "zh-pinyin")
         or (language == "ja" and mode == "romaji")
         or language == "en"
     )
@@ -194,7 +196,7 @@ def _select_matched_display_tokens(language, lyric_output_mode, matched_text, ma
 
 def _join_display_tokens(language, lyric_output_mode, tokens):
     mode = _normalize_lyric_output_mode(language, lyric_output_mode)
-    if (language == "zh" and mode == "pinyin") or (language == "ja" and mode == "romaji") or language == "en":
+    if (language == "zh" and mode == "pinyin") or language == "zh-pinyin" or (language == "ja" and mode == "romaji") or language == "en":
         return " ".join(tokens)
     return "".join(tokens)
 
@@ -298,7 +300,11 @@ def process_asr_to_phonemes(
 
         match_status = "No original lyrics provided"
         if direct_phoneme_tokens:
-            romaji_moras = _phoneme_tokens_to_romaji_moras(direct_phoneme_tokens)
+            if language == "zh-pinyin":
+                # Pinyin ASR emits whole toneless syllables already; no mora joining.
+                romaji_moras = [token for token in direct_phoneme_tokens if token != "SP"]
+            else:
+                romaji_moras = _phoneme_tokens_to_romaji_moras(direct_phoneme_tokens)
             matched_direct = _align_direct_phoneme_moras_with_matcher(
                 language,
                 lyric_output_mode,
@@ -313,10 +319,10 @@ def process_asr_to_phonemes(
                 match_reason = matched_direct["reason"]
                 match_status = "Direct phoneme ASR -> Matched original lyrics"
             else:
-                if use_asr_phonemes and language == "ja":
+                if use_asr_phonemes and language in {"ja", "zh-pinyin"}:
                     pinyin_str = " ".join(token for token in romaji_moras if token not in {"AP", "EP", "SP"})
                     chars = _direct_moras_to_display_tokens(language, lyric_output_mode, romaji_moras)
-                    match_status = "Direct mora ASR"
+                    match_status = "Direct pinyin ASR" if language == "zh-pinyin" else "Direct mora ASR"
                 elif write_asr_phoneme_lab:
                     pinyin_str = " ".join(direct_phoneme_tokens)
                     chars = romaji_moras or direct_phoneme_tokens

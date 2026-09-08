@@ -1,6 +1,6 @@
 import pathlib
 
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFileDialog
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout
 from PyQt5.QtCore import Qt, QSettings
 
 from application.config import (
@@ -15,7 +15,6 @@ from qfluentwidgets import (
     PushButton,
     CardWidget,
     BodyLabel,
-    LineEdit,
     ComboBox,
     SpinBox,
     DoubleSpinBox,
@@ -38,11 +37,6 @@ class GlobalSettingsInterface(ScrollArea):
             self.settings = QSettings(str(settings_path), QSettings.IniFormat)
             self.settings.setFallbacksEnabled(False)
         self.default_values = {
-            "game_model": "experiments/GAME-1.0.3-medium-onnx",
-            "hfa_model": "experiments/1218_hfa_model_new_dict",
-            "asr_model": "experiments/Qwen3-ASR-1.7B-dml",
-            "phoneme_asr_model": "experiments/romajiASR",
-            "rmvpe_model": "experiments/RMVPE/rmvpe.onnx",
             "seg_thresh": 0.2,
             "seg_rad": 0.02,
             "est_thresh": 0.2,
@@ -86,70 +80,6 @@ class GlobalSettingsInterface(ScrollArea):
         btn_reset.clicked.connect(self.reset_to_default)
         title_layout.addWidget(btn_reset)
         self.vBoxLayout.addLayout(title_layout)
-
-        model_card = CardWidget(self)
-        model_layout = QVBoxLayout(model_card)
-        model_title = BodyLabel("模型配置", self)
-        model_title.setStyleSheet("font-weight: bold; font-size: 14px;")
-        model_layout.addWidget(model_title)
-
-        game_layout = QHBoxLayout()
-        game_layout.addWidget(BodyLabel("GAME 模型路径:", self))
-        self.game_model_edit = LineEdit(self)
-        self.game_model_edit.setText(self._normalize_model_path("game_model", self.default_values["game_model"]))
-        self.game_model_edit.textChanged.connect(lambda t: self.settings.setValue("game_model", t))
-        game_layout.addWidget(self.game_model_edit, 1)
-        btn_browse_game = PushButton("浏览", self, FluentIcon.FOLDER)
-        btn_browse_game.clicked.connect(lambda: self.browse_dir(self.game_model_edit))
-        game_layout.addWidget(btn_browse_game)
-        model_layout.addLayout(game_layout)
-
-        hfa_layout = QHBoxLayout()
-        hfa_layout.addWidget(BodyLabel("HubertFA模型路径:", self))
-        self.hfa_model_edit = LineEdit(self)
-        self.hfa_model_edit.setText(self._normalize_model_path("hfa_model", self.default_values["hfa_model"]))
-        self.hfa_model_edit.textChanged.connect(lambda t: self.settings.setValue("hfa_model", t))
-        hfa_layout.addWidget(self.hfa_model_edit, 1)
-        btn_hfa = PushButton("浏览", self, FluentIcon.FOLDER)
-        btn_hfa.clicked.connect(lambda: self.browse_dir(self.hfa_model_edit))
-        hfa_layout.addWidget(btn_hfa)
-        model_layout.addLayout(hfa_layout)
-
-        asr_layout = QHBoxLayout()
-        asr_layout.addWidget(BodyLabel("Qwen3-ASR模型路径:", self))
-        self.asr_model_edit = LineEdit(self)
-        self.asr_model_edit.setText(self._normalize_model_path("asr_model", self.default_values["asr_model"]))
-        self.asr_model_edit.textChanged.connect(lambda t: self.settings.setValue("asr_model", t))
-        asr_layout.addWidget(self.asr_model_edit, 1)
-        btn_asr = PushButton("浏览", self, FluentIcon.FOLDER)
-        btn_asr.clicked.connect(lambda: self.browse_dir(self.asr_model_edit))
-        asr_layout.addWidget(btn_asr)
-        model_layout.addLayout(asr_layout)
-
-        phoneme_asr_layout = QHBoxLayout()
-        phoneme_asr_layout.addWidget(BodyLabel("音素ASR模型路径:", self))
-        self.phoneme_asr_model_edit = LineEdit(self)
-        self.phoneme_asr_model_edit.setText(
-            self._normalize_model_path("phoneme_asr_model", self.default_values["phoneme_asr_model"])
-        )
-        self.phoneme_asr_model_edit.textChanged.connect(lambda t: self.settings.setValue("phoneme_asr_model", t))
-        phoneme_asr_layout.addWidget(self.phoneme_asr_model_edit, 1)
-        btn_phoneme_asr = PushButton("浏览", self, FluentIcon.FOLDER)
-        btn_phoneme_asr.clicked.connect(lambda: self.browse_dir(self.phoneme_asr_model_edit))
-        phoneme_asr_layout.addWidget(btn_phoneme_asr)
-        model_layout.addLayout(phoneme_asr_layout)
-
-        rmvpe_layout = QHBoxLayout()
-        rmvpe_layout.addWidget(BodyLabel("RMVPE模型文件路径:", self))
-        self.rmvpe_model_edit = LineEdit(self)
-        self.rmvpe_model_edit.setText(self._normalize_model_path("rmvpe_model", self.default_values["rmvpe_model"]))
-        self.rmvpe_model_edit.textChanged.connect(lambda t: self.settings.setValue("rmvpe_model", t))
-        rmvpe_layout.addWidget(self.rmvpe_model_edit, 1)
-        btn_rmvpe = PushButton("浏览", self, FluentIcon.FOLDER)
-        btn_rmvpe.clicked.connect(lambda: self.browse_file(self.rmvpe_model_edit))
-        rmvpe_layout.addWidget(btn_rmvpe)
-        model_layout.addLayout(rmvpe_layout)
-        self.vBoxLayout.addWidget(model_card)
 
         adv_card = CardWidget(self)
         adv_layout = QVBoxLayout(adv_card)
@@ -304,11 +234,6 @@ class GlobalSettingsInterface(ScrollArea):
         self.setWidgetResizable(True)
 
     def reset_to_default(self):
-        self.game_model_edit.setText(self.default_values["game_model"])
-        self.hfa_model_edit.setText(self.default_values["hfa_model"])
-        self.asr_model_edit.setText(self.default_values["asr_model"])
-        self.phoneme_asr_model_edit.setText(self.default_values["phoneme_asr_model"])
-        self.rmvpe_model_edit.setText(self.default_values["rmvpe_model"])
         self.seg_thresh_spin.setValue(self.default_values["seg_thresh"])
         self.seg_rad_spin.setValue(self.default_values["seg_rad"])
         self.est_thresh_spin.setValue(self.default_values["est_thresh"])
@@ -324,38 +249,6 @@ class GlobalSettingsInterface(ScrollArea):
         self.settings.setValue("enable_lyrics_match", self.default_values["enable_lyrics_match"])
         self.pitch_combo.setCurrentText(self.default_values["pitch_format"])
         self.cb_round.setChecked(self.default_values["round_pitch"])
-
-    def browse_dir(self, line_edit):
-        dir_path = QFileDialog.getExistingDirectory(self, "选择文件夹", line_edit.text())
-        if dir_path:
-            line_edit.setText(self._to_project_relative(dir_path))
-
-    def browse_file(self, line_edit):
-        file_path, _ = QFileDialog.getOpenFileName(self, "选择模型文件", line_edit.text(), "Model Files (*.pt *.pth *.bin *.onnx);;All Files (*)")
-        if file_path:
-            line_edit.setText(self._to_project_relative(file_path))
-
-    def _to_project_relative(self, path_str: str) -> str:
-        p = pathlib.Path(path_str).resolve()
-        try:
-            return str(p.relative_to(self.project_root)).replace("\\", "/")
-        except ValueError:
-            return str(p)
-
-    def _normalize_model_path(self, key: str, fallback_relative: str) -> str:
-        raw_value = self.settings.value(key, fallback_relative)
-        value = str(raw_value) if raw_value is not None else fallback_relative
-        p = pathlib.Path(value)
-
-                                          
-        if p.is_absolute():
-            try:
-                value = str(p.resolve().relative_to(self.project_root)).replace("\\", "/")
-            except ValueError:
-                value = fallback_relative
-
-        self.settings.setValue(key, value)
-        return value
 
     def get_slice_bounds(self) -> tuple[float, float]:
         slice_min_sec = float(self.slice_min_spin.value())

@@ -63,3 +63,4 @@ inference/qwen3asr_dml/bin/libllama.so
 inference/qwen3asr_dml/bin/*.so
 inference/qwen3asr_dml/bin/*.dylib
 uv.lock
+.zcode/plans/plan-sess_57059937-64c6-4411-bd4a-f937636b5b26.md

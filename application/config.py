@@ -69,6 +69,7 @@ class PipelineConfig:
     output_lyrics: bool = True
     rmvpe_model_path: str = ""
     phoneme_asr_model_path: str = ""
+    pinyin_asr_model_path: str = ""
     output_pitch_curve: bool = False
     debug_mode: bool = False
     cancel_checker: Optional[Callable[[], bool]] = None
@@ -104,6 +105,7 @@ class PipelineConfig:
             "output_lyrics": self.output_lyrics,
             "rmvpe_model_path": self.rmvpe_model_path,
             "phoneme_asr_model_path": self.phoneme_asr_model_path,
+            "pinyin_asr_model_path": self.pinyin_asr_model_path,
             "output_pitch_curve": self.output_pitch_curve,
             "debug_mode": self.debug_mode,
             "cancel_checker": self.cancel_checker,

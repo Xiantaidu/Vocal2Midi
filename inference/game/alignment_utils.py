@@ -95,7 +95,8 @@ def align_notes_to_words(
         note_seq: list[str],
         note_dur: list[float],
         tol: float = 0.01,
-        apply_word_uv: bool = False
+        apply_word_uv: bool = False,
+        assign_by_onset: bool = False
 ) -> tuple[list[str], list[float], list[int]]:
     """
     Align note sequence to word durations.
@@ -105,6 +106,8 @@ def align_notes_to_words(
     :param note_dur: list of note durations
     :param tol: tolerance for alignment (in seconds)
     :param apply_word_uv: whether to set note pitch to "rest" for unvoiced words
+    :param assign_by_onset: assign a note wholly to the word containing its
+        onset instead of splitting notes that straddle a word boundary
     :return: new_note_seq, new_note_dur, note_slur (1 for slur, 0 for non-slur)
     """
     if not word_dur or not note_dur or not note_seq:
@@ -148,7 +151,10 @@ def align_notes_to_words(
         if end <= start:
             continue
 
-        while note_idx < len(note_end) and note_end[note_idx] <= start + _ALIGN_MIN_GAP:
+        while note_idx < len(note_end) and (
+            note_end[note_idx] <= start + _ALIGN_MIN_GAP
+            or (assign_by_onset and note_start[note_idx] < start - _ALIGN_MIN_GAP)
+        ):
             note_idx += 1
 
         if apply_word_uv and word_vuv[word_idx] == 0:
@@ -165,7 +171,11 @@ def align_notes_to_words(
         scan_idx = note_idx
         while scan_idx < len(note_seq) and note_start[scan_idx] < end - _ALIGN_MIN_GAP:
             seg_start = max(start, float(note_start[scan_idx]))
-            seg_end = min(end, float(note_end[scan_idx]))
+            if assign_by_onset:
+                # Onset assignment keeps the whole note with its own word.
+                seg_end = float(note_end[scan_idx])
+            else:
+                seg_end = min(end, float(note_end[scan_idx]))
             seg_dur = seg_end - seg_start
             if seg_dur > _ALIGN_MIN_GAP:
                 if word_note_seq and word_note_seq[-1] == note_seq[scan_idx]:

@@ -16,6 +16,8 @@ def parse_quantization_mode(mode_option: str) -> str:
     mode_option = mode_option or ""
     if "开发中" in mode_option:
         return "bayes"
+    if "修复" in mode_option or "repair" in mode_option.lower():
+        return "repair"
     if "SV" in mode_option or "SynthV" in mode_option:
         return "bayes"
     if "Bayes" in mode_option or "贝叶斯" in mode_option:

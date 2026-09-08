@@ -154,6 +154,10 @@ and the `inference/romaji_asr/` runtime integration.
 - Qwen3-ASR transcribes with the `English` language prompt; CJK bleed-over,
   digits, and punctuation are stripped so only dictionary-friendly words remain.
 - The `word` lyric output mode assigns one note per English word.
+- After HubertFA, multi-syllable words are split into per-syllable time
+  chunks (e.g. `impossible` -> im/poss/ible) that are fed to GAME as align
+  units: the word lyric lands on the first note, later syllable positions
+  are marked `+`, and melisma/转音 notes inside a syllable fall back to `-`.
 - If reference lyrics are provided, they are matched word-by-word against the
   ASR output before alignment.
 - HubertFA aligns through the DiffSinger CMU dict (`ds_cmudict-07b.txt`) shipped

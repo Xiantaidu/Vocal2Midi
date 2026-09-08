@@ -32,6 +32,8 @@ _DPQ_SEGMENT_SHIFT_CANDIDATES = (0, 60, 120)
 _DPQ_SEGMENT_CENTER_WEIGHT = 0.02
 _DPQ_SEGMENT_SWITCH_PENALTY = 1.0
 _DPQ_SEGMENT_TIE_DELAY_BONUS = 0.4
+# Slur/continuation note lyric; English pipelines emit '+' instead of '-'.
+_TIE_LYRICS = ("-", "+")
 _DPQ_SEGMENT_ZERO_GAP_BONUS = 0.3
 _DPQ_SEGMENT_LONG_DELAY_BONUS = 0.2
 _DPQ_SEGMENT_LONG_THRESHOLD = 240
@@ -243,8 +245,8 @@ def _segment_split_indices(pairs: list[dict[str, Any]], step: int) -> list[tuple
         prev = pairs[i - 1]
         cur = pairs[i]
         raw_gap = cur["raw_start"] - prev["raw_end"]
-        prev_tie = prev.get("lyrics") == "-"
-        cur_tie = cur.get("lyrics") == "-"
+        prev_tie = prev.get("lyrics") in _TIE_LYRICS
+        cur_tie = cur.get("lyrics") in _TIE_LYRICS
 
         should_split = False
         if raw_gap >= split_gap:
@@ -296,7 +298,7 @@ def _center_adjustment(
         return penalty
 
     bonus = 0.0
-    if pair.get("lyrics") == "-":
+    if pair.get("lyrics") in _TIE_LYRICS:
         bonus += _DPQ_SEGMENT_TIE_DELAY_BONUS
     raw_gap = 0 if prev_raw_end is None else pair["raw_start"] - prev_raw_end
     if raw_gap == 0:
@@ -509,7 +511,7 @@ def _build_piece_specific_priors(
         key = (
             max(1, int(round(pair["raw_dur"] / max(step, 1)))),
             int(round(pair.get("raw_gap", 0) / max(step, 1))),
-            pair.get("lyrics") == "-",
+            pair.get("lyrics") in _TIE_LYRICS,
         )
         grouped.setdefault(key, []).append(pair)
 
@@ -535,7 +537,7 @@ def _build_piece_specific_priors(
         key = (
             max(1, int(round(pair["raw_dur"] / max(step, 1)))),
             int(round(pair.get("raw_gap", 0) / max(step, 1))),
-            pair.get("lyrics") == "-",
+            pair.get("lyrics") in _TIE_LYRICS,
         )
         priors.append(prior_by_key.get(key, {"count": 1, "strength": 0.0}))
     return priors
@@ -799,6 +801,11 @@ def quantize_notes(notes: list[Any], tempo: float, quantization_step: int, mode:
     elif mode == "dp":
         # Keep SVP-style phrase DP, but honor the requested grid when one is provided.
         _quantize_notes_dp_asym(notes, tempo, quantization_step)
+    elif mode == "repair":
+        # Lazy import: rhythm_repair reuses private helpers from this module.
+        from inference.quant.rhythm_repair import repair_rhythm
+
+        repair_rhythm(notes, tempo, quantization_step)
     else:
         _quantize_notes_simple(notes, tempo, quantization_step)
 

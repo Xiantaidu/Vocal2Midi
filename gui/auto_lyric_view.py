@@ -20,16 +20,17 @@ from qfluentwidgets import (
 )
 
 from application.config import PipelineConfig, validate_slice_bounds
-from gui.fluent_utils import t0_nstep_to_ts
+from gui.fluent_utils import parse_quantization, parse_quantization_mode, t0_nstep_to_ts
 from gui.fluent_worker import WorkerThread, HYBRID_AVAILABLE
 from gui.settings_utils import default_output_dir
 from inference.device_utils import VISIBLE_RUNTIME_DEVICE_CHOICES, normalize_runtime_device
 
 
 class AutoLyricInterface(ScrollArea):
-    def __init__(self, global_settings, parent=None):
+    def __init__(self, global_settings, model_config, parent=None):
         super().__init__(parent=parent)
         self.global_settings = global_settings
+        self.model_config = model_config
         self.view = QWidget(self)
         self.vBoxLayout = QVBoxLayout(self.view)
 
@@ -91,7 +92,7 @@ class AutoLyricInterface(ScrollArea):
         combo_row1.addSpacing(28)
         combo_row1.addWidget(BodyLabel("目标语言", self))
         self.lang_combo = ComboBox(self)
-        self.lang_combo.addItems(["zh", "ja", "en"])
+        self.lang_combo.addItems(["zh", "中文-拼音", "ja", "en"])
         self.lang_combo.currentTextChanged.connect(self.update_lyric_output_options)
         combo_row1.addWidget(self.lang_combo)
 
@@ -168,15 +169,13 @@ class AutoLyricInterface(ScrollArea):
         self.quantize_combo = ComboBox(self)
         self.quantize_combo.addItems(["不量化", "1/4 音符 (1拍)", "1/8 音符 (1/2拍)", "1/16 音符 (1/4拍)", "1/32 音符 (1/8拍)", "1/64 音符 (1/16拍)"])
         self.quantize_combo.setCurrentIndex(0)
-        self.quantize_combo.setEnabled(False)
         opts_layout.addWidget(self.quantize_combo)
 
         opts_layout.addSpacing(20)
         opts_layout.addWidget(BodyLabel("量化算法:", self))
         self.quantize_mode_combo = ComboBox(self)
-        self.quantize_mode_combo.addItem("开发中")
+        self.quantize_mode_combo.addItems(["节奏修复", "贝叶斯", "DP", "简单"])
         self.quantize_mode_combo.setCurrentIndex(0)
-        self.quantize_mode_combo.setEnabled(False)
         opts_layout.addWidget(self.quantize_mode_combo)
 
         opts_layout.addStretch(1)
@@ -236,16 +235,28 @@ class AutoLyricInterface(ScrollArea):
 
     _LYRIC_OUTPUT_OPTIONS = {
         "zh": ["拼音", "汉字"],
+        "zh-pinyin": ["拼音"],
         "ja": ["罗马音", "假名"],
         "en": ["单词"],
     }
 
+    @staticmethod
+    def _normalize_language(display_text: str) -> str:
+        # '中文-拼音' selects the direct pinyin ASR engine.
+        text = str(display_text or "").strip()
+        if text in {"中文-拼音", "中文拼音", "zh-pinyin"}:
+            return "zh-pinyin"
+        return text or "zh"
+
+    def _selected_language(self) -> str:
+        return self._normalize_language(self.lang_combo.currentText())
+
     def _default_lyric_output_text(self, language: str):
-        defaults = {"zh": "汉字", "ja": "罗马音", "en": "单词"}
+        defaults = {"zh": "汉字", "zh-pinyin": "拼音", "ja": "罗马音", "en": "单词"}
         return defaults.get(language, "汉字")
 
     def save_lyric_output_preference(self, text: str):
-        language = self.lang_combo.currentText()
+        language = self._selected_language()
         if text:
             self.global_settings.settings.setValue(self._lyric_output_setting_key(language), text)
 
@@ -293,6 +304,7 @@ class AutoLyricInterface(ScrollArea):
         self.cb_pitch_curve.setEnabled(enabled)
 
     def update_lyric_output_options(self, language: str):
+        language = self._normalize_language(language)
         options = self._LYRIC_OUTPUT_OPTIONS.get(language, self._LYRIC_OUTPUT_OPTIONS["zh"])
         saved_text = self.global_settings.settings.value(
             self._lyric_output_setting_key(language),
@@ -311,14 +323,15 @@ class AutoLyricInterface(ScrollArea):
 
     def get_lyric_output_mode(self):
         text = self.lyric_output_combo.currentText()
-        default_by_language = {"zh": "hanzi", "ja": "romaji", "en": "word"}
+        language = self._selected_language()
+        default_by_language = {"zh": "hanzi", "zh-pinyin": "pinyin", "ja": "romaji", "en": "word"}
         return {
             "拼音": "pinyin",
             "汉字": "hanzi",
             "罗马音": "romaji",
             "假名": "kana",
             "单词": "word",
-        }.get(text, default_by_language.get(self.lang_combo.currentText(), "hanzi"))
+        }.get(text, default_by_language.get(language, "hanzi"))
 
     def browse_dir(self, line_edit):
         dir_path = QFileDialog.getExistingDirectory(self, "选择文件夹", line_edit.text())
@@ -393,11 +406,11 @@ class AutoLyricInterface(ScrollArea):
             audio_path="",  # set per-file in worker
             output_filename="",  # set per-file in worker
             output_dir=pathlib.Path(save_dir),
-            game_model_dir=self.global_settings.game_model_edit.text(),
-            hfa_model_dir=self.global_settings.hfa_model_edit.text(),
-            asr_model_path=self.global_settings.asr_model_edit.text(),
+            game_model_dir=self.model_config.game_model_edit.text(),
+            hfa_model_dir=self.model_config.hfa_model_edit.text(),
+            asr_model_path=self.model_config.asr_model_edit.text(),
             device=device,
-            language=self.lang_combo.currentText(),
+            language=self._selected_language(),
             ts=ts_list,
             lyric_output_mode=self.get_lyric_output_mode(),
             original_lyrics=self.lyrics_edit.toPlainText().strip() if self.cb_match_lyrics.isChecked() else "",
@@ -408,8 +421,8 @@ class AutoLyricInterface(ScrollArea):
             slice_min_sec=slice_min_sec,
             slice_max_sec=slice_max_sec,
             tempo=self.tempo_spin.value(),
-            quantization_step=0,
-            quantization_mode="simple",
+            quantization_step=parse_quantization(self.quantize_combo.currentText()),
+            quantization_mode=parse_quantization_mode(self.quantize_mode_combo.currentText()),
             pitch_format=self.global_settings.pitch_combo.currentText(),
             round_pitch=self.global_settings.cb_round.isChecked(),
             seg_threshold=self.global_settings.seg_thresh_spin.value(),
@@ -417,8 +430,9 @@ class AutoLyricInterface(ScrollArea):
             est_threshold=self.global_settings.est_thresh_spin.value(),
             batch_size=self.global_settings.batch_spin.value(),
             asr_batch_size=self.global_settings.asr_batch_spin.value(),
-            rmvpe_model_path=self.global_settings.rmvpe_model_edit.text(),
-            phoneme_asr_model_path=self.global_settings.phoneme_asr_model_edit.text(),
+            rmvpe_model_path=self.model_config.rmvpe_model_edit.text(),
+            phoneme_asr_model_path=self.model_config.phoneme_asr_model_edit.text(),
+            pinyin_asr_model_path=self.model_config.pinyin_asr_model_edit.text(),
         )
 
         self.log_edit.clear()
