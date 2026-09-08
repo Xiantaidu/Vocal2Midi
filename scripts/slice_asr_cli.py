@@ -666,7 +666,7 @@ def main():
     if not input_dir.exists() or not input_dir.is_dir():
         raise FileNotFoundError(f"Input directory does not exist: {input_dir}")
 
-    audio_files = collect_audio_files(input_dir, recursive=not args.no_recursive)
+    audio_files = collect_audio_files(input_dir, output_dir=output_dir, recursive=not args.no_recursive)
     if not audio_files:
         exts = ", ".join(sorted(INPUT_AUDIO_EXTENSIONS))
         print(f"No audio files found ({exts}) in: {input_dir}")
@@ -768,7 +768,7 @@ def main():
         f"\nDone. Total chunks: {total_chunks}, total labs: {total_labs}, "
         f"skipped existing: {skipped_existing}, skipped failed: {skipped_failed}"
     )
-    return 0
+    return 1 if skipped_failed else 0
 
 
 if __name__ == "__main__":

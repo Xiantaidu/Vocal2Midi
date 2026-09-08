@@ -20,9 +20,9 @@ class TestVocal2MidiError:
         assert err.details == ""
 
     def test_base_error_with_details(self):
-        """Base error should store details."""
+        """Base error should store details and render them in str()."""
         err = Vocal2MidiError("Something failed", details="Extra info")
-        assert str(err) == "Something failed"
+        assert str(err) == "Something failed: Extra info"
         assert err.details == "Extra info"
 
     def test_model_not_found_is_vocal2midi_error(self):
@@ -40,7 +40,7 @@ class TestVocal2MidiError:
         """ASRError should be a Vocal2MidiError."""
         err = ASRError("ASR failed", details="Subprocess exit code 1")
         assert isinstance(err, Vocal2MidiError)
-        assert str(err) == "ASR failed"
+        assert str(err) == "ASR failed: Subprocess exit code 1"
 
     def test_alignment_error(self):
         """AlignmentError should be a Vocal2MidiError."""

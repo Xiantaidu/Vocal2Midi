@@ -24,6 +24,18 @@ def _validate_model_paths(cfg: PipelineConfig) -> None:
                 required_paths.append(("拼音ASR模型路径", cfg.pinyin_asr_model_path))
         else:
             required_paths.append(("ASR 模型路径", cfg.asr_model_path))
+            # A provided romaji ASR path is used as-is by the ja pipeline;
+            # an empty one degrades gracefully, a broken one must fail here.
+            if cfg.language == "ja" and cfg.phoneme_asr_model_path:
+                required_paths.append(("音素ASR模型路径", cfg.phoneme_asr_model_path))
+
+    # Pitch curves require RMVPE; fail fast with a clear path instead of a
+    # mid-run error inside RmvpeTranscriber.
+    wants_pitch_curve = cfg.output_pitch_curve and any(
+        fmt in (cfg.output_formats or []) for fmt in ("ustx", "vsqx")
+    )
+    if wants_pitch_curve and cfg.rmvpe_model_path:
+        required_paths.append(("RMVPE 模型文件", cfg.rmvpe_model_path))
 
     errors = []
     for label, path in required_paths:

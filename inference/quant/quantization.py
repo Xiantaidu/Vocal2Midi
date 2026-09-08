@@ -811,7 +811,8 @@ def quantize_notes(notes: list[Any], tempo: float, quantization_step: int, mode:
 
 
 def should_apply_quantization(mode: str, quantization_step: int) -> bool:
-    mode = (mode or "simple").lower()
-    if mode == "dp":
-        return True
+    # "不量化" (step <= 0) must disable every mode. The dp mode used to
+    # short-circuit to True here, silently quantizing to its internal
+    # 1/16 grid even when the user requested no quantization.
+    del mode
     return quantization_step > 0

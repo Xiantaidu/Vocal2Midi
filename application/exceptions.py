@@ -9,7 +9,9 @@ class Vocal2MidiError(Exception):
     """Base exception for all Vocal2Midi-specific errors."""
 
     def __init__(self, message: str = "", *, details: str = ""):
-        super().__init__(message)
+        # Fold details into the rendered message so tracebacks shown to the
+        # user (GUI error dialog / worker error_signal) carry the specifics.
+        super().__init__(f"{message}: {details}" if details else message)
         self.details = details
 
 
