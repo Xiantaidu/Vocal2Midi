@@ -157,6 +157,7 @@ def _default_expressions() -> dict:
             "max": 120,
             "default_value": 0,
             "is_flag": False,
+            "flag": "",
         },
         "pitd": {
             "name": "pitch deviation",
@@ -166,6 +167,7 @@ def _default_expressions() -> dict:
             "max": 1200,
             "default_value": 0,
             "is_flag": False,
+            "flag": "",
         },
         "clr": {
             "name": "voice color",
@@ -195,6 +197,7 @@ def _default_expressions() -> dict:
             "max": 200,
             "default_value": 100,
             "is_flag": False,
+            "flag": "",
         },
         "vol": {
             "name": "volume",
@@ -204,6 +207,7 @@ def _default_expressions() -> dict:
             "max": 200,
             "default_value": 100,
             "is_flag": False,
+            "flag": "",
         },
         "atk": {
             "name": "attack",
@@ -213,6 +217,7 @@ def _default_expressions() -> dict:
             "max": 200,
             "default_value": 100,
             "is_flag": False,
+            "flag": "",
         },
         "dec": {
             "name": "decay",
@@ -222,6 +227,7 @@ def _default_expressions() -> dict:
             "max": 100,
             "default_value": 0,
             "is_flag": False,
+            "flag": "",
         },
         "gen": {
             "name": "gender",
