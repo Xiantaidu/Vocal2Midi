@@ -42,10 +42,11 @@ def _clamp_midi_pitch(pitch: float) -> int:
 def pad_1d_arrays(arrays: list[np.ndarray], pad_value=0.0) -> np.ndarray:
     """Pad a list of 1D numpy arrays to the maximum length and stack them."""
     if not arrays:
-        return np.array([])
+        return np.zeros((0, 0), dtype=np.float32)
     max_len = max(len(arr) for arr in arrays)
     if max_len == 0:
-        return np.zeros((len(arrays), 1), dtype=arrays[0].dtype)
+        # All inputs empty: return an (N, 0) matrix, not a phantom column.
+        return np.full((len(arrays), 0), pad_value, dtype=arrays[0].dtype)
 
     padded = []
     for arr in arrays:
@@ -60,31 +61,34 @@ def _save_midi(notes: list[NoteInfo], filepath: pathlib.Path, tempo: int = 120):
 
     sorted_notes = sorted(_finite_notes(notes), key=lambda n: n.onset)
 
-    last_abs_ticks = 0
+    # Absolute-tick event list: overlapping notes keep their own start/end
+    # instead of being shifted forward by the previous note's duration.
+    events: list[tuple[int, int, int, str, NoteInfo]] = []
     for note in sorted_notes:
-        abs_onset_ticks = round(note.onset * tempo * 8)
+        abs_onset_ticks = max(0, round(note.onset * tempo * 8))
         abs_offset_ticks = round(note.offset * tempo * 8)
-
-        if abs_onset_ticks < last_abs_ticks:
-            abs_onset_ticks = last_abs_ticks
-
         if abs_offset_ticks <= abs_onset_ticks:
             abs_offset_ticks = abs_onset_ticks + 1
 
         midi_pitch = _clamp_midi_pitch(note.pitch)
+        events.append((abs_onset_ticks, 1, midi_pitch, "on", note))
+        events.append((abs_offset_ticks, 0, midi_pitch, "off", note))
 
-        delta_onset_ticks = abs_onset_ticks - last_abs_ticks
-        note_duration_ticks = abs_offset_ticks - abs_onset_ticks
+    # Sort by tick; at equal ticks emit note_off before note_on.
+    events.sort(key=lambda e: (e[0], e[1]))
 
-        if getattr(note, "lyric", ""):
-            track.append(mido.MetaMessage('lyrics', text=note.lyric, time=delta_onset_ticks))
-            track.append(mido.Message("note_on", note=midi_pitch, velocity=100, time=0))
+    last_abs_ticks = 0
+    for abs_ticks, _order, midi_pitch, kind, note in events:
+        delta = abs_ticks - last_abs_ticks
+        if kind == "on":
+            if getattr(note, "lyric", ""):
+                track.append(mido.MetaMessage('lyrics', text=note.lyric, time=delta))
+                track.append(mido.Message("note_on", note=midi_pitch, velocity=100, time=0))
+            else:
+                track.append(mido.Message("note_on", note=midi_pitch, velocity=100, time=delta))
         else:
-            track.append(mido.Message("note_on", note=midi_pitch, velocity=100, time=delta_onset_ticks))
-
-        track.append(mido.Message("note_off", note=midi_pitch, velocity=100, time=note_duration_ticks))
-
-        last_abs_ticks = abs_offset_ticks
+            track.append(mido.Message("note_off", note=midi_pitch, velocity=100, time=delta))
+        last_abs_ticks = abs_ticks
 
     filepath.parent.mkdir(parents=True, exist_ok=True)
     with mido.MidiFile(charset="utf8") as midi_file:
@@ -111,7 +115,7 @@ def _save_text(
         if pitch_format == "name":
             pitch_txt = librosa.midi_to_note(float(np.clip(pitch, 0, 127)), unicode=False, cents=not round_pitch)
         else:
-            pitch_txt = f"{pitch:.3f}"
+            pitch_txt = f"{np.clip(pitch, 0, 127):.3f}"
         pitch_list.append(pitch_txt)
 
     filepath.parent.mkdir(parents=True, exist_ok=True)

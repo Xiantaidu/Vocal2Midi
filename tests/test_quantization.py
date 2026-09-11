@@ -48,16 +48,14 @@ def test_dp_quantization_changes_with_grid_size():
     assert ticks_8[1] % 240 == 0
 
 
-def test_dp_quantization_keeps_auto_mode_for_zero_step():
+def test_dp_quantization_no_ops_for_zero_step():
+    # "不量化" must disable dp too (it used to fall back to an internal
+    # 30-tick grid and quantize anyway).
     notes = [_note_from_ticks(113, 291, lyric="la")]
 
     quantize_notes(notes, tempo=120.0, quantization_step=0, mode="dp")
 
-    onset_tick = _ticks(notes[0].onset, 120.0)
-    offset_tick = _ticks(notes[0].offset, 120.0)
-    assert onset_tick % 30 == 0
-    assert offset_tick % 30 == 0
-    assert (onset_tick, offset_tick) != (113, 291)
+    assert (_ticks(notes[0].onset, 120.0), _ticks(notes[0].offset, 120.0)) == (113, 291)
 
 
 def test_bayes_quantization_prefers_stronger_beat_anchor():

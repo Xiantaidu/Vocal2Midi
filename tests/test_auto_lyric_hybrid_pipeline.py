@@ -70,7 +70,7 @@ def test_ja_romaji_mode_uses_mora_asr(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline, "export_hfa_artifacts", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         pipeline,
-        "extract_pitches_and_align_torch",
+        "extract_pitches_and_align",
         lambda *args, **kwargs: ([NoteInfo(0.0, 0.5, 60.0, "a")], {0}),
     )
 
@@ -99,7 +99,7 @@ def test_ja_kana_mode_uses_mora_asr_and_dictionary_hfa(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline, "export_hfa_artifacts", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         pipeline,
-        "extract_pitches_and_align_torch",
+        "extract_pitches_and_align",
         lambda *args, **kwargs: ([NoteInfo(0.0, 0.5, 60.0, "a")], {0}),
     )
 
@@ -123,7 +123,7 @@ def test_no_lyrics_mode_skips_asr_and_hfa(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline, "run_romaji_asr", run_phoneme)
     monkeypatch.setattr(pipeline, "load_hfa_model", load_hfa)
     extract_only = MagicMock(return_value=[NoteInfo(0.0, 0.5, 60.0, "")])
-    monkeypatch.setattr(pipeline, "extract_pitches_only_torch", extract_only)
+    monkeypatch.setattr(pipeline, "extract_pitches_only", extract_only)
 
     kwargs = _base_kwargs(tmp_path)
     kwargs["output_lyrics"] = False
@@ -144,7 +144,7 @@ def test_pitch_curve_runs_for_ustx_or_vsqx(monkeypatch, tmp_path):
     _patch_common(monkeypatch)
     monkeypatch.setattr(
         pipeline,
-        "extract_pitches_only_torch",
+        "extract_pitches_only",
         lambda *args, **kwargs: [NoteInfo(0.0, 0.5, 60.0, "a")],
     )
     result = RmvpeResult(
@@ -218,8 +218,8 @@ def test_empty_hfa_predictions_fall_back_to_pitch_only(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline, "run_hubert_fa", lambda *args, **kwargs: {})
     extract_aligned = MagicMock(return_value=([NoteInfo(0.0, 0.5, 60.0, "a")], {0}))
     extract_only = MagicMock(return_value=[NoteInfo(0.0, 0.5, 60.0, "")])
-    monkeypatch.setattr(pipeline, "extract_pitches_and_align_torch", extract_aligned)
-    monkeypatch.setattr(pipeline, "extract_pitches_only_torch", extract_only)
+    monkeypatch.setattr(pipeline, "extract_pitches_and_align", extract_aligned)
+    monkeypatch.setattr(pipeline, "extract_pitches_only", extract_only)
 
     kwargs = _base_kwargs(tmp_path)
     kwargs["language"] = "zh"
@@ -238,7 +238,7 @@ def test_empty_asr_results_fall_back_to_pitch_only(monkeypatch, tmp_path):
     load_hfa = MagicMock()
     extract_only = MagicMock(return_value=[NoteInfo(0.0, 0.5, 60.0, "")])
     monkeypatch.setattr(pipeline, "load_hfa_model", load_hfa)
-    monkeypatch.setattr(pipeline, "extract_pitches_only_torch", extract_only)
+    monkeypatch.setattr(pipeline, "extract_pitches_only", extract_only)
 
     kwargs = _base_kwargs(tmp_path)
     kwargs["language"] = "zh"
@@ -270,8 +270,8 @@ def test_missing_hfa_chunk_uses_pitch_only_fallback(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline, "export_hfa_artifacts", lambda *args, **kwargs: None)
     extract_aligned = MagicMock(return_value=([NoteInfo(0.0, 0.5, 60.0, "a")], {0}))
     extract_only = MagicMock(return_value=[NoteInfo(1.0, 1.5, 62.0, "")])
-    monkeypatch.setattr(pipeline, "extract_pitches_and_align_torch", extract_aligned)
-    monkeypatch.setattr(pipeline, "extract_pitches_only_torch", extract_only)
+    monkeypatch.setattr(pipeline, "extract_pitches_and_align", extract_aligned)
+    monkeypatch.setattr(pipeline, "extract_pitches_only", extract_only)
 
     kwargs = _base_kwargs(tmp_path)
     kwargs["language"] = "zh"
@@ -297,8 +297,8 @@ def test_unproductive_aligned_chunk_uses_pitch_only_fallback(monkeypatch, tmp_pa
     monkeypatch.setattr(pipeline, "export_hfa_artifacts", lambda *args, **kwargs: None)
     extract_aligned = MagicMock(return_value=([], set()))
     extract_only = MagicMock(return_value=[NoteInfo(0.0, 0.5, 62.0, "")])
-    monkeypatch.setattr(pipeline, "extract_pitches_and_align_torch", extract_aligned)
-    monkeypatch.setattr(pipeline, "extract_pitches_only_torch", extract_only)
+    monkeypatch.setattr(pipeline, "extract_pitches_and_align", extract_aligned)
+    monkeypatch.setattr(pipeline, "extract_pitches_only", extract_only)
 
     kwargs = _base_kwargs(tmp_path)
     kwargs["language"] = "zh"
@@ -320,7 +320,7 @@ def test_slice_bounds_are_forwarded_to_slicer(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline, "load_game_model", lambda *args, **kwargs: MagicMock())
     monkeypatch.setattr(
         pipeline,
-        "extract_pitches_only_torch",
+        "extract_pitches_only",
         lambda *args, **kwargs: [NoteInfo(0.0, 0.5, 60.0, "")],
     )
 

@@ -145,16 +145,70 @@ def align_notes_to_words(
     note_slur = []
     note_idx = 0
 
+    if assign_by_onset:
+        # Onset assignment: every note belongs wholly to the word containing
+        # its onset. Words without an onset are either covered by an earlier
+        # long note (emit a ZERO-length placeholder so lyric slots stay
+        # aligned without adding phantom time) or are true gaps (emit a rest
+        # spanning the word).
+        for word_idx in range(len(word_dur)):
+            start = float(word_start[word_idx])
+            end = float(word_end[word_idx])
+            if end <= start:
+                continue
+
+            while note_idx < len(note_end) and note_end[note_idx] <= start + _ALIGN_MIN_GAP:
+                note_idx += 1
+
+            # First note whose onset lies inside this word; an earlier note
+            # that still sounds covers this word instead.
+            scan_idx = note_idx
+            while scan_idx < len(note_seq) and note_start[scan_idx] < start - _ALIGN_MIN_GAP:
+                scan_idx += 1
+            has_onset_inside = scan_idx < len(note_seq) and note_start[scan_idx] < end - _ALIGN_MIN_GAP
+            covered = scan_idx > 0 and float(note_end[scan_idx - 1]) > start + _ALIGN_MIN_GAP
+
+            if apply_word_uv and word_vuv[word_idx] == 0:
+                # Unvoiced span: emit a rest, zero-length when a long note
+                # from an earlier word already owns this time.
+                new_note_seq.append("rest")
+                new_note_dur.append(0.0 if covered else end - start)
+                note_slur.append(0)
+                continue
+
+            if has_onset_inside:
+                first_in_word = True
+                cursor = start
+                idx = scan_idx
+                while idx < len(note_seq) and note_start[idx] < end - _ALIGN_MIN_GAP:
+                    gap = note_start[idx] - cursor
+                    if gap > _ALIGN_MIN_GAP:
+                        new_note_seq.append("rest")
+                        new_note_dur.append(gap)
+                        note_slur.append(0 if first_in_word else 1)
+                        first_in_word = False
+                    new_note_seq.append(note_seq[idx])
+                    new_note_dur.append(float(note_end[idx]) - float(note_start[idx]))
+                    note_slur.append(0 if first_in_word else 1)
+                    first_in_word = False
+                    cursor = float(note_end[idx])
+                    idx += 1
+                note_idx = idx
+                continue
+
+            if not has_onset_inside:
+                new_note_seq.append("rest")
+                new_note_dur.append(0.0 if covered else end - start)
+                note_slur.append(0)
+        return new_note_seq, new_note_dur, note_slur
+
     for word_idx in range(len(word_dur)):
         start = float(word_start[word_idx])
         end = float(word_end[word_idx])
         if end <= start:
             continue
 
-        while note_idx < len(note_end) and (
-            note_end[note_idx] <= start + _ALIGN_MIN_GAP
-            or (assign_by_onset and note_start[note_idx] < start - _ALIGN_MIN_GAP)
-        ):
+        while note_idx < len(note_end) and note_end[note_idx] <= start + _ALIGN_MIN_GAP:
             note_idx += 1
 
         if apply_word_uv and word_vuv[word_idx] == 0:
@@ -171,11 +225,7 @@ def align_notes_to_words(
         scan_idx = note_idx
         while scan_idx < len(note_seq) and note_start[scan_idx] < end - _ALIGN_MIN_GAP:
             seg_start = max(start, float(note_start[scan_idx]))
-            if assign_by_onset:
-                # Onset assignment keeps the whole note with its own word.
-                seg_end = float(note_end[scan_idx])
-            else:
-                seg_end = min(end, float(note_end[scan_idx]))
+            seg_end = min(end, float(note_end[scan_idx]))
             seg_dur = seg_end - seg_start
             if seg_dur > _ALIGN_MIN_GAP:
                 if word_note_seq and word_note_seq[-1] == note_seq[scan_idx]:

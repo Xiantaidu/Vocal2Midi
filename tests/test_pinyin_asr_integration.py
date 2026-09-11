@@ -101,7 +101,7 @@ def _patch_alignment_success(monkeypatch):
     monkeypatch.setattr(pipeline, "export_hfa_artifacts", lambda *a, **k: None)
     monkeypatch.setattr(
         pipeline,
-        "extract_pitches_and_align_torch",
+        "extract_pitches_and_align",
         lambda *a, **k: ([NoteInfo(0.0, 0.5, 60.0, "a")], {0}),
     )
 

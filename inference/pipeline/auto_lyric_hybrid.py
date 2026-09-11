@@ -25,7 +25,7 @@ from inference.API.asr_api import (
 )
 from inference.API.lfa_api import create_lyric_matcher, process_asr_to_phonemes, _normalize_lyric_output_mode
 from inference.API.hfa_api import load_hfa_model, run_hubert_fa, export_hfa_artifacts
-from inference.API.game_api import load_game_model, extract_pitches_and_align_torch, extract_pitches_only_torch
+from inference.API.game_api import load_game_model, extract_pitches_and_align, extract_pitches_only
 from inference.API.rmvpe_api import RmvpeTranscriber
 from inference.API.ustx_api import save_ustx
 from inference.API.vsqx_api import save_vsqx
@@ -65,10 +65,6 @@ def _select_romaji_asr_path(phoneme_asr_model_path: str) -> str | None:
     if ROMAJI_ASR_DEFAULT_DIR.exists():
         return str(ROMAJI_ASR_DEFAULT_DIR)
     return None
-
-
-def _select_phoneme_asr_path(phoneme_asr_model_path: str) -> str | None:
-    return _select_romaji_asr_path(phoneme_asr_model_path)
 
 
 def _select_pinyin_asr_path(pinyin_asr_model_path: str) -> str | None:
@@ -202,10 +198,6 @@ def run_romaji_asr(
     return chars_dict, chunk_logs
 
 
-def run_phoneme_asr_and_fa(*args, **kwargs):
-    return run_romaji_asr(*args, **kwargs)
-
-
 def run_pinyin_asr(
     chunks,
     sr,
@@ -266,7 +258,6 @@ def auto_lyric_hybrid_pipeline(
     slice_max_sec: float = DEFAULT_SLICE_MAX_SEC,
     output_lyrics: bool = True,
     output_pitch_curve: bool = False,
-    debug_mode: bool = False,
     rmvpe_model_path: str = "",
     phoneme_asr_model_path: str = "",
     pinyin_asr_model_path: str = "",
@@ -487,10 +478,9 @@ def auto_lyric_hybrid_pipeline(
             print("--------------------------------------\n")
 
             if run_lyric_alignment:
-                aligned_result = extract_pitches_and_align_torch(
-                    chunks, sr, pred_dict, chars_dict, game_model, device, ts,
+                aligned_result = extract_pitches_and_align(
+                    chunks, sr, pred_dict, chars_dict, game_model, ts,
                     seg_threshold, seg_radius, est_threshold, batch_size,
-                    debug_mode=debug_mode,
                     cancel_checker=cancel_checker,
                     language=fa_language,
                 )
@@ -509,19 +499,17 @@ def auto_lyric_hybrid_pipeline(
                         f"{len(fallback_chunks)} chunk(s) without usable lyric alignment."
                     )
                     all_notes.extend(
-                        extract_pitches_only_torch(
-                            fallback_chunks, sr, game_model, device, ts,
+                        extract_pitches_only(
+                            fallback_chunks, sr, game_model, ts,
                             seg_threshold, seg_radius, est_threshold, batch_size,
-                            debug_mode=debug_mode,
                             cancel_checker=cancel_checker,
                             language=fa_language,
                         )
                     )
             else:
-                all_notes = extract_pitches_only_torch(
-                    chunks, sr, game_model, device, ts,
+                all_notes = extract_pitches_only(
+                    chunks, sr, game_model, ts,
                     seg_threshold, seg_radius, est_threshold, batch_size,
-                    debug_mode=debug_mode,
                     cancel_checker=cancel_checker,
                     language=fa_language,
                 )
@@ -574,8 +562,7 @@ if __name__ == "__main__":
     )
     @click.option("--t0", type=float, default=0.0, help="D3PM starting t0")
     @click.option("--nsteps", type=int, default=8, help="D3PM sampling steps")
-    @click.option("--debug", is_flag=True, help="Enable debug mode to print GAME inputs")
-    def main(audio_path, game_model, hfa_model, asr_model, output_dir, lyrics, device, t0, nsteps, debug, **kwargs):
+    def main(audio_path, game_model, hfa_model, asr_model, output_dir, lyrics, device, t0, nsteps, **kwargs):
         """
         Auto Lyric Hybrid ONNX pipeline
         """
@@ -610,7 +597,6 @@ if __name__ == "__main__":
             seg_radius=0.02,
             est_threshold=0.2,
             batch_size=4,
-            debug_mode=debug
         )
         print("Done!")
 

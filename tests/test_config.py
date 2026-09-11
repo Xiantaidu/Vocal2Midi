@@ -42,7 +42,6 @@ class TestPipelineConfig:
         assert cfg.slice_min_sec == DEFAULT_SLICE_MIN_SEC
         assert cfg.slice_max_sec == DEFAULT_SLICE_MAX_SEC
         assert cfg.output_lyrics is True  # default
-        assert cfg.debug_mode is False  # default
         assert cfg.cancel_checker is None  # default
 
     def test_default_output_formats(self, base_kwargs):

@@ -85,12 +85,12 @@ def test_subprocess_timeout_terminates_pool(monkeypatch, tmp_path):
     assert task_queue.items[0]["asr_prompt"] == asr_api.DEFAULT_QWEN_ASR_PROMPT
 
 
-def test_clear_phoneme_cache_clears_shared_cache():
-    asr_api._PHONEME_MODEL_CACHE["x"] = object()
+def test_clear_romaji_cache_clears_model_cache():
+    asr_api._ROMAJI_MODEL_CACHE["x"] = object()
 
-    asr_api.clear_phoneme_model_cache()
+    asr_api.clear_romaji_model_cache()
 
-    assert asr_api._PHONEME_MODEL_CACHE == {}
+    assert asr_api._ROMAJI_MODEL_CACHE == {}
 
 
 def test_load_qwen_model_uses_dml_runtime_cache(monkeypatch):

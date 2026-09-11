@@ -54,8 +54,6 @@ audio
 | RMVPE | ONNX Runtime | `inference/API/rmvpe_api.py` |
 | Device normalization | DirectML / CPU helpers | `inference/device_utils.py` |
 
-Some public function names still contain `_torch` for compatibility, but the active backend is ONNX-based.
-
 ## Repository Layout
 
 ```text
@@ -300,7 +298,6 @@ Depending on the selected workflow, Vocal2Midi can export:
 ## Project Notes
 
 - The repository has already migrated away from the earlier Torch-heavy runtime design for the main inference path.
-- Some historical function names remain for compatibility.
 - Model assets are expected to exist locally under `experiments/` or another user-provided path.
 - The codebase is still being cleaned up in places, so you may still see a few legacy names or UI strings from earlier iterations.
 
