@@ -141,8 +141,6 @@ Responsibilities:
 - run note extraction with or without lyric alignment
 - align GAME output to word durations when HFA output exists
 
-Some public function names still include `_torch` for compatibility, but the active implementation is ONNX-based.
-
 ### RMVPE
 
 - `inference/API/rmvpe_api.py`

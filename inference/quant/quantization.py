@@ -779,9 +779,19 @@ def _quantize_notes_smart(notes: list[Any], tempo: float, quantization_step: int
     for i in range(n):
         q_offsets[i] = q_onsets[i] + max(quantization_step, int(q_durs[i]))
         if i < n - 1:
+            # Anchor every onset to its own raw position instead of chaining
+            # off the previous offset: chained accumulation lets per-note
+            # quantization error drift unbounded across long songs.
+            anchored = round(orig_onsets[i + 1] / quantization_step) * quantization_step
+            q_onsets[i + 1] = max(q_offsets[i], anchored)
             raw_rest = max(0, orig_onsets[i + 1] - orig_offsets[i])
-            q_rest = 0 if raw_rest < quantization_step * 0.5 else round(raw_rest / quantization_step) * quantization_step
-            q_onsets[i + 1] = q_offsets[i] + q_rest
+            if q_onsets[i + 1] <= q_offsets[i]:
+                # Collision with the previous note: fall back to the chained
+                # placement with a half-up-rounded rest (round() alone is
+                # half-even, so a 0.5*step rest would round to 0 and vanish).
+                raw_rest = max(0, orig_onsets[i + 1] - orig_offsets[i])
+                q_rest = (raw_rest + quantization_step // 2) // quantization_step * quantization_step
+                q_onsets[i + 1] = q_offsets[i] + q_rest
 
     for i in range(n):
         notes[i].onset = q_onsets[i] / (tempo * 8)
@@ -794,6 +804,10 @@ def _quantize_notes_dp_asym(notes: list[Any], tempo: float, quantization_step: i
 
 def quantize_notes(notes: list[Any], tempo: float, quantization_step: int, mode: str = "simple"):
     mode = (mode or "simple").lower()
+    # "不量化" (step <= 0) disables every mode at the public entrypoint too;
+    # the dp mode used to fall back to its internal grid here.
+    if quantization_step <= 0:
+        return
     if mode == "smart":
         _quantize_notes_smart(notes, tempo, quantization_step)
     elif mode == "bayes":

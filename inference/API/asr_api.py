@@ -16,8 +16,6 @@ _QWEN_MODEL_CACHE = {}
 _QWEN_MODEL_CACHE_LOCK = threading.Lock()
 _ROMAJI_MODEL_CACHE = {}
 _ROMAJI_MODEL_CACHE_LOCK = threading.Lock()
-_PHONEME_MODEL_CACHE = _ROMAJI_MODEL_CACHE
-_PHONEME_MODEL_CACHE_LOCK = _ROMAJI_MODEL_CACHE_LOCK
 _PINYIN_MODEL_CACHE = {}
 _PINYIN_MODEL_CACHE_LOCK = threading.Lock()
 DEFAULT_QWEN_ASR_PROMPT = (
@@ -137,8 +135,17 @@ def load_qwen_model(model_path, device=None, use_cache=True):
         )
 
     if use_cache:
+        # Re-check under the lock: a concurrent loader for the same key may
+        # have finished first; release our duplicate instead of leaking it.
         with _QWEN_MODEL_CACHE_LOCK:
-            _QWEN_MODEL_CACHE[cache_key] = model
+            existing = _QWEN_MODEL_CACHE.get(cache_key)
+            if existing is None:
+                _QWEN_MODEL_CACHE[cache_key] = model
+                return model
+        duplicate_shutdown = getattr(model, "shutdown", None)
+        if callable(duplicate_shutdown):
+            duplicate_shutdown()
+        return existing
     return model
 
 
@@ -185,7 +192,11 @@ def load_romaji_asr_model(model_dir, device=None, use_cache=True):
     }
     if cache_enabled:
         with _ROMAJI_MODEL_CACHE_LOCK:
-            _ROMAJI_MODEL_CACHE[cache_key] = payload
+            existing = _ROMAJI_MODEL_CACHE.get(cache_key)
+            if existing is None:
+                _ROMAJI_MODEL_CACHE[cache_key] = payload
+                return payload
+        return existing
     return payload
 
 
@@ -226,7 +237,11 @@ def load_pinyin_asr_model(model_dir, device=None, use_cache=True):
     }
     if cache_enabled:
         with _PINYIN_MODEL_CACHE_LOCK:
-            _PINYIN_MODEL_CACHE[cache_key] = payload
+            existing = _PINYIN_MODEL_CACHE.get(cache_key)
+            if existing is None:
+                _PINYIN_MODEL_CACHE[cache_key] = payload
+                return payload
+        return existing
     return payload
 
 
@@ -300,37 +315,6 @@ def batch_transcribe_romaji_asr(
     return all_results, chunk_indices
 
 
-# Compatibility aliases so higher layers can keep the old kwargs/field names
-# while the implementation has switched from Torch phoneme ASR to romaji ASR.
-def load_phoneme_asr_model(model_dir, device=None, use_cache=True):
-    return load_romaji_asr_model(model_dir, device=device, use_cache=use_cache)
-
-
-def clear_phoneme_model_cache():
-    clear_romaji_model_cache()
-
-
-def batch_transcribe_phoneme_asr(
-    chunks,
-    sr,
-    temp_dir_path,
-    phoneme_ckpt_dir,
-    device=None,
-    asr_batch_size=1,
-    cancel_checker=None,
-):
-    results, chunk_indices = batch_transcribe_romaji_asr(
-        chunks,
-        sr,
-        temp_dir_path=temp_dir_path,
-        model_dir=phoneme_ckpt_dir,
-        device=device,
-        asr_batch_size=asr_batch_size,
-        cancel_checker=cancel_checker,
-    )
-    return results, chunk_indices, {}
-
-
 # --- Process Pool Worker ---
 _WORKER_ASR_MODEL = None
 
@@ -367,35 +351,61 @@ def _asr_worker_main(model_path, device, task_queue, result_queue):
         result_queue.put({"type": "ready"})
 
         while True:
-            message = task_queue.get()
+            try:
+                message = task_queue.get(timeout=5)
+            except queue.Empty:
+                # A non-daemon worker must not outlive the parent holding a
+                # multi-GB model: exit when the parent disappears.
+                parent = mp.parent_process()
+                if parent is not None and not parent.is_alive():
+                    break
+                continue
             if message.get("type") == "stop":
                 break
             if message.get("type") != "transcribe":
                 continue
 
-            task_id = int(message["task_id"])
-            batch = list(message["paths"])
-            asr_lang = str(message["asr_lang"])
-            asr_prompt = str(message.get("asr_prompt") or DEFAULT_QWEN_ASR_PROMPT)
-            batch_result = _transcribe_task(batch, asr_lang, asr_prompt, model=model)
-            if isinstance(batch_result, Exception):
-                result_queue.put(
-                    {
-                        "type": "result",
-                        "task_id": task_id,
-                        "error": str(batch_result),
-                    }
-                )
-            else:
-                result_queue.put(
-                    {
-                        "type": "result",
-                        "task_id": task_id,
-                        "result": batch_result,
-                    }
-                )
+            try:
+                task_id = int(message["task_id"])
+                batch = list(message["paths"])
+                asr_lang = str(message["asr_lang"])
+                asr_prompt = str(message.get("asr_prompt") or DEFAULT_QWEN_ASR_PROMPT)
+                batch_result = _transcribe_task(batch, asr_lang, asr_prompt, model=model)
+                if isinstance(batch_result, Exception):
+                    result_queue.put(
+                        {
+                            "type": "result",
+                            "task_id": task_id,
+                            "error": str(batch_result),
+                        }
+                    )
+                else:
+                    result_queue.put(
+                        {
+                            "type": "result",
+                            "task_id": task_id,
+                            "result": batch_result,
+                        }
+                    )
+            except Exception as e:
+                # Per-task failures degrade this batch only; letting them
+                # escape would abort every remaining batch (the parent treats
+                # a dead worker as a startup failure).
+                try:
+                    fallback_id = int(message.get("task_id", -1))
+                except Exception:
+                    fallback_id = -1
+                try:
+                    result_queue.put({"type": "result", "task_id": fallback_id, "error": repr(e)})
+                except Exception:
+                    pass
     except Exception as e:
-        result_queue.put({"type": "startup_error", "error": str(e)})
+        # Startup-phase failures (model load) and truly unexpected errors:
+        # report them so the parent can fail fast with a clear message.
+        try:
+            result_queue.put({"type": "startup_error", "error": str(e)})
+        except Exception:
+            pass
     finally:
         if model is not None:
             shutdown = getattr(model, "shutdown", None)
@@ -464,6 +474,7 @@ def batch_transcribe_asr(
     asr_prompt: str | None = None,
 ):
     """Saves chunks to temp_dir and runs batched ASR transcription."""
+    asr_batch_size = max(1, int(asr_batch_size))
     asr_lang = QWEN_ASR_LANGUAGE_NAMES.get(
         _normalize_lyric_language(language), QWEN_ASR_LANGUAGE_NAMES["zh"]
     )
@@ -505,13 +516,21 @@ def batch_transcribe_asr(
         )
         worker.start()
         try:
-            startup_message = _wait_for_worker_message(
-                result_queue,
-                worker,
-                timeout_sec=asr_timeout_sec,
-                cancel_checker=cancel_checker,
-                on_cancel=lambda: _shutdown_asr_worker(worker, task_queue, terminate=True),
-            )
+            try:
+                startup_message = _wait_for_worker_message(
+                    result_queue,
+                    worker,
+                    timeout_sec=asr_timeout_sec,
+                    cancel_checker=cancel_checker,
+                    on_cancel=lambda: _shutdown_asr_worker(worker, task_queue, terminate=True),
+                )
+            except mp.TimeoutError:
+                # mp.TimeoutError is not a builtin TimeoutError subclass; give
+                # multi-GB model loads a clear, catchable failure message.
+                _shutdown_asr_worker(worker, task_queue, terminate=True)
+                raise TimeoutError(
+                    f"ASR worker failed to start within {asr_timeout_sec}s"
+                ) from None
             if startup_message.get("type") == "startup_error":
                 raise RuntimeError(f"ASR worker failed to start: {startup_message.get('error', 'unknown error')}")
             if startup_message.get("type") != "ready":
@@ -543,12 +562,18 @@ def batch_transcribe_asr(
                     if message.get("type") != "result" or int(message.get("task_id", -1)) != i:
                         raise RuntimeError(f"Unexpected ASR worker message: {message!r}")
 
-                    if message.get("error"):
-                        print(f"  ASR batch {batch_no}/{total_batches} failed with an error: {message['error']}")
-                        all_results.extend([None] * len(batch))
-                    else:
+                    error = message.get("error")
+                    results = message.get("result", [])
+                    if error is None and len(results) == len(batch):
                         print(f"  ASR batch {batch_no}/{total_batches} done in {cost:.2f}s")
-                        all_results.extend(message.get("result", []))
+                        all_results.extend(results)
+                    else:
+                        # An empty error string or a short result list both
+                        # count as failure; padding with None keeps
+                        # all_results aligned with chunk_indices.
+                        reason = error if error else f"incomplete result ({len(results)}/{len(batch)})"
+                        print(f"  ASR batch {batch_no}/{total_batches} failed with an error: {reason}")
+                        all_results.extend([None] * len(batch))
                 except mp.TimeoutError:
                     print(f"  ASR batch {batch_no}/{total_batches} timed out after {asr_timeout_sec}s.")
                     _shutdown_asr_worker(worker, task_queue, terminate=True)

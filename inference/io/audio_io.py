@@ -16,11 +16,14 @@ import os
 import pathlib
 import shutil
 import subprocess
+import threading
+import time
 
 import numpy as np
 
 _FFMPEG_PATH = pathlib.Path(__file__).resolve().parents[2] / "ffmpeg.exe"
 _DECODE_TIMEOUT_SEC = 600
+_STDOUT_BLOCK = 1 << 20
 
 
 class AudioLoadError(RuntimeError):
@@ -33,7 +36,7 @@ def _find_ffmpeg() -> str:
     found = shutil.which("ffmpeg")
     if found is None:
         raise AudioLoadError(
-            f"ffmpeg not found: expected the bundled copy at '{_FFMPEG_PATH}' "
+            f"ffmpeg not found: expected the bundled copy at '{_FFFMPEG_PATH}' "
             "or an 'ffmpeg' on PATH."
         )
     return found
@@ -61,19 +64,61 @@ def load_audio(path: str | pathlib.Path, sr: int, mono: bool = True):
         "-f", "f32le",
         "-",
     ]
-    result = subprocess.run(
+    process = subprocess.Popen(
         cmd,
-        capture_output=True,
-        timeout=_DECODE_TIMEOUT_SEC,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
-    if result.returncode != 0:
+
+    # Stream stdout into a growable buffer instead of communicate(): decoding
+    # a long file into memory once (~1x PCM) beats capture_output's copy
+    # (~2x PCM peak). stderr is drained on a thread to avoid pipe deadlock.
+    stderr_bytes = bytearray()
+    pcm = bytearray()
+
+    def _drain_stderr():
+        try:
+            stderr_bytes.extend(process.stderr.read())
+        except Exception:
+            pass
+
+    def _pump_stdout():
+        while True:
+            block = process.stdout.read(_STDOUT_BLOCK)
+            if not block:
+                break
+            pcm.extend(block)
+
+    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    stderr_thread.start()
+    stdout_thread = threading.Thread(target=_pump_stdout, daemon=True)
+    stdout_thread.start()
+
+    timed_out = False
+    try:
+        process.wait(timeout=_DECODE_TIMEOUT_SEC)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        process.kill()
+        try:
+            process.wait(timeout=10)
+        except Exception:
+            pass
+    stdout_thread.join(timeout=10)
+    stderr_thread.join(timeout=5)
+
+    stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
+    if timed_out:
         raise AudioLoadError(
-            f"Failed to decode '{path}' with the bundled ffmpeg: "
-            f"{result.stderr.decode('utf-8', errors='replace').strip()[:500]}"
+            f"Decoding '{path}' timed out after {_DECODE_TIMEOUT_SEC}s"
+        )
+    if process.returncode != 0:
+        raise AudioLoadError(
+            f"Failed to decode '{path}' with the bundled ffmpeg: {stderr_text[:500]}"
         )
 
-    waveform = np.frombuffer(result.stdout, dtype="<f4").copy()
+    waveform = np.frombuffer(pcm, dtype="<f4")
     if waveform.size == 0:
         raise AudioLoadError(f"ffmpeg decoded zero samples from '{path}'")
     if not mono:

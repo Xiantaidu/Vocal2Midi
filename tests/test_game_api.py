@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from inference.API.game_api import extract_pitches_only_torch, extract_vowel_boundaries
+from inference.API.game_api import extract_pitches_only, extract_vowel_boundaries
 from inference.HubertFA.tools.align_word import Phoneme, Word
 
 
@@ -39,11 +39,10 @@ def test_no_lyrics_game_inference_error_is_not_swallowed():
     chunks = [{"waveform": np.zeros(32, dtype=np.float32), "offset": 0.0}]
 
     with pytest.raises(RuntimeError, match="GAME exploded"):
-        extract_pitches_only_torch(
+        extract_pitches_only(
             chunks,
             sr=16000,
             game_model=_FailingGameModel(),
-            device="cpu",
             ts=[0.0],
             seg_threshold=0.2,
             seg_radius=0.02,
@@ -56,11 +55,10 @@ def test_game_language_is_forced_empty_semantics():
     chunks = [{"waveform": np.zeros(32, dtype=np.float32), "offset": 0.0}]
     model = _CapturingGameModel()
 
-    notes = extract_pitches_only_torch(
+    notes = extract_pitches_only(
         chunks,
         sr=16000,
         game_model=model,
-        device="cpu",
         ts=[0.0],
         seg_threshold=0.2,
         seg_radius=0.02,
@@ -110,9 +108,11 @@ def test_extract_vowel_boundaries_en_uses_arpabet_vowels():
         words, ["fall", "fly"], language="en"
     )
 
-    assert word_durs == pytest.approx([0.05, 0.45, 0.20])
-    assert word_vuvs == [0, 1, 1]
-    assert lyrics == ["", "fall", "fly"]
+    # English emits one syllable chunk per word (fall -> f+ao+l is one chunk,
+    # fly -> f+l+ay likewise), each carrying the word as its lyric.
+    assert word_durs == pytest.approx([0.40, 0.30])
+    assert word_vuvs == [1, 1]
+    assert lyrics == ["fall", "fly"]
 
 
 def test_en_singable_phones_reject_consonant_v_names():

@@ -28,9 +28,7 @@ _NON_SINGABLE_WORD_TOKENS = {"SP", "AP", "EP", "br", "sil", "pau"}
 def _normalize_ts(ts) -> list[float]:
     if ts is None:
         return []
-    if hasattr(ts, "detach"):
-        ts = ts.detach().cpu().tolist()
-    elif hasattr(ts, "tolist"):
+    if hasattr(ts, "tolist"):
         ts = ts.tolist()
     return [float(t) for t in ts]
 
@@ -104,7 +102,9 @@ def _english_syllable_chunks(word):
         run = phones[vowel_idx[k - 1] + 1 : vowel_idx[k]]
         stop_start = None
         for ph in run:
-            if _normalize_phone_text(ph.text) in _EN_STOPS:
+            # Lowercase: _is_singable_phone is case-insensitive, so the stop
+            # check must be too (uppercase ARPABET would hide every stop).
+            if _normalize_phone_text(ph.text).lower() in _EN_STOPS:
                 stop_start = float(ph.start)
         if stop_start is not None:
             bounds.append(stop_start)
@@ -264,6 +264,11 @@ def extract_vowel_boundaries(result_word, original_chars: list[str], language: s
         dur = note_end - vowel_start
         if dur < 0:
             dur = 0.0
+        if dur <= 0:
+            # A zero-length voiced entry would be skipped by the note/word
+            # aligner while the caller still consumes a lyric slot, shifting
+            # every later lyric in the chunk by one. Drop it instead.
+            continue
 
         word_durs.append(dur)
         word_vuvs.append(1)
@@ -318,26 +323,23 @@ def _run_game_inference_batch(
     )
 
 
-def extract_pitches_and_align_torch(
+def extract_pitches_and_align(
     chunks,
     sr,
     pred_dict,
     chars_dict,
     game_model,
-    device,
     ts,
     seg_threshold,
     seg_radius,
     est_threshold,
     batch_size=4,
-    debug_mode=False,
     cancel_checker=None,
     language=None,
 ):
     """
     Extract pitches using the GAME ONNX runtime and align them to lyrics.
     """
-    del device, debug_mode
     # Melisma/转音 notes keep '-' for every language; for English the '+' on
     # syllable positions comes from the per-syllable chunk lyrics instead
     # (see _extract_vowel_boundaries_english).
@@ -476,24 +478,21 @@ def extract_pitches_and_align_torch(
     return all_notes, processed_chunk_indices
 
 
-def extract_pitches_only_torch(
+def extract_pitches_only(
     chunks,
     sr,
     game_model,
-    device,
     ts,
     seg_threshold,
     seg_radius,
     est_threshold,
     batch_size=4,
-    debug_mode=False,
     cancel_checker=None,
     language=None,
 ):
     """
     Extract pitches using the GAME ONNX runtime without lyric alignment.
     """
-    del device, debug_mode
     print("[Hybrid Pipeline] Extracting pitches with GAME ONNX (no-lyrics mode)...")
 
     all_notes = []
@@ -559,11 +558,3 @@ def extract_pitches_only_torch(
                 current_onset += n_dur
 
     return all_notes
-
-
-def extract_pitches_and_align_onnx(*args, **kwargs):
-    return extract_pitches_and_align_torch(*args, **kwargs)
-
-
-def extract_pitches_only_onnx(*args, **kwargs):
-    return extract_pitches_only_torch(*args, **kwargs)
