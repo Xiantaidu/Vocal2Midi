@@ -298,7 +298,7 @@ def test_from_model_path_reports_missing_files(tmp_path):
 
 def test_real_pinyin_onnx_transcribe_structure():
     """Loads the real exp26b bundle and checks the transcription result shape."""
-    default_dir = Path(__file__).resolve().parents[1] / "experiments" / "pinyinASR"
+    default_dir = Path(__file__).resolve().parents[1] / "models" / "pinyinASR"
     model_file = default_dir / "model_fp16_dynb.onnx"
     if not model_file.exists():
         pytest.skip("pinyinASR dynamic-batch model bundle not present")

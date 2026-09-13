@@ -31,11 +31,11 @@ APP_FILES = [
 ]
 
 MODEL_SPECS: dict[str, tuple[str, str]] = {
-    "game": ("experiments/GAME-1.0.3-medium-onnx", "dir"),
-    "hfa": ("experiments/1218_hfa_model_new_dict", "dir"),
-    "qwen": ("experiments/Qwen3-ASR-1.7B-dml", "dir"),
-    "romaji": ("experiments/romajiASR", "dir"),
-    "rmvpe": ("experiments/RMVPE/rmvpe.onnx", "file"),
+    "game": ("models/GAME-1.0.3-medium-onnx", "dir"),
+    "hfa": ("models/1218_hfa_model_new_dict", "dir"),
+    "qwen": ("models/Qwen3-ASR-1.7B-dml", "dir"),
+    "romaji": ("models/romajiASR", "dir"),
+    "rmvpe": ("models/RMVPE/rmvpe.onnx", "file"),
 }
 
 RUNTIME_EXCLUDE_NAMES = {

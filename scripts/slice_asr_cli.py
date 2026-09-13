@@ -50,7 +50,7 @@ RUNTIME_DEVICE_CHOICES = device_utils.RUNTIME_DEVICE_CHOICES
 DEFAULT_RUNTIME_DEVICE = getattr(device_utils, "default_runtime_device", lambda: "dml")()
 normalize_runtime_device = device_utils.normalize_runtime_device
 
-DEFAULT_RMVPE_MODEL = ROOT_DIR / "experiments" / "RMVPE" / "rmvpe.onnx"
+DEFAULT_RMVPE_MODEL = ROOT_DIR / "models" / "RMVPE" / "rmvpe.onnx"
 INPUT_AUDIO_EXTENSIONS = {
     ".wav", ".m4a", ".mp3", ".flac", ".ogg", ".opus", ".aif", ".aiff", ".wma", ".webm",
 }

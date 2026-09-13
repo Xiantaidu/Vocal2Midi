@@ -37,7 +37,7 @@ class RmvpeResult:
 
 class RmvpeTranscriber:
     def __init__(self, model_path: str | Path, device: str | None = None, batch_size: int = 8, threshold: float = 0.03):
-        self.model_path = Path(model_path)
+        self.model_path = self._resolve_model_file(model_path)
         self.requested_device = str(device)
         self.batch_size = max(1, int(batch_size))
         self.threshold = float(threshold)
@@ -61,6 +61,20 @@ class RmvpeTranscriber:
             fmax=MEL_FMAX,
             htk=True,
         ).astype(np.float32)
+
+    @staticmethod
+    def _resolve_model_file(model_path: str | Path) -> Path:
+        """Accept either the .onnx file itself or the directory containing it."""
+        path = Path(model_path)
+        if path.is_dir():
+            preferred = path / "rmvpe.onnx"
+            if preferred.is_file():
+                return preferred
+            candidates = sorted(path.glob("*.onnx"))
+            if not candidates:
+                raise FileNotFoundError(f"no .onnx model found in RMVPE model directory: {path}")
+            return candidates[0]
+        return path
 
     @staticmethod
     def _resolve_providers(device: str) -> tuple[str, list[str]]:

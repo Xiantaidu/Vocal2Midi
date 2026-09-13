@@ -117,12 +117,12 @@ def test_load_qwen_model_uses_dml_runtime_cache(monkeypatch):
         classmethod(fake_from_model_path),
     )
 
-    first = asr_api.load_qwen_model("experiments/Qwen3-ASR-1.7B-dml", device="cpu", use_cache=True)
-    second = asr_api.load_qwen_model("experiments/Qwen3-ASR-1.7B-dml", device="cpu", use_cache=True)
+    first = asr_api.load_qwen_model("models/Qwen3-ASR-1.7B-dml", device="cpu", use_cache=True)
+    second = asr_api.load_qwen_model("models/Qwen3-ASR-1.7B-dml", device="cpu", use_cache=True)
 
     assert first is dummy_model
     assert second is dummy_model
-    assert calls == [("experiments/Qwen3-ASR-1.7B-dml", "cpu", False)]
+    assert calls == [("models/Qwen3-ASR-1.7B-dml", "cpu", False)]
 
     asr_api.clear_qwen_model_cache()
 
@@ -151,8 +151,8 @@ def test_load_romaji_model_skips_dml_cache_for_stability(monkeypatch, tmp_path):
         classmethod(fake_from_model_path),
     )
 
-    first = asr_api.load_romaji_asr_model("experiments/romajiASR", device="dml", use_cache=True)
-    second = asr_api.load_romaji_asr_model("experiments/romajiASR", device="dml", use_cache=True)
+    first = asr_api.load_romaji_asr_model("models/romajiASR", device="dml", use_cache=True)
+    second = asr_api.load_romaji_asr_model("models/romajiASR", device="dml", use_cache=True)
 
     assert first is not second
     assert len(calls) == 2
@@ -181,8 +181,8 @@ def test_load_romaji_model_keeps_cpu_cache(monkeypatch, tmp_path):
         classmethod(fake_from_model_path),
     )
 
-    first = asr_api.load_romaji_asr_model("experiments/romajiASR", device="cpu", use_cache=True)
-    second = asr_api.load_romaji_asr_model("experiments/romajiASR", device="cpu", use_cache=True)
+    first = asr_api.load_romaji_asr_model("models/romajiASR", device="cpu", use_cache=True)
+    second = asr_api.load_romaji_asr_model("models/romajiASR", device="cpu", use_cache=True)
 
     assert first is second
     assert len(calls) == 1

@@ -35,7 +35,7 @@ def _validate_model_paths(cfg: PipelineConfig) -> None:
         fmt in (cfg.output_formats or []) for fmt in ("ustx", "vsqx")
     )
     if wants_pitch_curve and cfg.rmvpe_model_path:
-        required_paths.append(("RMVPE 模型文件", cfg.rmvpe_model_path))
+        required_paths.append(("RMVPE 模型路径", cfg.rmvpe_model_path))
 
     errors = []
     for label, path in required_paths:

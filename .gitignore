@@ -37,8 +37,8 @@ pip-wheel-metadata/
 
 /data/*
 !/data/.gitkeep
-/experiments/*
-!/experiments/.gitkeep
+/models/*
+!/models/.gitkeep
 /outputs/
 /tmp_out/
 /.tmp_debug/
