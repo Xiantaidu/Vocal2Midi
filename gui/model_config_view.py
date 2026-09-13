@@ -22,12 +22,12 @@ class ModelConfigInterface(ScrollArea):
         self.project_root = pathlib.Path(project_root)
 
         self.default_values = {
-            "game_model": "experiments/GAME-1.0.3-medium-onnx",
-            "hfa_model": "experiments/1218_hfa_model_new_dict",
-            "asr_model": "experiments/Qwen3-ASR-1.7B-dml",
-            "phoneme_asr_model": "experiments/romajiASR",
-            "pinyin_asr_model": "experiments/pinyinASR",
-            "rmvpe_model": "experiments/RMVPE/rmvpe.onnx",
+            "game_model": "models/GAME-1.0.3-medium-onnx",
+            "hfa_model": "models/1218_hfa_model_new_dict",
+            "asr_model": "models/Qwen3-ASR-1.7B-dml",
+            "phoneme_asr_model": "models/romajiASR",
+            "pinyin_asr_model": "models/pinyinASR",
+            "rmvpe_model": "models/RMVPE",
         }
 
         self.view = QWidget(self)
@@ -55,7 +55,7 @@ class ModelConfigInterface(ScrollArea):
         self._add_model_row(layout, "Qwen3-ASR模型路径:", "asr_model", browse_dir=True)
         self._add_model_row(layout, "音素ASR模型路径:", "phoneme_asr_model", browse_dir=True)
         self._add_model_row(layout, "拼音ASR模型路径:", "pinyin_asr_model", browse_dir=True)
-        self._add_model_row(layout, "RMVPE模型文件:", "rmvpe_model", browse_dir=False)
+        self._add_model_row(layout, "RMVPE模型路径:", "rmvpe_model", browse_dir=True)
 
         self.vBoxLayout.addWidget(card)
         self.vBoxLayout.addStretch(1)
@@ -64,7 +64,7 @@ class ModelConfigInterface(ScrollArea):
 
     # ── widget helpers ──────────────────────────────────────────────
 
-    def _add_model_row(self, parent_layout, label_text: str, settings_key: str, browse_dir: bool):
+    def _add_model_row(self, parent_layout, label_text: str, settings_key: str):
         row = QHBoxLayout()
         row.addWidget(BodyLabel(label_text, self))
         edit = LineEdit(self)
@@ -73,10 +73,7 @@ class ModelConfigInterface(ScrollArea):
         setattr(self, f"{settings_key}_edit", edit)
         row.addWidget(edit, 1)
         btn = PushButton("浏览", self, FluentIcon.FOLDER)
-        if browse_dir:
-            btn.clicked.connect(lambda checked, e=edit: self._browse_dir(e))
-        else:
-            btn.clicked.connect(lambda checked, e=edit: self._browse_file(e))
+        btn.clicked.connect(lambda checked, e=edit: self._browse_dir(e))
         row.addWidget(btn)
         parent_layout.addLayout(row)
 
@@ -107,14 +104,6 @@ class ModelConfigInterface(ScrollArea):
         dir_path = QFileDialog.getExistingDirectory(self, "选择文件夹", line_edit.text())
         if dir_path:
             line_edit.setText(self._to_project_relative(dir_path))
-
-    def _browse_file(self, line_edit):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "选择模型文件", line_edit.text(),
-            "Model Files (*.pt *.pth *.bin *.onnx);;All Files (*)",
-        )
-        if file_path:
-            line_edit.setText(self._to_project_relative(file_path))
 
     def reset_to_default(self):
         for key, default in self.default_values.items():

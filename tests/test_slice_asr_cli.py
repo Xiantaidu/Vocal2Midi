@@ -17,9 +17,13 @@ def _load_slice_asr_cli():
         "inference.API.rmvpe_api": types.ModuleType("inference.API.rmvpe_api"),
         "inference.API.slicer_api": types.ModuleType("inference.API.slicer_api"),
         "inference.device_utils": types.ModuleType("inference.device_utils"),
+        "inference.io": types.ModuleType("inference.io"),
+        "inference.io.audio_io": types.ModuleType("inference.io.audio_io"),
     }
     stubs["inference"].__path__ = []
     stubs["inference.API"].__path__ = []
+    stubs["inference.io"].__path__ = []
+    stubs["inference.io.audio_io"].load_audio = lambda *args, **kwargs: None
     stubs["inference.API.asr_api"].batch_transcribe_asr = lambda *args, **kwargs: None
     stubs["inference.API.asr_api"].load_qwen_model = lambda *args, **kwargs: None
     stubs["inference.API.asr_api"].clear_qwen_model_cache = lambda *args, **kwargs: None
@@ -98,7 +102,7 @@ def test_process_one_file_no_slice_bypasses_slicer(monkeypatch, tmp_path):
     chunks, labs = slice_asr_cli.process_one_file(
         audio_path=audio_path,
         output_dir=tmp_path / "out",
-        asr_model_path="experiments/Qwen3-ASR-1.7B-dml",
+        asr_model_path="models/Qwen3-ASR-1.7B-dml",
         device="cpu",
         language="ja",
         slicing_method="default",

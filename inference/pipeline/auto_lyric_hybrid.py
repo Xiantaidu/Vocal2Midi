@@ -35,8 +35,8 @@ from inference.device_utils import (
     normalize_runtime_device,
 )
 
-ROMAJI_ASR_DEFAULT_DIR = pathlib.Path(__file__).resolve().parents[2] / "experiments" / "romajiASR"
-PINYIN_ASR_DEFAULT_DIR = pathlib.Path(__file__).resolve().parents[2] / "experiments" / "pinyinASR"
+ROMAJI_ASR_DEFAULT_DIR = pathlib.Path(__file__).resolve().parents[2] / "models" / "romajiASR"
+PINYIN_ASR_DEFAULT_DIR = pathlib.Path(__file__).resolve().parents[2] / "models" / "pinyinASR"
 
 # Language value that routes Chinese lyric extraction through the direct
 # pinyin ASR instead of Qwen text ASR.
@@ -551,7 +551,7 @@ if __name__ == "__main__":
     @click.argument("audio_path", type=click.Path(exists=True))
     @click.option("--game-model", "-gm", required=True, type=click.Path(exists=True, file_okay=False), help="Path to GAME ONNX model directory")
     @click.option("--hfa-model", "-hm", required=True, type=click.Path(exists=True, file_okay=False), help="Path to HubertFA ONNX model directory")
-    @click.option("--asr-model", "-am", type=str, default="experiments/Qwen3-ASR-1.7B-dml", help="Path for the local Qwen3-ASR model directory")
+    @click.option("--asr-model", "-am", type=str, default="models/Qwen3-ASR-1.7B-dml", help="Path for the local Qwen3-ASR model directory")
     @click.option("--output-dir", "-o", type=click.Path(), default=".", help="Directory to save the outputs")
     @click.option("--lyrics", "-l", type=str, default="", help="Original reference lyrics for alignment")
     @click.option(

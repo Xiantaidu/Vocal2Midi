@@ -59,7 +59,7 @@ audio
 ```text
 application/   application-layer orchestration and config objects
 docs/          architecture notes and supporting docs
-experiments/   local model directories
+models/   local model directories
 gui/           PyQt5 + qfluentwidgets desktop UI
 inference/     ASR, alignment, pitch extraction, slicing, quantization, export
 scripts/       batch CLI and portable build helpers
@@ -94,11 +94,11 @@ By default, the GUI expects models in these locations:
 
 | Component | Default path |
 | --- | --- |
-| GAME | `experiments/GAME-1.0.3-medium-onnx` |
-| HubertFA | `experiments/1218_hfa_model_new_dict` |
-| Qwen3-ASR | `experiments/Qwen3-ASR-1.7B-dml` |
-| Japanese mora ASR (RomajiASR) | `experiments/romajiASR` |
-| RMVPE | `experiments/RMVPE/rmvpe.onnx` |
+| GAME | `models/GAME-1.0.3-medium-onnx` |
+| HubertFA | `models/1218_hfa_model_new_dict` |
+| Qwen3-ASR | `models/Qwen3-ASR-1.7B-dml` |
+| Japanese mora ASR (RomajiASR) | `models/romajiASR` |
+| RMVPE | `models/RMVPE/rmvpe.onnx` |
 
 You can change these paths in the GUI settings panel.
 
@@ -144,7 +144,7 @@ This keeps Japanese lyric matching consistent with the mora-based ASR path inste
 
 The current Japanese mora / romaji ASR integration in this repository is based on
 [Xiantaidu/RomajiASR](https://github.com/Xiantaidu/RomajiASR), the separate
-Japanese singing ASR project used for the `experiments/romajiASR` model path
+Japanese singing ASR project used for the `models/romajiASR` model path
 and the `inference/romaji_asr/` runtime integration.
 
 ### English
@@ -223,7 +223,7 @@ For folder-based batch ASR processing:
 
 ```bash
 python scripts/slice_asr_cli.py <input_dir> <output_dir> \
-  --asr-model experiments/Qwen3-ASR-1.7B-dml \
+  --asr-model models/Qwen3-ASR-1.7B-dml \
   --device dml \
   --language zh
 ```
@@ -261,7 +261,7 @@ Japanese whole-file example:
 
 ```bash
 python scripts/slice_asr_cli.py input output \
-  --asr-model experiments/Qwen3-ASR-1.7B-dml \
+  --asr-model models/Qwen3-ASR-1.7B-dml \
   --device dml \
   --language ja \
   --no-slice
@@ -298,7 +298,7 @@ Depending on the selected workflow, Vocal2Midi can export:
 ## Project Notes
 
 - The repository has already migrated away from the earlier Torch-heavy runtime design for the main inference path.
-- Model assets are expected to exist locally under `experiments/` or another user-provided path.
+- Model assets are expected to exist locally under `models/` or another user-provided path.
 - The codebase is still being cleaned up in places, so you may still see a few legacy names or UI strings from earlier iterations.
 
 ## License
