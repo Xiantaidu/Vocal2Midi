@@ -1,6 +1,6 @@
 """Tests for wiring the direct pinyin ASR into the Chinese lyric flow.
 
-Convention: language '中文-拼音' / 'zh-pinyin' routes lyric extraction through
+Convention: language '中文-拼音' ("Chinese-Pinyin") / 'zh-pinyin' routes lyric extraction through
 the pinyin ONNX CTC model; every other language keeps the existing engines
 (ja romaji ASR, otherwise Qwen text ASR).
 """

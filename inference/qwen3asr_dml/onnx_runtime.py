@@ -1,16 +1,20 @@
-"""Qwen3-ASR 分裂 ONNX 推理后端。
+"""Split ONNX inference backend for Qwen3-ASR.
 
-下载脚本使用的模型由一个音频编码器和两个自回归解码图组成：
+The model downloaded by the script consists of one audio encoder and two
+autoregressive decoder graphs:
 
-* ``encoder.int4.onnx`` 把 16 kHz log-mel 转成音频 token；
-* ``decoder_init.int4.onnx`` 处理带音频占位符的初始 prompt；
-* ``decoder_step.int4.onnx`` 使用外部 embedding 和 KV cache 逐 token 解码。
+* ``encoder.int4.onnx`` converts 16 kHz log-mel into audio tokens;
+* ``decoder_init.int4.onnx`` processes the initial prompt with audio
+  placeholders;
+* ``decoder_step.int4.onnx`` decodes token by token with external embeddings
+  and a KV cache.
 
-在 macOS 上 CoreMLExecutionProvider 可以覆盖编码器的一部分算子，但当前
-int4 ``decoder_step`` 图在 M4 上会在 CoreML 编译阶段失败。因此这里对
-``device=metal`` 采用“编码器尝试 CoreML、两个解码器固定 CPU”的安全策略；
-失败时自动回退 CPU，不影响模型可用性。GGUF 模型仍由同目录的 llama.cpp
-后端负责 Metal 全量卸载。
+On macOS the CoreMLExecutionProvider can cover part of the encoder's
+operators, but the int4 ``decoder_step`` graph currently fails during CoreML
+compilation on M4. For ``device=metal`` we therefore apply the safe policy of
+"encoder tries CoreML, both decoders stay on CPU"; failures fall back to CPU
+automatically without breaking model availability. GGUF models are still
+fully offloaded to Metal by the llama.cpp backend in the same directory.
 """
 
 from __future__ import annotations
@@ -62,7 +66,7 @@ def _build_prompt_ids(
     language: str | None,
     context: str | None,
 ) -> list[int]:
-    """构造与 Qwen3-ASR ONNX 导出图一致的 multimodal prompt。"""
+    """Build the multimodal prompt matching the Qwen3-ASR ONNX export graphs."""
     ids = [IM_START_TOKEN_ID, *_encode(tokenizer, "system\n")]
     if context:
         ids.extend(_encode(tokenizer, context))
@@ -108,7 +112,7 @@ def _load_embedding(model_dir: Path) -> np.ndarray:
 
 
 class QwenOnnxASREngine:
-    """基于 ONNX Runtime 的 Qwen3-ASR 推理器。"""
+    """Qwen3-ASR transcriber based on ONNX Runtime."""
 
     def __init__(
         self,
@@ -145,8 +149,9 @@ class QwenOnnxASREngine:
         if self.verbose:
             print(f"[Qwen ONNX] encoder={encoder_path.name}, init={init_path.name}, step={step_path.name}")
 
-        # Decoder step 在 M4 CoreML 编译阶段会失败，故明确使用 CPU；这不是静默
-        # 忽略请求，而是为了避免把一个可加载的模型变成启动即崩溃的模型。
+        # The decoder step graph fails during CoreML compilation on M4, so CPU
+        # is used explicitly; this is not silently ignoring the request but
+        # avoids turning a loadable model into a crash-on-startup model.
         self.encoder_session = ort.InferenceSession(str(encoder_path), opts, providers=encoder_providers)
         self.decoder_init_session = ort.InferenceSession(
             str(init_path), opts, providers=["CPUExecutionProvider"]
@@ -236,7 +241,7 @@ class QwenOnnxASREngine:
     ) -> list[TranscribeResult]:
         from .utils import load_audio
 
-        del batch_size  # 当前解码图的 KV cache 为单流，按文件复用 session 更稳妥。
+        del batch_size  # the decoder graph's KV cache is single-stream; reusing the session per file is safer
         normalized_language = LANGUAGE_ALIASES.get(str(language or "").lower(), language)
         results = []
         for audio_file in audio_files:

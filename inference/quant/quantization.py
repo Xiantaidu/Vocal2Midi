@@ -804,7 +804,7 @@ def _quantize_notes_dp_asym(notes: list[Any], tempo: float, quantization_step: i
 
 def quantize_notes(notes: list[Any], tempo: float, quantization_step: int, mode: str = "simple"):
     mode = (mode or "simple").lower()
-    # "不量化" (step <= 0) disables every mode at the public entrypoint too;
+    # "不量化" ("no quantization"; step <= 0) disables every mode at the public entrypoint too;
     # the dp mode used to fall back to its internal grid here.
     if quantization_step <= 0:
         return
@@ -825,7 +825,7 @@ def quantize_notes(notes: list[Any], tempo: float, quantization_step: int, mode:
 
 
 def should_apply_quantization(mode: str, quantization_step: int) -> bool:
-    # "不量化" (step <= 0) must disable every mode. The dp mode used to
+    # "不量化" ("no quantization"; step <= 0) must disable every mode. The dp mode used to
     # short-circuit to True here, silently quantizing to its internal
     # 1/16 grid even when the user requested no quantization.
     del mode

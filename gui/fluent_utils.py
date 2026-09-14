@@ -14,7 +14,7 @@ def parse_quantization(quantize_option: str) -> int:
 
 def parse_quantization_mode(mode_option: str) -> str:
     mode_option = (mode_option or "").strip()
-    # Exact-label mapping first; the legacy "开发中" placeholder maps to bayes
+    # Exact-label mapping first; the legacy "开发中" ("in development") placeholder maps to bayes
     # for settings compatibility. Fallback substring matches cover variants,
     # with "dp" matched exactly (case-insensitive) so "SV-style" strings can
     # never shadow other labels.

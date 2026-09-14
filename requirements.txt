@@ -6,8 +6,8 @@ click
 librosa
 mido
 numpy<2.0.0
-PyQt5
-PyQt-Fluent-Widgets
+PySide6
+PySide6-Fluent-Widgets
 PyYAML
 scipy>=1.10.0
 onnxruntime-directml; sys_platform == "win32"

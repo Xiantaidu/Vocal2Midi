@@ -43,7 +43,7 @@ def _has_model_files(model_dir: Path) -> bool:
 
 
 def _has_onnx_model_files(model_dir: Path) -> bool:
-    """检查下载脚本提供的 Qwen3-ASR 分裂 ONNX 模型是否完整。"""
+    """Check whether the split ONNX Qwen3-ASR model provided by the download script is complete."""
     has_decoder_pair = any(
         (model_dir / f"decoder_init.{suffix}.onnx").is_file()
         and (model_dir / f"decoder_step.{suffix}.onnx").is_file()

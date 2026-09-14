@@ -2,10 +2,11 @@ import pathlib
 import sys
 import traceback
 
-from PyQt5.QtCore import QThread, pyqtSignal as Signal
+from PySide6.QtCore import QThread, Signal
 
 from application.config import PipelineConfig
 from application.exceptions import CancellationError
+from gui.i18n import tr
 
 
 # Import the hybrid pipeline
@@ -35,6 +36,7 @@ class WorkerThread(QThread):
     log_signal = Signal(str)
     finished_signal = Signal(str)
     error_signal = Signal(str)
+    progress_signal = Signal(int, int, str)  # (current file index, total files, filename)
 
     def __init__(self, config: PipelineConfig, audio_files: list):
         """Initialize the worker thread with a PipelineConfig and audio file list.
@@ -57,12 +59,12 @@ class WorkerThread(QThread):
         try:
             save_dir = self.config.output_dir
 
-            for audio_path in self.audio_files:
+            for file_index, audio_path in enumerate(self.audio_files, start=1):
                 if not self._is_running:
                     break
                 original_path = pathlib.Path(audio_path)
                 filename = original_path.name
-                self.log_signal.emit(f"========== 正在处理: {filename} ==========")
+                self.log_signal.emit(tr("worker_processing", f=filename))
 
                 # Update per-file fields in config
                 self.config.audio_path = str(original_path)
@@ -71,17 +73,18 @@ class WorkerThread(QThread):
                     not self._is_running
                 ) or self.isInterruptionRequested()
 
+                self.progress_signal.emit(file_index, len(self.audio_files), filename)
                 run_auto_lyric_job(self.config)
 
             if self._is_running:
-                self.finished_signal.emit(f"提取成功！文件已保存至: {save_dir}")
+                self.finished_signal.emit(tr("worker_success", d=save_dir))
             else:
-                self.error_signal.emit("任务已被取消。")
+                self.error_signal.emit(tr("worker_cancelled"))
 
         except (InterruptedError, CancellationError):
-            self.error_signal.emit("任务已被强制停止。")
+            self.error_signal.emit(tr("worker_stopped"))
         except Exception:
-            self.error_signal.emit(f"发生错误:\n{traceback.format_exc()}")
+            self.error_signal.emit(tr("worker_error", tb=traceback.format_exc()))
         finally:
             sys.stdout = old_stdout
             sys.stderr = old_stderr

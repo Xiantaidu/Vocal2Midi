@@ -49,7 +49,7 @@ def test_dp_quantization_changes_with_grid_size():
 
 
 def test_dp_quantization_no_ops_for_zero_step():
-    # "不量化" must disable dp too (it used to fall back to an internal
+    # "不量化" ("no quantization") must disable dp too (it used to fall back to an internal
     # 30-tick grid and quantize anyway).
     notes = [_note_from_ticks(113, 291, lyric="la")]
 
