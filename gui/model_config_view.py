@@ -2,7 +2,7 @@
 
 import pathlib
 
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFileDialog
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFileDialog
 
 from qfluentwidgets import (
     ScrollArea,
@@ -13,6 +13,16 @@ from qfluentwidgets import (
     FluentIcon,
     SubtitleLabel,
 )
+from gui.i18n import tr
+
+MODEL_ROWS = [
+    ("game_model", "game_path"),
+    ("hfa_model", "hfa_path"),
+    ("asr_model", "asr_path"),
+    ("phoneme_asr_model", "phoneme_path"),
+    ("pinyin_asr_model", "pinyin_path"),
+    ("rmvpe_model", "rmvpe_path"),
+]
 
 
 class ModelConfigInterface(ScrollArea):
@@ -20,6 +30,7 @@ class ModelConfigInterface(ScrollArea):
         super().__init__(parent=parent)
         self.settings = settings
         self.project_root = pathlib.Path(project_root)
+        self._tr_bindings: list = []
 
         self.default_values = {
             "game_model": "models/GAME-1.0.3-medium-onnx",
@@ -39,10 +50,12 @@ class ModelConfigInterface(ScrollArea):
         self.setObjectName("modelConfigInterface")
 
         title_layout = QHBoxLayout()
-        title = SubtitleLabel("模型配置", self)
+        title = SubtitleLabel(self)
+        self._bind_tr(lambda: title.setText(tr("model_title")))
         title_layout.addWidget(title)
         title_layout.addStretch(1)
-        btn_reset = PushButton("恢复默认", self, FluentIcon.SYNC)
+        btn_reset = PushButton(tr("reset_defaults"), self, FluentIcon.SYNC)
+        self._bind_tr(lambda: btn_reset.setText(tr("reset_defaults")))
         btn_reset.clicked.connect(self.reset_to_default)
         title_layout.addWidget(btn_reset)
         self.vBoxLayout.addLayout(title_layout)
@@ -50,29 +63,37 @@ class ModelConfigInterface(ScrollArea):
         card = CardWidget(self)
         layout = QVBoxLayout(card)
 
-        self._add_model_row(layout, "GAME 模型路径:", "game_model", browse_dir=True)
-        self._add_model_row(layout, "HubertFA模型路径:", "hfa_model", browse_dir=True)
-        self._add_model_row(layout, "Qwen3-ASR模型路径:", "asr_model", browse_dir=True)
-        self._add_model_row(layout, "音素ASR模型路径:", "phoneme_asr_model", browse_dir=True)
-        self._add_model_row(layout, "拼音ASR模型路径:", "pinyin_asr_model", browse_dir=True)
-        self._add_model_row(layout, "RMVPE模型路径:", "rmvpe_model", browse_dir=True)
+        for settings_key, label_key in MODEL_ROWS:
+            self._add_model_row(layout, label_key, settings_key)
 
         self.vBoxLayout.addWidget(card)
         self.vBoxLayout.addStretch(1)
         self.setWidget(self.view)
         self.setWidgetResizable(True)
+        self.enableTransparentBackground()
 
     # ── widget helpers ──────────────────────────────────────────────
 
-    def _add_model_row(self, parent_layout, label_text: str, settings_key: str):
+    def _bind_tr(self, fn):
+        self._tr_bindings.append(fn)
+        fn()
+
+    def retranslate_ui(self):
+        for fn in self._tr_bindings:
+            fn()
+
+    def _add_model_row(self, parent_layout, label_key: str, settings_key: str):
         row = QHBoxLayout()
-        row.addWidget(BodyLabel(label_text, self))
+        label = BodyLabel(self)
+        self._bind_tr(lambda l=label, k=label_key: l.setText(tr(k)))
+        row.addWidget(label)
         edit = LineEdit(self)
         edit.setText(self._normalize_model_path(settings_key, self.default_values[settings_key]))
         edit.textChanged.connect(lambda t, k=settings_key: self.settings.setValue(k, t))
         setattr(self, f"{settings_key}_edit", edit)
         row.addWidget(edit, 1)
-        btn = PushButton("浏览", self, FluentIcon.FOLDER)
+        btn = PushButton(tr("browse"), self, FluentIcon.FOLDER)
+        self._bind_tr(lambda b=btn: b.setText(tr("browse")))
         btn.clicked.connect(lambda checked, e=edit: self._browse_dir(e))
         row.addWidget(btn)
         parent_layout.addLayout(row)
@@ -101,7 +122,7 @@ class ModelConfigInterface(ScrollArea):
         return value
 
     def _browse_dir(self, line_edit):
-        dir_path = QFileDialog.getExistingDirectory(self, "选择文件夹", line_edit.text())
+        dir_path = QFileDialog.getExistingDirectory(self, tr("choose_folder_dialog"), line_edit.text())
         if dir_path:
             line_edit.setText(self._to_project_relative(dir_path))
 

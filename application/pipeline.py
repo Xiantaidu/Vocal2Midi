@@ -19,7 +19,7 @@ def _validate_model_paths(cfg: PipelineConfig) -> None:
     if cfg.output_lyrics:
         required_paths.append(("HubertFA 模型目录", cfg.hfa_model_dir))
         if _uses_pinyin_asr(cfg):
-            # 中文-拼音 routes to the pinyin ASR; the Qwen model is not used.
+            # "中文-拼音" (Chinese-Pinyin) routes to the pinyin ASR; the Qwen model is not used.
             if cfg.pinyin_asr_model_path:
                 required_paths.append(("拼音ASR模型路径", cfg.pinyin_asr_model_path))
         else:

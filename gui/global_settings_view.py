@@ -1,7 +1,7 @@
 import pathlib
 
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout
-from PyQt5.QtCore import Qt, QSettings
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGridLayout
 
 from application.config import (
     DEFAULT_SLICE_MAX_SEC,
@@ -21,21 +21,24 @@ from qfluentwidgets import (
     SwitchButton,
     FluentIcon,
     SubtitleLabel,
+    setTheme,
+    Theme,
 )
-from gui.settings_utils import resolve_settings_path
+from gui.i18n import tr, set_language
+from gui.settings_utils import create_app_settings
+
+THEME_CHOICES = [("light", "theme_light"), ("dark", "theme_dark"), ("auto", "theme_auto")]
+LANGUAGE_CHOICES = [("zh", "language_zh"), ("en", "language_en")]
 
 
 class GlobalSettingsInterface(ScrollArea):
+    languageChanged = Signal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent=parent)
         self.project_root = pathlib.Path(__file__).resolve().parent.parent
-        settings_path = resolve_settings_path(self.project_root)
-        if settings_path is None:
-            self.settings = QSettings("GAME_Extractor", "Vocal2Midi")
-        else:
-            settings_path.parent.mkdir(parents=True, exist_ok=True)
-            self.settings = QSettings(str(settings_path), QSettings.IniFormat)
-            self.settings.setFallbacksEnabled(False)
+        self.settings = create_app_settings(self.project_root)
+        self._tr_bindings: list = []
         self.default_values = {
             "seg_thresh": 0.2,
             "seg_rad": 0.02,
@@ -73,103 +76,127 @@ class GlobalSettingsInterface(ScrollArea):
         self.setObjectName('globalSettingsInterface')
 
         title_layout = QHBoxLayout()
-        title = SubtitleLabel("全局设置", self)
+        title = SubtitleLabel(self)
+        self._bind_tr(lambda: title.setText(tr("settings_title")))
         title_layout.addWidget(title)
         title_layout.addStretch(1)
-        btn_reset = PushButton("恢复默认", self, FluentIcon.SYNC)
+        btn_reset = PushButton(tr("reset_defaults"), self, FluentIcon.SYNC)
+        self._bind_tr(lambda: btn_reset.setText(tr("reset_defaults")))
         btn_reset.clicked.connect(self.reset_to_default)
         title_layout.addWidget(btn_reset)
         self.vBoxLayout.addLayout(title_layout)
 
+        # ── appearance ──────────────────────────────────────────────
+        appearance_card = CardWidget(self)
+        appearance_layout = QVBoxLayout(appearance_card)
+        appearance_title = BodyLabel(self)
+        self._bind_tr(lambda: appearance_title.setText(tr("appearance")))
+        appearance_title.setStyleSheet("font-weight: bold; font-size: 14px;")
+        appearance_layout.addWidget(appearance_title)
+
+        appearance_grid = QGridLayout()
+        appearance_grid.setHorizontalSpacing(20)
+        appearance_grid.setVerticalSpacing(14)
+
+        theme_label = BodyLabel(self)
+        self._bind_tr(lambda: theme_label.setText(tr("theme")))
+        self.theme_combo = ComboBox(self)
+        self._fill_combo(self.theme_combo, THEME_CHOICES)
+        self._bind_tr(lambda: self._fill_combo(self.theme_combo, THEME_CHOICES, keep_value=True))
+        self.theme_combo.setCurrentIndex(self._index_by_value(self.theme_combo, self._saved_theme()))
+        self.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
+        appearance_grid.addWidget(theme_label, 0, 0)
+        appearance_grid.addWidget(self.theme_combo, 0, 1)
+
+        language_label = BodyLabel(self)
+        self._bind_tr(lambda: language_label.setText(tr("language")))
+        self.language_combo = ComboBox(self)
+        self._fill_combo(self.language_combo, LANGUAGE_CHOICES)
+        self.language_combo.setCurrentIndex(self._index_by_value(self.language_combo, self._saved_language()))
+        self.language_combo.currentIndexChanged.connect(self._on_language_changed)
+        appearance_grid.addWidget(language_label, 0, 2)
+        appearance_grid.addWidget(self.language_combo, 0, 3)
+        appearance_grid.setColumnStretch(4, 1)
+        appearance_layout.addLayout(appearance_grid)
+        self.vBoxLayout.addWidget(appearance_card)
+
+        # ── advanced processing parameters ──────────────────────────
         adv_card = CardWidget(self)
         adv_layout = QVBoxLayout(adv_card)
-        adv_title = BodyLabel("高级处理参数", self)
+        adv_title = BodyLabel(self)
+        self._bind_tr(lambda: adv_title.setText(tr("adv_params")))
         adv_title.setStyleSheet("font-weight: bold; font-size: 14px;")
         adv_layout.addWidget(adv_title)
-
-        from PyQt5.QtWidgets import QGridLayout
 
         adv_grid = QGridLayout()
         adv_grid.setVerticalSpacing(15)
         adv_grid.setHorizontalSpacing(20)
 
-        lbl1 = BodyLabel("边界解码阈值:", self)
+        def add_pair(label_key, row, col, widget):
+            label = BodyLabel(self)
+            self._bind_tr(lambda l=label, k=label_key: l.setText(tr(k)))
+            adv_grid.addWidget(label, row, col)
+            adv_grid.addWidget(widget, row, col + 1)
+
         self.seg_thresh_spin = DoubleSpinBox(self)
         self.seg_thresh_spin.setRange(0.01, 0.99)
         self.seg_thresh_spin.setSingleStep(0.01)
         self.seg_thresh_spin.setValue(float(self.settings.value("seg_thresh", self.default_values["seg_thresh"])))
         self.seg_thresh_spin.valueChanged.connect(lambda v: self.settings.setValue("seg_thresh", v))
-        adv_grid.addWidget(lbl1, 0, 0)
-        adv_grid.addWidget(self.seg_thresh_spin, 0, 1)
+        add_pair("seg_thresh", 0, 0, self.seg_thresh_spin)
 
-        lbl2 = BodyLabel("边界解码半径/秒:", self)
         self.seg_rad_spin = DoubleSpinBox(self)
         self.seg_rad_spin.setRange(0.01, 0.1)
         self.seg_rad_spin.setSingleStep(0.005)
         self.seg_rad_spin.setValue(float(self.settings.value("seg_rad", self.default_values["seg_rad"])))
         self.seg_rad_spin.valueChanged.connect(lambda v: self.settings.setValue("seg_rad", v))
-        adv_grid.addWidget(lbl2, 0, 2)
-        adv_grid.addWidget(self.seg_rad_spin, 0, 3)
+        add_pair("seg_rad", 0, 2, self.seg_rad_spin)
 
-        lbl3 = BodyLabel("音符存在阈值:", self)
         self.est_thresh_spin = DoubleSpinBox(self)
         self.est_thresh_spin.setRange(0.01, 0.99)
         self.est_thresh_spin.setSingleStep(0.01)
         self.est_thresh_spin.setValue(float(self.settings.value("est_thresh", self.default_values["est_thresh"])))
         self.est_thresh_spin.valueChanged.connect(lambda v: self.settings.setValue("est_thresh", v))
-        adv_grid.addWidget(lbl3, 0, 4)
-        adv_grid.addWidget(self.est_thresh_spin, 0, 5)
+        add_pair("est_thresh", 0, 4, self.est_thresh_spin)
 
-        lbl4 = BodyLabel("D3PM 起始 T 值:", self)
         self.t0_spin = DoubleSpinBox(self)
         self.t0_spin.setRange(0.0, 0.99)
         self.t0_spin.setSingleStep(0.01)
         self.t0_spin.setValue(float(self.settings.value("t0", self.default_values["t0"])))
         self.t0_spin.valueChanged.connect(lambda v: self.settings.setValue("t0", v))
-        adv_grid.addWidget(lbl4, 1, 0)
-        adv_grid.addWidget(self.t0_spin, 1, 1)
+        add_pair("d3pm_t0", 1, 0, self.t0_spin)
 
-        lbl5 = BodyLabel("D3PM 采样步数:", self)
         self.nsteps_spin = SpinBox(self)
         self.nsteps_spin.setRange(1, 20)
         self.nsteps_spin.setValue(int(self.settings.value("nsteps", self.default_values["nsteps"])))
         self.nsteps_spin.valueChanged.connect(lambda v: self.settings.setValue("nsteps", v))
-        adv_grid.addWidget(lbl5, 1, 2)
-        adv_grid.addWidget(self.nsteps_spin, 1, 3)
+        add_pair("d3pm_nsteps", 1, 2, self.nsteps_spin)
 
-        lbl6 = BodyLabel("GAME Batch:", self)
         self.batch_spin = SpinBox(self)
         self.batch_spin.setRange(1, 32)
         self.batch_spin.setValue(int(self.settings.value("batch_size", self.default_values["batch_size"])))
         self.batch_spin.valueChanged.connect(lambda v: self.settings.setValue("batch_size", v))
-        adv_grid.addWidget(lbl6, 1, 4)
-        adv_grid.addWidget(self.batch_spin, 1, 5)
+        add_pair("game_batch", 1, 4, self.batch_spin)
 
-        lbl7 = BodyLabel("ASR Batch:", self)
         self.asr_batch_spin = SpinBox(self)
         self.asr_batch_spin.setRange(1, 32)
         self.asr_batch_spin.setValue(int(self.settings.value("asr_batch", self.default_values["asr_batch"])))
         self.asr_batch_spin.valueChanged.connect(lambda v: self.settings.setValue("asr_batch", v))
-        adv_grid.addWidget(lbl7, 2, 0)
-        adv_grid.addWidget(self.asr_batch_spin, 2, 1)
+        add_pair("asr_batch", 2, 0, self.asr_batch_spin)
 
-        lbl9 = BodyLabel("Slice Min (s):", self)
         self.slice_min_spin = DoubleSpinBox(self)
         self.slice_min_spin.setRange(SLICE_DURATION_MIN_SEC, SLICE_DURATION_MAX_SEC)
         self.slice_min_spin.setDecimals(1)
         self.slice_min_spin.setSingleStep(0.5)
         self.slice_min_spin.setValue(initial_slice_min)
-        adv_grid.addWidget(lbl9, 2, 2)
-        adv_grid.addWidget(self.slice_min_spin, 2, 3)
+        add_pair("slice_min", 2, 2, self.slice_min_spin)
 
-        lbl10 = BodyLabel("Slice Max (s):", self)
         self.slice_max_spin = DoubleSpinBox(self)
         self.slice_max_spin.setRange(SLICE_DURATION_MIN_SEC, SLICE_DURATION_MAX_SEC)
         self.slice_max_spin.setDecimals(1)
         self.slice_max_spin.setSingleStep(0.5)
         self.slice_max_spin.setValue(initial_slice_max)
-        adv_grid.addWidget(lbl10, 3, 0)
-        adv_grid.addWidget(self.slice_max_spin, 3, 1)
+        add_pair("slice_max", 2, 4, self.slice_max_spin)
 
         self.slice_min_spin.valueChanged.connect(self._on_slice_bounds_changed)
         self.slice_max_spin.valueChanged.connect(self._on_slice_bounds_changed)
@@ -179,50 +206,39 @@ class GlobalSettingsInterface(ScrollArea):
         adv_layout.addLayout(adv_grid)
         self.vBoxLayout.addWidget(adv_card)
 
+        # ── debug ───────────────────────────────────────────────────
         debug_card = CardWidget(self)
         debug_layout = QVBoxLayout(debug_card)
-        debug_title = BodyLabel("Debug", self)
+        debug_title = BodyLabel(self)
+        self._bind_tr(lambda: debug_title.setText(tr("debug")))
         debug_title.setStyleSheet("font-weight: bold; font-size: 14px;")
         debug_layout.addWidget(debug_title)
 
         debug_grid = QHBoxLayout()
-        debug_grid.addWidget(BodyLabel("导出 Text (.txt):", self))
-        self.cb_txt = SwitchButton("On", self, self)
-        self.cb_txt.setOffText("Off")
-        self.cb_txt.setChecked(self.settings.value("debug_txt", self.default_values["debug_txt"], type=bool))
-        self.cb_txt.checkedChanged.connect(lambda v: self.settings.setValue("debug_txt", v))
-        debug_grid.addWidget(self.cb_txt)
+        self._add_debug_switch(debug_grid, "export_txt", "debug_txt", self.default_values["debug_txt"])
+        debug_grid.addSpacing(20)
+        self._add_debug_switch(debug_grid, "export_csv", "debug_csv", self.default_values["debug_csv"])
+        debug_grid.addSpacing(20)
+        self._add_debug_switch(debug_grid, "export_chunks", "debug_chunks", self.default_values["debug_chunks"])
         debug_grid.addSpacing(20)
 
-        debug_grid.addWidget(BodyLabel("导出 CSV (.csv):", self))
-        self.cb_csv = SwitchButton("On", self, self)
-        self.cb_csv.setOffText("Off")
-        self.cb_csv.setChecked(self.settings.value("debug_csv", self.default_values["debug_csv"], type=bool))
-        self.cb_csv.checkedChanged.connect(lambda v: self.settings.setValue("debug_csv", v))
-        debug_grid.addWidget(self.cb_csv)
-        debug_grid.addSpacing(20)
-
-        debug_grid.addWidget(BodyLabel("导出切片:", self))
-        self.cb_chunks = SwitchButton("On", self, self)
-        self.cb_chunks.setOffText("Off")
-        self.cb_chunks.setChecked(self.settings.value("debug_chunks", self.default_values["debug_chunks"], type=bool))
-        self.cb_chunks.checkedChanged.connect(lambda v: self.settings.setValue("debug_chunks", v))
-        debug_grid.addWidget(self.cb_chunks)
-        debug_grid.addSpacing(20)
-
-        debug_grid.addWidget(BodyLabel("音高格式:", self))
         self.pitch_combo = ComboBox(self)
         self.pitch_combo.addItems(["name", "number"])
         self.pitch_combo.setCurrentText(self.settings.value("pitch_format", self.default_values["pitch_format"]))
         self.pitch_combo.currentTextChanged.connect(lambda t: self.settings.setValue("pitch_format", t))
+        pitch_label = BodyLabel(self)
+        self._bind_tr(lambda: pitch_label.setText(tr("pitch_format")))
+        debug_grid.addWidget(pitch_label)
         debug_grid.addWidget(self.pitch_combo)
         debug_grid.addSpacing(20)
 
-        debug_grid.addWidget(BodyLabel("音高取整:", self))
-        self.cb_round = SwitchButton("On", self, self)
+        self.cb_round = SwitchButton("On", self)
         self.cb_round.setOffText("Off")
         self.cb_round.setChecked(self.settings.value("round_pitch", self.default_values["round_pitch"], type=bool))
         self.cb_round.checkedChanged.connect(lambda v: self.settings.setValue("round_pitch", v))
+        round_label = BodyLabel(self)
+        self._bind_tr(lambda: round_label.setText(tr("round_pitch")))
+        debug_grid.addWidget(round_label)
         debug_grid.addWidget(self.cb_round)
         debug_grid.addStretch(1)
 
@@ -232,7 +248,65 @@ class GlobalSettingsInterface(ScrollArea):
         self.vBoxLayout.addStretch(1)
         self.setWidget(self.view)
         self.setWidgetResizable(True)
+        self.enableTransparentBackground()
 
+    # ── i18n helpers ────────────────────────────────────────────────
+    def _bind_tr(self, fn):
+        self._tr_bindings.append(fn)
+        fn()
+
+    def retranslate_ui(self):
+        for fn in self._tr_bindings:
+            fn()
+
+    @staticmethod
+    def _fill_combo(combo, choices: list[tuple[str, str]], keep_value: bool = False):
+        current = combo.currentData() if keep_value else None
+        combo.blockSignals(True)
+        combo.clear()
+        for value, key in choices:
+            combo.addItem(tr(key), userData=value)
+        if current is not None:
+            index = combo.findData(current)
+            if index >= 0:
+                combo.setCurrentIndex(index)
+        combo.blockSignals(False)
+
+    @staticmethod
+    def _index_by_value(combo, value: str) -> int:
+        return max(0, combo.findData(value))
+
+    def _saved_theme(self) -> str:
+        return str(self.settings.value("theme", "light")).strip().lower()
+
+    def _saved_language(self) -> str:
+        return "en" if str(self.settings.value("language", "zh")).strip().lower() in {"en", "english"} else "zh"
+
+    def _add_debug_switch(self, layout, label_key, settings_key, default):
+        switch = SwitchButton("On", self)
+        switch.setOffText("Off")
+        switch.setChecked(self.settings.value(settings_key, default, type=bool))
+        switch.checkedChanged.connect(lambda v, k=settings_key: self.settings.setValue(k, v))
+        label = BodyLabel(self)
+        self._bind_tr(lambda l=label, k=label_key: l.setText(tr(k)))
+        layout.addWidget(label)
+        layout.addWidget(switch)
+        attr = {"debug_txt": "cb_txt", "debug_csv": "cb_csv", "debug_chunks": "cb_chunks"}[settings_key]
+        setattr(self, attr, switch)
+
+    def _on_theme_changed(self):
+        value = self.theme_combo.currentData() or "light"
+        self.settings.setValue("theme", value)
+        setTheme({"dark": Theme.DARK, "auto": Theme.AUTO}.get(value, Theme.LIGHT))
+
+    def _on_language_changed(self):
+        value = self.language_combo.currentData() or "zh"
+        self.settings.setValue("language", value)
+        set_language(value)
+        self.retranslate_ui()
+        self.languageChanged.emit(value)
+
+    # ── existing behaviour ──────────────────────────────────────────
     def reset_to_default(self):
         self.seg_thresh_spin.setValue(self.default_values["seg_thresh"])
         self.seg_rad_spin.setValue(self.default_values["seg_rad"])
@@ -243,9 +317,9 @@ class GlobalSettingsInterface(ScrollArea):
         self.asr_batch_spin.setValue(self.default_values["asr_batch"])
         self._set_slice_bounds(self.default_values["slice_min_sec"], self.default_values["slice_max_sec"])
         self._store_slice_bounds(self.default_values["slice_min_sec"], self.default_values["slice_max_sec"])
-        self.cb_txt.setChecked(self.default_values["debug_txt"])
-        self.cb_csv.setChecked(self.default_values["debug_csv"])
-        self.cb_chunks.setChecked(self.default_values["debug_chunks"])
+        self.cb_debug_txt.setChecked(self.default_values["debug_txt"])
+        self.cb_debug_csv.setChecked(self.default_values["debug_csv"])
+        self.cb_debug_chunks.setChecked(self.default_values["debug_chunks"])
         self.pitch_combo.setCurrentText(self.default_values["pitch_format"])
         self.cb_round.setChecked(self.default_values["round_pitch"])
         # Note: enable_lyrics_match / output_lyrics live in AutoLyricInterface;

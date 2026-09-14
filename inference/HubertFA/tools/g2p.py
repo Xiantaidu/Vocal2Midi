@@ -3,7 +3,7 @@ import warnings
 
 
 class BaseG2P:
-    # 这些是 HubertFA 词表中不带语言前缀的全局静音/边界音素。
+    # These are the language-neutral global silence/boundary phonemes in the HubertFA vocabulary.
     _LANGUAGE_NEUTRAL_PHONEMES = {"", "SP", "<SP>", "AP", "EP", "GS", "cl", "CL", "pau"}
 
     def __init__(self, language):

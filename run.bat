@@ -19,9 +19,9 @@ set "V2M_PORTABLE_ROOT=%ROOT:~0,-1%"
 set "PYTHONHOME=%PYTHON_DIR%"
 set "PYTHONPATH=%ROOT%"
 set "PYTHONNOUSERSITE=1"
-set "PATH=%PYTHON_DIR%;%PYTHON_DIR%\Scripts;%PYTHON_DIR%\DLLs;%PYTHON_DIR%\Lib\site-packages\PyQt5\Qt5\bin;%ROOT%inference\qwen3asr_dml\bin;%PATH%"
-set "QT_PLUGIN_PATH=%PYTHON_DIR%\Lib\site-packages\PyQt5\Qt5\plugins"
-set "QT_QPA_PLATFORM_PLUGIN_PATH=%PYTHON_DIR%\Lib\site-packages\PyQt5\Qt5\plugins\platforms"
+set "PATH=%PYTHON_DIR%;%PYTHON_DIR%\Scripts;%PYTHON_DIR%\DLLs;%PYTHON_DIR%\Lib\site-packages\PySide6;%ROOT%inference\qwen3asr_dml\bin;%PATH%"
+set "QT_PLUGIN_PATH=%PYTHON_DIR%\Lib\site-packages\PySide6\plugins"
+set "QT_QPA_PLATFORM_PLUGIN_PATH=%PYTHON_DIR%\Lib\site-packages\PySide6\plugins\platforms"
 
 "%PYTHON_DIR%\python.exe" app_fluent.py
 set "EXIT_CODE=%ERRORLEVEL%"

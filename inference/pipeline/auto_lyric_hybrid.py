@@ -78,7 +78,7 @@ def _select_pinyin_asr_path(pinyin_asr_model_path: str) -> str | None:
 def normalize_pipeline_language(language: str | None) -> tuple[str, bool]:
     """Map user-facing language to the pipeline value and the pinyin-ASR flag.
 
-    '中文-拼音' / 'zh-pinyin' selects the direct pinyin ASR engine; every other
+    '中文-拼音' ("Chinese-Pinyin") / 'zh-pinyin' selects the direct pinyin ASR engine; every other
     language keeps its existing engine (ja romaji ASR or Qwen text ASR).
     """
     value = str(language or "").strip().lower()
