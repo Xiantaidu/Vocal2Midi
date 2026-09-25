@@ -261,6 +261,8 @@ def auto_lyric_hybrid_pipeline(
     rmvpe_model_path: str = "",
     phoneme_asr_model_path: str = "",
     pinyin_asr_model_path: str = "",
+    chinese_asr_engine: str = "qwen",
+    japanese_asr_engine: str = "romaji",
     cancel_checker=None,
 ):
     """Auto Lyric Hybrid ONNX pipeline."""
@@ -272,6 +274,11 @@ def auto_lyric_hybrid_pipeline(
     output_dir = pathlib.Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     language, use_pinyin_asr = normalize_pipeline_language(language)
+    # Explicit Chinese ASR selection routes plain zh through the direct pinyin
+    # ASR exactly like the legacy 'zh-pinyin' language value.
+    if language == "zh" and str(chinese_asr_engine or "").strip().lower() == "pinyin":
+        language = PINYIN_ASR_LANGUAGE
+        use_pinyin_asr = True
     lyric_output_mode = _normalize_lyric_output_mode(language, lyric_output_mode)
     # HFA/GAME/VSQX only know the base languages; the pinyin ASR is a zh variant.
     fa_language = "zh" if language == PINYIN_ASR_LANGUAGE else language
@@ -337,8 +344,10 @@ def auto_lyric_hybrid_pipeline(
         chars_dict = {}
 
         if run_lyric_alignment:
+            # Japanese uses the romaji ASR unless the user picked Qwen text ASR.
+            ja_wants_romaji = str(japanese_asr_engine or "").strip().lower() != "qwen"
             phoneme_asr_engine = None
-            if language == "ja" and lyric_output_mode in {"romaji", "kana"}:
+            if language == "ja" and lyric_output_mode in {"romaji", "kana"} and ja_wants_romaji:
                 phoneme_asr_engine = "romaji"
             elif use_pinyin_asr:
                 phoneme_asr_engine = "pinyin"
@@ -391,7 +400,10 @@ def auto_lyric_hybrid_pipeline(
                 )
             else:
                 if language == "ja" and lyric_output_mode in {"romaji", "kana"}:
-                    print("\n--- Stage 1/3: Mora ASR unavailable; fallback to text ASR + Japanese G2P ---")
+                    if ja_wants_romaji:
+                        print("\n--- Stage 1/3: Mora ASR unavailable; fallback to text ASR + Japanese G2P ---")
+                    else:
+                        print("\n--- Stage 1/3: Running text ASR (Qwen) + Japanese G2P ---")
                 elif use_pinyin_asr:
                     print("\n--- Stage 1/3: Pinyin ASR unavailable; fallback to text ASR + Chinese G2P ---")
                 else:

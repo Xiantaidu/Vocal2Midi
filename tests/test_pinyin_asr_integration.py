@@ -176,6 +176,81 @@ def test_plain_zh_still_uses_qwen(monkeypatch, tmp_path):
     run_qwen.assert_called_once()
 
 
+def test_zh_with_pinyin_engine_routes_to_pinyin_asr(monkeypatch, tmp_path):
+    """The model-config Chinese ASR choice routes plain zh through the pinyin ASR."""
+    _patch_common(monkeypatch)
+    monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *a, **k: None)
+    monkeypatch.setattr(pipeline, "_select_pinyin_asr_path", lambda path: "pinyin")
+    run_pinyin = MagicMock(return_value=({"chunk_0": ["ni"]}, ["log"]))
+    run_romaji = MagicMock()
+    run_qwen = MagicMock()
+    monkeypatch.setattr(pipeline, "run_pinyin_asr", run_pinyin)
+    monkeypatch.setattr(pipeline, "run_romaji_asr", run_romaji)
+    monkeypatch.setattr(pipeline, "run_qwen_asr_and_fa", run_qwen)
+    _patch_alignment_success(monkeypatch)
+    run_hfa = MagicMock(
+        side_effect=lambda *a, **k: {"chunk_0": (None, None, [MagicMock()])}
+    )
+    monkeypatch.setattr(pipeline, "run_hubert_fa", run_hfa)
+
+    kwargs = _base_kwargs(tmp_path)
+    kwargs["lyric_output_mode"] = "hanzi"  # coerced to pinyin by the engine
+    kwargs["chinese_asr_engine"] = "pinyin"
+
+    pipeline.auto_lyric_hybrid_pipeline(**kwargs)
+
+    run_pinyin.assert_called_once()
+    run_qwen.assert_not_called()
+    run_romaji.assert_not_called()
+    assert run_pinyin.call_args.kwargs["language"] == "zh-pinyin"
+    assert run_pinyin.call_args.kwargs["lyric_output_mode"] == "pinyin"
+    # HFA/GAME downstream must see the base language.
+    assert run_hfa.call_args.kwargs["language"] == "zh"
+
+
+def test_ja_with_qwen_engine_skips_romaji_asr(monkeypatch, tmp_path):
+    """The model-config Japanese ASR choice can force the Qwen text-ASR path."""
+    _patch_common(monkeypatch)
+    monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *a, **k: None)
+    monkeypatch.setattr(pipeline, "_select_romaji_asr_path", lambda path: "romaji")
+    run_romaji = MagicMock()
+    run_qwen = MagicMock(return_value=({"chunk_0": ["ラ"]}, ["log"]))
+    monkeypatch.setattr(pipeline, "run_romaji_asr", run_romaji)
+    monkeypatch.setattr(pipeline, "run_qwen_asr_and_fa", run_qwen)
+    _patch_alignment_success(monkeypatch)
+
+    kwargs = _base_kwargs(tmp_path)
+    kwargs["language"] = "ja"
+    kwargs["lyric_output_mode"] = "romaji"
+    kwargs["japanese_asr_engine"] = "qwen"
+
+    pipeline.auto_lyric_hybrid_pipeline(**kwargs)
+
+    run_romaji.assert_not_called()
+    run_qwen.assert_called_once()
+    assert run_qwen.call_args.kwargs["language"] == "ja"
+
+
+def test_ja_default_engine_still_uses_romaji_asr(monkeypatch, tmp_path):
+    _patch_common(monkeypatch)
+    monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *a, **k: None)
+    monkeypatch.setattr(pipeline, "_select_romaji_asr_path", lambda path: "romaji")
+    run_romaji = MagicMock(return_value=({"chunk_0": ["ra"]}, ["log"]))
+    run_qwen = MagicMock()
+    monkeypatch.setattr(pipeline, "run_romaji_asr", run_romaji)
+    monkeypatch.setattr(pipeline, "run_qwen_asr_and_fa", run_qwen)
+    _patch_alignment_success(monkeypatch)
+
+    kwargs = _base_kwargs(tmp_path)
+    kwargs["language"] = "ja"
+    kwargs["lyric_output_mode"] = "romaji"
+
+    pipeline.auto_lyric_hybrid_pipeline(**kwargs)
+
+    run_romaji.assert_called_once()
+    run_qwen.assert_not_called()
+
+
 # --- pinyin token processing (lfa) ---
 
 def test_direct_pinyin_tokens_without_matcher(tmp_path):

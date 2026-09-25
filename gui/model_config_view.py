@@ -1,4 +1,4 @@
-"""Model configuration interface — model paths only, moved out of global settings."""
+"""Model configuration interface — ASR engine choices and model paths."""
 
 import pathlib
 
@@ -10,6 +10,7 @@ from qfluentwidgets import (
     CardWidget,
     BodyLabel,
     LineEdit,
+    ComboBox,
     FluentIcon,
     SubtitleLabel,
 )
@@ -22,6 +23,12 @@ MODEL_ROWS = [
     ("phoneme_asr_model", "phoneme_path"),
     ("pinyin_asr_model", "pinyin_path"),
     ("rmvpe_model", "rmvpe_path"),
+]
+
+# settings key, label key, (value, tr key) choices, default value
+ASR_ENGINE_ROWS = [
+    ("chinese_asr_engine", "zh_asr_choice", [("pinyin", "asr_pinyin"), ("qwen", "asr_qwen")], "qwen"),
+    ("japanese_asr_engine", "ja_asr_choice", [("romaji", "asr_romaji"), ("qwen", "asr_qwen")], "romaji"),
 ]
 
 
@@ -63,6 +70,9 @@ class ModelConfigInterface(ScrollArea):
         card = CardWidget(self)
         layout = QVBoxLayout(card)
 
+        for settings_key, label_key, choices, default in ASR_ENGINE_ROWS:
+            self._add_asr_choice_row(layout, label_key, settings_key, choices, default)
+
         for settings_key, label_key in MODEL_ROWS:
             self._add_model_row(layout, label_key, settings_key)
 
@@ -81,6 +91,26 @@ class ModelConfigInterface(ScrollArea):
     def retranslate_ui(self):
         for fn in self._tr_bindings:
             fn()
+
+    def _add_asr_choice_row(self, parent_layout, label_key: str, settings_key: str, choices: list, default: str):
+        row = QHBoxLayout()
+        label = BodyLabel(self)
+        self._bind_tr(lambda l=label, k=label_key: l.setText(tr(k)))
+        row.addWidget(label)
+        combo = ComboBox(self)
+        for value, tr_key in choices:
+            combo.addItem(tr(tr_key), userData=value)
+        valid = [value for value, _ in choices]
+        saved = str(self.settings.value(settings_key, default) or default)
+        index = combo.findData(saved if saved in valid else default)
+        combo.setCurrentIndex(max(0, index))
+        self.settings.setValue(settings_key, combo.currentData())
+        combo.currentIndexChanged.connect(
+            lambda _i, k=settings_key, c=combo: self.settings.setValue(k, c.currentData())
+        )
+        setattr(self, f"{settings_key}_combo", combo)
+        row.addWidget(combo, 1)
+        parent_layout.addLayout(row)
 
     def _add_model_row(self, parent_layout, label_key: str, settings_key: str):
         row = QHBoxLayout()
@@ -127,6 +157,12 @@ class ModelConfigInterface(ScrollArea):
             line_edit.setText(self._to_project_relative(dir_path))
 
     def reset_to_default(self):
+        for settings_key, _label_key, choices, default in ASR_ENGINE_ROWS:
+            combo = getattr(self, f"{settings_key}_combo", None)
+            if combo is not None:
+                index = combo.findData(default)
+                if index >= 0 and index != combo.currentIndex():
+                    combo.setCurrentIndex(index)  # persists via currentIndexChanged
         for key, default in self.default_values.items():
             edit = getattr(self, f"{key}_edit", None)
             if edit is not None:

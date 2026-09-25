@@ -82,6 +82,53 @@ class TestValidateModelPaths:
 
         _validate_model_paths(base_cfg)
 
+    def test_zh_pinyin_engine_skips_qwen_path_check(self, base_cfg, tmp_path):
+        """Chinese + PinyinASR validates the pinyin model, not the Qwen one."""
+        existing = str(tmp_path)
+        base_cfg.game_model_dir = existing
+        base_cfg.hfa_model_dir = existing
+        base_cfg.pinyin_asr_model_path = existing
+        base_cfg.asr_model_path = "/does/not/exist/asr"  # unused by the pinyin engine
+        base_cfg.chinese_asr_engine = "pinyin"
+
+        # Should not raise
+        _validate_model_paths(base_cfg)
+
+    def test_zh_qwen_engine_requires_qwen_path(self, base_cfg, tmp_path):
+        """Chinese + Qwen3-ASR (default) still requires the Qwen model path."""
+        existing = str(tmp_path)
+        base_cfg.game_model_dir = existing
+        base_cfg.hfa_model_dir = existing
+
+        with pytest.raises(ModelNotFoundError) as exc_info:
+            _validate_model_paths(base_cfg)
+        assert "拼音ASR" not in exc_info.value.details
+        assert "ASR" in exc_info.value.details
+
+    def test_ja_qwen_engine_bypasses_romaji_path_check(self, base_cfg, tmp_path):
+        """Japanese + Qwen3-ASR must not fail on a broken romaji model path."""
+        existing = str(tmp_path)
+        base_cfg.game_model_dir = existing
+        base_cfg.hfa_model_dir = existing
+        base_cfg.asr_model_path = existing  # the selected engine
+        base_cfg.language = "ja"
+        base_cfg.japanese_asr_engine = "qwen"
+        base_cfg.phoneme_asr_model_path = "/does/not/exist/romaji"  # unused
+
+        # Should not raise
+        _validate_model_paths(base_cfg)
+
+    def test_ja_romaji_engine_requires_existing_romaji_path(self, base_cfg, tmp_path):
+        existing = str(tmp_path)
+        base_cfg.game_model_dir = existing
+        base_cfg.hfa_model_dir = existing
+        base_cfg.language = "ja"
+        base_cfg.phoneme_asr_model_path = "/does/not/exist/romaji"
+
+        with pytest.raises(ModelNotFoundError) as exc_info:
+            _validate_model_paths(base_cfg)
+        assert "音素ASR" in exc_info.value.details
+
 
 class TestRunAutoLyricJob:
     """Tests for run_auto_lyric_job."""

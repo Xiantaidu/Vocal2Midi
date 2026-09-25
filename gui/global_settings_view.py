@@ -317,9 +317,9 @@ class GlobalSettingsInterface(ScrollArea):
         self.asr_batch_spin.setValue(self.default_values["asr_batch"])
         self._set_slice_bounds(self.default_values["slice_min_sec"], self.default_values["slice_max_sec"])
         self._store_slice_bounds(self.default_values["slice_min_sec"], self.default_values["slice_max_sec"])
-        self.cb_debug_txt.setChecked(self.default_values["debug_txt"])
-        self.cb_debug_csv.setChecked(self.default_values["debug_csv"])
-        self.cb_debug_chunks.setChecked(self.default_values["debug_chunks"])
+        self.cb_txt.setChecked(self.default_values["debug_txt"])
+        self.cb_csv.setChecked(self.default_values["debug_csv"])
+        self.cb_chunks.setChecked(self.default_values["debug_chunks"])
         self.pitch_combo.setCurrentText(self.default_values["pitch_format"])
         self.cb_round.setChecked(self.default_values["round_pitch"])
         # Note: enable_lyrics_match / output_lyrics live in AutoLyricInterface;

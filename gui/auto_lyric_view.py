@@ -3,7 +3,7 @@ import os
 import pathlib
 import re
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFileDialog
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFileDialog, QAbstractItemView
 from PySide6.QtCore import Qt
 
 from qfluentwidgets import (
@@ -44,7 +44,6 @@ SLICE_METHOD_CHOICES = [
 ]
 TARGET_LANGUAGE_CHOICES = [
     ("zh", "lang_name_zh"),
-    ("zh-pinyin", "lang_name_zh_pinyin"),
     ("ja", "lang_name_ja"),
     ("en", "lang_name_en"),
 ]
@@ -69,13 +68,16 @@ QUANT_MODE_CHOICES = [
 ]
 LYRIC_OUTPUT_BY_LANGUAGE = {
     "zh": [("pinyin", "opt_pinyin"), ("hanzi", "opt_hanzi")],
-    "zh-pinyin": [("pinyin", "opt_pinyin")],
     "ja": [("romaji", "opt_romaji"), ("kana", "opt_kana")],
     "en": [("word", "opt_word")],
 }
-DEFAULT_LYRIC_OUTPUT = {"zh": "hanzi", "zh-pinyin": "pinyin", "ja": "romaji", "en": "word"}
+DEFAULT_LYRIC_OUTPUT = {"zh": "hanzi", "ja": "romaji", "en": "word"}
 # Saved preferences used to store display texts; migrate them to values.
 LEGACY_LYRIC_OUTPUT_VALUES = {"拼音": "pinyin", "汉字": "hanzi", "罗马音": "romaji", "假名": "kana", "单词": "word"}
+# Dialog round-trips display texts for these; map them back to backend values.
+LEGACY_LANGUAGE_VALUES = {"中文-拼音": "zh-pinyin"}
+LEGACY_QUANT_STEP_VALUES = {"不量化": 0, "1/4 音符 (1拍)": 480, "1/8 音符 (1/2拍)": 240, "1/16 音符 (1/4拍)": 120, "1/32 音符 (1/8拍)": 60, "1/64 音符 (1/16拍)": 30}
+LEGACY_QUANT_MODE_VALUES = {"节奏修复": "repair", "贝叶斯": "bayes", "DP": "dp", "简单": "simple"}
 
 
 class AutoLyricInterface(ScrollArea):
@@ -150,10 +152,18 @@ class AutoLyricInterface(ScrollArea):
         audio_layout.addLayout(header_layout)
 
         self.audio_list = ListWidget(self)
+        self.audio_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.audio_list.setMaximumHeight(40)
-        audio_layout.addWidget(self.audio_list)
+        audio_layout.addWidget(self.audio_list, 1)  # stretch so batch mode can grow the list
+        self._audio_card_stretch = audio_layout
         self.vBoxLayout.addWidget(audio_card)
         self.setAcceptDrops(True)
+        # per-file settings in batch mode: filename -> dict of overrides
+        self._file_settings: dict[str, dict] = {}
+        self._is_running = False
+        self._audio_card = audio_card
+        self._combo_card = None  # set after cards are built
+        self._output_card = None
 
         self.lyric_card = CardWidget(self)
         lyric_layout = QVBoxLayout(self.lyric_card)
@@ -226,6 +236,7 @@ class AutoLyricInterface(ScrollArea):
         combo_layout.addLayout(combo_row2)
 
         self.vBoxLayout.addWidget(combo_card)
+        self._combo_card = combo_card
 
         output_card = CardWidget(self)
         output_layout = QVBoxLayout(output_card)
@@ -270,6 +281,11 @@ class AutoLyricInterface(ScrollArea):
         save_layout.addWidget(btn_browse_save)
         output_layout.addLayout(save_layout)
         self.vBoxLayout.addWidget(output_card)
+        self._output_card = output_card
+
+        # selection changes drive batch mode; the retranslate refresh runs
+        # after __init__ finishes (batch refresh is invoked there too)
+        self.audio_list.itemSelectionChanged.connect(self._update_batch_mode)
 
         action_layout = QHBoxLayout()
         self.btn_run = PrimaryPushButton(tr("run"), self, FluentIcon.PLAY)
@@ -310,8 +326,13 @@ class AutoLyricInterface(ScrollArea):
         self._last_device = None
         self.update_lyrics_visibility()
         self.update_lyric_output_options()
+        # Switching the Chinese ASR engine re-evaluates the pinyin output lock.
+        zh_asr_combo = getattr(self.model_config, "chinese_asr_engine_combo", None)
+        if zh_asr_combo is not None:
+            zh_asr_combo.currentIndexChanged.connect(self.update_lyric_output_options)
         self._last_device = self.device_combo.currentText()  # baseline; don't wipe saved batches on startup
         self.on_export_format_changed()
+        self._update_batch_mode()  # all widgets exist now
 
     # ── i18n helpers ────────────────────────────────────────────────
     def _bind_tr(self, fn):
@@ -363,7 +384,7 @@ class AutoLyricInterface(ScrollArea):
             event.ignore()
 
     def add_audio_paths(self, paths):
-        existing = {self.audio_list.item(i).text() for i in range(self.audio_list.count())}
+        existing = {self._list_item_path(self.audio_list.item(i)) for i in range(self.audio_list.count())}
         added = 0
         for path in paths:
             path = str(path)
@@ -372,10 +393,58 @@ class AutoLyricInterface(ScrollArea):
             if path in existing:
                 continue
             self.audio_list.addItem(path)
+            self._attach_gear_button(path)
             existing.add(path)
             added += 1
         if added:
             self.log_msg(tr("files_added", n=added))
+            self._update_batch_mode()
+
+    def _attach_gear_button(self, path: str):
+        """Attach a gear button row on the given list item.
+
+        The item text is cleared because the row widget draws the file name
+        itself; leaving the text would paint over the widget.
+        """
+        from qfluentwidgets import TransparentToolButton
+
+        item = self.audio_list.item(self.audio_list.count() - 1)
+        if item is None or self._list_item_path(item) != path:
+            return
+        item.setText("")
+        item.setData(Qt.UserRole, path)
+
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(8, 0, 8, 0)
+        name_label = BodyLabel(path, row)
+        row_layout.addWidget(name_label)
+        row_layout.addStretch(1)
+        btn = TransparentToolButton(FluentIcon.SETTING, row)
+        btn.setToolTip(tr("file_settings"))
+        btn.setFixedSize(28, 28)
+        btn.clicked.connect(lambda checked, f=path: self._open_file_settings(f))
+        row_layout.addWidget(btn)
+        btn_del = TransparentToolButton(FluentIcon.DELETE, row)
+        btn_del.setToolTip(tr("clear_files"))
+        btn_del.setFixedSize(28, 28)
+        btn_del.clicked.connect(lambda checked, f=path, it=item: self._remove_audio_item(it, f))
+        row_layout.addWidget(btn_del)
+        from PySide6.QtCore import QSize
+
+        hint = row.sizeHint()
+        hint.setHeight(36)  # fixed row height; QWidget.sizeHint ignores setFixedHeight
+        item.setSizeHint(hint)
+        self.audio_list.setItemWidget(item, row)
+
+    def _remove_audio_item(self, item, path: str):
+        """Remove a single audio list row and its per-file settings."""
+        self._file_settings.pop(path, None)
+        row_widget = self.audio_list.itemWidget(item)
+        if row_widget is not None:
+            self.audio_list.removeItemWidget(item)
+        self.audio_list.takeItem(self.audio_list.row(item))
+        self._update_batch_mode()
 
     # ── log terminal ────────────────────────────────────────────────
     def _log_palette(self):
@@ -458,6 +527,22 @@ class AutoLyricInterface(ScrollArea):
     def _selected_language(self) -> str:
         return self.lang_combo.currentData() or "zh"
 
+    def _asr_engine(self, settings_key: str, fallback: str) -> str:
+        combo = getattr(self.model_config, f"{settings_key}_combo", None)
+        if combo is None:
+            return fallback
+        return combo.currentData() or fallback
+
+    def _chinese_asr_engine(self) -> str:
+        return self._asr_engine("chinese_asr_engine", "qwen")
+
+    def _japanese_asr_engine(self) -> str:
+        return self._asr_engine("japanese_asr_engine", "romaji")
+
+    def _pinyin_output_locked(self) -> bool:
+        """PinyinASR can only emit pinyin, so hanzi output is unavailable."""
+        return self._selected_language() == "zh" and self._chinese_asr_engine() == "pinyin"
+
     def save_lyric_output_preference(self, *_args):
         language = self._selected_language()
         value = self.lyric_output_combo.currentData()
@@ -466,8 +551,16 @@ class AutoLyricInterface(ScrollArea):
 
     def update_lyric_output_enabled_state(self):
         enabled = self.cb_output_lyrics.isChecked()
+        locked = self._pinyin_output_locked()
         self.lyric_output_label.setEnabled(enabled)
-        self.lyric_output_combo.setEnabled(enabled)
+        self.lyric_output_combo.setEnabled(enabled and not locked)
+        if locked:
+            hint = tr("lyric_output_locked_hint")
+            self.lyric_output_combo.setToolTip(hint)
+            self.lyric_output_label.setToolTip(hint)
+        else:
+            self.lyric_output_combo.setToolTip("")
+            self.lyric_output_label.setToolTip("")
 
     def on_output_lyrics_changed(self, enabled: bool):
         self.global_settings.settings.setValue("output_lyrics", enabled)
@@ -496,7 +589,12 @@ class AutoLyricInterface(ScrollArea):
 
     def update_lyric_output_options(self, *_args):
         language = self._selected_language()
-        choices = LYRIC_OUTPUT_BY_LANGUAGE.get(language, LYRIC_OUTPUT_BY_LANGUAGE["zh"])
+        locked = self._pinyin_output_locked()
+        choices = [
+            (value, key)
+            for value, key in LYRIC_OUTPUT_BY_LANGUAGE.get(language, LYRIC_OUTPUT_BY_LANGUAGE["zh"])
+            if not locked or value == "pinyin"
+        ]
         saved_value = str(self.global_settings.settings.value(
             self._lyric_output_setting_key(language),
             DEFAULT_LYRIC_OUTPUT.get(language, "hanzi"),
@@ -505,7 +603,9 @@ class AutoLyricInterface(ScrollArea):
 
         self._fill_combo(self.lyric_output_combo, choices)
         values = [value for value, _ in choices]
-        index = self.lyric_output_combo.findData(saved_value if saved_value in values else DEFAULT_LYRIC_OUTPUT.get(language, "hanzi"))
+        if saved_value not in values:
+            saved_value = "pinyin" if locked else DEFAULT_LYRIC_OUTPUT.get(language, "hanzi")
+        index = self.lyric_output_combo.findData(saved_value)
         self.lyric_output_combo.setCurrentIndex(max(0, index))
 
         self.save_lyric_output_preference()
@@ -528,92 +628,175 @@ class AutoLyricInterface(ScrollArea):
 
     def clear_audio_files(self):
         self.audio_list.clear()
+        self._file_settings.clear()
+        self._update_batch_mode()
 
-    def run_pipeline(self):
-        if not HYBRID_AVAILABLE:
-            self.log_msg(tr("err_hybrid"))
-            return
+    # ── batch mode ──────────────────────────────────────────────────
+    def _list_item_path(self, item) -> str:
+        """Path of a list item (stored in UserRole; the display text is empty)."""
+        return str(item.data(Qt.UserRole) or item.text())
 
-        audio_files = [self.audio_list.item(i).text() for i in range(self.audio_list.count())]
-        if not audio_files:
-            self._show_error(tr("err_cannot_start"), tr("err_no_audio"))
-            return
+    def _selected_audio_files(self) -> list[str]:
+        return [self._list_item_path(item) for item in self.audio_list.selectedItems()]
 
-        selected_export_format = self.get_export_format()
-        output_formats = [selected_export_format]
-        if self.global_settings.cb_txt.isChecked():
-            output_formats.append("txt")
-        if self.global_settings.cb_csv.isChecked():
-            output_formats.append("csv")
-        if self.global_settings.cb_chunks.isChecked():
-            output_formats.append("chunks")
-        save_dir = self.save_dir_edit.text()
-        if not save_dir:
-            self._show_error(tr("err_cannot_start"), tr("err_no_dir"))
-            return
+    def _update_batch_mode(self):
+        """Single file keeps the panels; more than one file in the list enters
+        batch mode: panels hide and the list grows to fill the freed space."""
+        file_count = self.audio_list.count()
+        batch = file_count > 1
+        self._combo_card.setVisible(not batch)
+        self._output_card.setVisible(not batch)
+        self.audio_list.setMaximumHeight(16777215 if batch else 40)  # unclamped in batch mode
+        self.audio_list.setMinimumHeight(160 if batch else 40)
+        if batch:
+            self.run_status_label.setText(tr("batch_mode", n=file_count))
+        elif not self._is_running:
+            self.run_status_label.setText("")
 
+    def _current_base_values(self) -> dict:
+        """Snapshot every parameter the main UI currently controls."""
+        return {
+            "slicing_method": self.slicing_combo.currentData(),
+            "language": self.lang_combo.currentData() or "zh",
+            "lyric_output": self.lyric_output_combo.currentData() or "hanzi",
+            "device": self.device_combo.currentText(),
+            "match_lyrics": self.cb_match_lyrics.isChecked(),
+            "original_lyrics": self.lyrics_edit.toPlainText().strip(),
+            "export_format": {"mid": "MIDI", "ustx": "USTX", "vsqx": "VSQX"}.get(self.get_export_format(), "MIDI"),
+            "output_lyrics": self.cb_output_lyrics.isChecked(),
+            "pitch_curve": self.cb_pitch_curve.isChecked(),
+            "tempo": self.tempo_spin.value(),
+            "quantization_step": {0: "不量化", 480: "1/4 音符 (1拍)", 240: "1/8 音符 (1/2拍)", 120: "1/16 音符 (1/4拍)", 60: "1/32 音符 (1/8拍)", 30: "1/64 音符 (1/16拍)"}.get(self.quantize_combo.currentData(), "不量化"),
+            "quantization_mode": {"repair": "节奏修复", "bayes": "贝叶斯", "dp": "DP", "simple": "简单"}.get(self.quantize_mode_combo.currentData(), "节奏修复"),
+            "batch_size": self.global_settings.batch_spin.value(),
+            "asr_batch_size": self.global_settings.asr_batch_spin.value(),
+            "output_dir": self.save_dir_edit.text(),
+            "chinese_asr_engine": self._chinese_asr_engine(),
+            "japanese_asr_engine": self._japanese_asr_engine(),
+            "devices": VISIBLE_RUNTIME_DEVICE_CHOICES,
+            "slice_min_sec": float(self.global_settings.slice_min_spin.value()),
+            "slice_max_sec": float(self.global_settings.slice_max_spin.value()),
+            "output_formats_extra": [
+                fmt for checked, fmt in (
+                    (self.global_settings.cb_txt.isChecked(), "txt"),
+                    (self.global_settings.cb_csv.isChecked(), "csv"),
+                    (self.global_settings.cb_chunks.isChecked(), "chunks"),
+                ) if checked
+            ],
+            "pitch_format": self.global_settings.pitch_combo.currentText(),
+            "round_pitch": self.global_settings.cb_round.isChecked(),
+            "seg_threshold": self.global_settings.seg_thresh_spin.value(),
+            "seg_radius": self.global_settings.seg_rad_spin.value(),
+            "est_threshold": self.global_settings.est_thresh_spin.value(),
+        }
+
+    def _open_file_settings(self, filename: str):
+        from gui.file_settings_dialog import FileSettingsDialog
+
+        base = dict(self._current_base_values())
+        saved = self._file_settings.get(filename)
+        if saved:
+            base.update({k: v for k, v in saved.items() if k in base})
+        dialog = FileSettingsDialog(filename, base, self)
+        if dialog.exec():
+            self._file_settings[filename] = dialog.values()
+            self.log_msg(f"{filename}: {tr('file_settings')} {tr('apply')}")
+
+    def _build_file_config(self, filename: str, base: dict, ts_list: list, overrides: dict | None) -> PipelineConfig:
+        """Build a PipelineConfig for one file, applying its saved overrides."""
+        values = dict(base)
+        if overrides:
+            values.update(overrides)
+        export_format = {"MIDI": "mid", "USTX": "ustx", "VSQX": "vsqx"}.get(values["export_format"], "mid")
+        output_formats = [export_format, *values["output_formats_extra"]]
+        save_dir = values["output_dir"]
         if not os.path.exists(save_dir):
             try:
                 os.makedirs(save_dir)
                 self.log_msg(tr("info_dir_created", dir=save_dir))
             except Exception as e:
                 self._show_error(tr("err_dir_create"), str(e))
-                return
+                raise ValueError(f"cannot create save dir: {save_dir}") from e
         elif not os.path.isdir(save_dir):
             self._show_error(tr("err_cannot_start"), tr("err_dir_not_dir"))
-            return
+            raise ValueError(f"save path is not a directory: {save_dir}")
 
-        ts_list = t0_nstep_to_ts(
-            self.global_settings.t0_spin.value(),
-            int(self.global_settings.nsteps_spin.value()),
-        )
-        device = normalize_runtime_device(self.device_combo.currentText())
-        slice_min_sec = float(self.global_settings.slice_min_spin.value())
-        slice_max_sec = float(self.global_settings.slice_max_spin.value())
-        try:
-            validate_slice_bounds(slice_min_sec, slice_max_sec)
-        except ValueError as exc:
-            self.log_msg(f"Error: invalid slice duration settings: {exc}")
-            return
-
-        config = PipelineConfig(
+        lyric_output = LEGACY_LYRIC_OUTPUT_VALUES.get(values["lyric_output"], values["lyric_output"])
+        language = LEGACY_LANGUAGE_VALUES.get(values["language"], values["language"])
+        return PipelineConfig(
             audio_path="",  # set per-file in worker
             output_filename="",  # set per-file in worker
             output_dir=pathlib.Path(save_dir),
             game_model_dir=self.model_config.game_model_edit.text(),
             hfa_model_dir=self.model_config.hfa_model_edit.text(),
             asr_model_path=self.model_config.asr_model_edit.text(),
-            device=device,
-            language=self._selected_language(),
+            device=normalize_runtime_device(values["device"]),
+            language=language,
             ts=ts_list,
-            lyric_output_mode=self.get_lyric_output_mode(),
-            original_lyrics=self.lyrics_edit.toPlainText().strip() if self.cb_match_lyrics.isChecked() else "",
+            lyric_output_mode=lyric_output,
+            original_lyrics=values["original_lyrics"] if values["match_lyrics"] else "",
             output_formats=output_formats,
-            output_lyrics=self.cb_output_lyrics.isChecked(),
-            output_pitch_curve=self.cb_pitch_curve.isChecked() if selected_export_format in {"ustx", "vsqx"} else False,
-            slicing_method=self.slicing_combo.currentData(),
-            slice_min_sec=slice_min_sec,
-            slice_max_sec=slice_max_sec,
-            tempo=self.tempo_spin.value(),
-            quantization_step=self.quantize_combo.currentData(),
-            quantization_mode=self.quantize_mode_combo.currentData(),
-            pitch_format=self.global_settings.pitch_combo.currentText(),
-            round_pitch=self.global_settings.cb_round.isChecked(),
-            seg_threshold=self.global_settings.seg_thresh_spin.value(),
-            seg_radius=self.global_settings.seg_rad_spin.value(),
-            est_threshold=self.global_settings.est_thresh_spin.value(),
-            batch_size=self.global_settings.batch_spin.value(),
-            asr_batch_size=self.global_settings.asr_batch_spin.value(),
+            output_lyrics=values["output_lyrics"],
+            output_pitch_curve=values["pitch_curve"] if export_format in {"ustx", "vsqx"} else False,
+            slicing_method=values["slicing_method"],
+            slice_min_sec=values["slice_min_sec"],
+            slice_max_sec=values["slice_max_sec"],
+            tempo=float(values["tempo"]),
+            quantization_step=LEGACY_QUANT_STEP_VALUES.get(values["quantization_step"], 0),
+            quantization_mode=LEGACY_QUANT_MODE_VALUES.get(values["quantization_mode"], "repair"),
+            pitch_format=values["pitch_format"],
+            round_pitch=values["round_pitch"],
+            seg_threshold=values["seg_threshold"],
+            seg_radius=values["seg_radius"],
+            est_threshold=values["est_threshold"],
+            batch_size=int(values["batch_size"]),
+            asr_batch_size=int(values["asr_batch_size"]),
             rmvpe_model_path=self.model_config.rmvpe_model_edit.text(),
             phoneme_asr_model_path=self.model_config.phoneme_asr_model_edit.text(),
             pinyin_asr_model_path=self.model_config.pinyin_asr_model_edit.text(),
+            chinese_asr_engine=values.get("chinese_asr_engine", "qwen"),
+            japanese_asr_engine=values.get("japanese_asr_engine", "romaji"),
         )
+
+    def run_pipeline(self):
+        if not HYBRID_AVAILABLE:
+            self.log_msg(tr("err_hybrid"))
+            return
+
+        # Batch mode runs the current selection; otherwise every file in the list.
+        audio_files = self._selected_audio_files() or [
+            self._list_item_path(self.audio_list.item(i)) for i in range(self.audio_list.count())
+        ]
+        if not audio_files:
+            self._show_error(tr("err_cannot_start"), tr("err_no_audio"))
+            return
+
+        base = self._current_base_values()
+        ts_list = t0_nstep_to_ts(
+            self.global_settings.t0_spin.value(),
+            int(self.global_settings.nsteps_spin.value()),
+        )
+        try:
+            validate_slice_bounds(base["slice_min_sec"], base["slice_max_sec"])
+        except ValueError as exc:
+            self.log_msg(f"Error: invalid slice duration settings: {exc}")
+            return
+
+        tasks: list[tuple[PipelineConfig, str]] = []
+        try:
+            for filename in audio_files:
+                config = self._build_file_config(
+                    filename, base, ts_list, self._file_settings.get(filename)
+                )
+                tasks.append((config, filename))
+        except ValueError:
+            return  # error already reported
 
         self.log_edit.clear()
         self._log_lines.clear()
         self._set_running_ui(True)
-        self.run_status_label.setText(tr("preparing", n=len(audio_files)))
-        self.worker = WorkerThread(config, audio_files)
+        self.run_status_label.setText(tr("preparing", n=len(tasks)))
+        self.worker = WorkerThread(tasks)
         self.worker.log_signal.connect(self.log_msg)
         self.worker.progress_signal.connect(self.on_progress)
         self.worker.finished_signal.connect(self.on_finished)

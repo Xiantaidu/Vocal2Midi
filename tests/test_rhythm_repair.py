@@ -178,3 +178,63 @@ def test_repair_survives_degenerate_input():
     for prev, cur in zip(notes, notes[1:]):
         assert _end_tick(prev) <= _tick(cur)
         assert _end_tick(cur) > _tick(cur)
+
+
+def test_repair_preserves_syncopated_anticipation():
+    # Anticipated syncopated rhythm in pop music:
+    # Beat 1 (0..240), anticipated 8th note at 360 (off-beat 16th/8th held across beat 2 to 720),
+    # followed by 720. Raw onsets have human jitter: [5, 368, 715].
+    notes = _notes_from_ticks([(5, 235), (368, 710), (715, 950)])
+    quantize_notes(notes, TEMPO, STEP, mode="repair")
+
+    onsets = [_tick(n) for n in notes]
+    # The syncopated note at ~368 must snap to 360, NOT be pulled into downbeat 480!
+    assert onsets == [0, 360, 720]
+    for prev, cur in zip(notes, notes[1:]):
+        assert _end_tick(prev) <= _tick(cur)
+
+
+def test_repair_phrase_segmentation_isolates_error_cascades():
+    # Two phrases separated by a breath pause (gap = 480 ticks = 1 beat rest).
+    # Phrase 1: [0, 110, 220] (rushing/compacted)
+    # Phrase 2 starts at 960: [960, 1080, 1200]
+    notes = _notes_from_ticks([
+        (0, 100), (110, 210), (220, 320),  # Phrase 1 ends ~320
+        (960, 1070), (1080, 1190), (1200, 1320),  # Phrase 2 starts at 960
+    ])
+    quantize_notes(notes, TEMPO, STEP, mode="repair")
+
+    onsets = [_tick(n) for n in notes]
+    # Phrase 2 must start squarely at 960 without any cascade from Phrase 1
+    assert onsets[3:] == [960, 1080, 1200]
+    for prev, cur in zip(notes, notes[1:]):
+        assert _end_tick(prev) <= _tick(cur)
+
+
+def test_repair_calibrates_consistently_laid_back_phrase():
+    # Singer consistently sings with a 32-tick laid-back latency throughout the phrase.
+    # Raw onsets: 32 + k * 120 (+- small jitter)
+    raw = [32 + k * STEP + int(j) for k, j in enumerate([0, 2, -2, 1, -1, 3])]
+    notes = _notes_from_ticks([(t, t + 110) for t in raw])
+    quantize_notes(notes, TEMPO, STEP, mode="repair")
+
+    onsets = [_tick(n) for n in notes]
+    # Phrase latency calibration detects +32 ticks drag and snaps back to 0, 120, 240...
+    assert onsets == [0, 120, 240, 360, 480, 600]
+
+
+def test_repair_distinguishes_legato_from_authentic_rest():
+    # Note 0 -> Note 1: tiny gap of 15 ticks (< 35% of step) -> should glue into Legato.
+    # Note 1 -> Note 2: real pause of 200 ticks -> should preserve authentic rest.
+    notes = _notes_from_ticks([
+        (0, 225),    # end 225, next start 240 (gap 15 -> legato)
+        (240, 360),  # end 360, next start 600 (gap 240 -> rest)
+        (600, 840),
+    ])
+    quantize_notes(notes, TEMPO, STEP, mode="repair")
+
+    # Legato check: note 0 ends exactly where note 1 starts
+    assert _end_tick(notes[0]) == _tick(notes[1])
+    # Rest check: note 1 ends before note 2 starts, with clean musical rest
+    assert _end_tick(notes[1]) < _tick(notes[2])
+

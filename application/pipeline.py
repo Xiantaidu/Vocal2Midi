@@ -10,7 +10,16 @@ from application.exceptions import (
 
 
 def _uses_pinyin_asr(cfg: PipelineConfig) -> bool:
-    return (cfg.language or "").strip().lower() in {"zh-pinyin", "中文-拼音", "中文拼音"}
+    if (cfg.language or "").strip().lower() in {"zh-pinyin", "中文-拼音", "中文拼音"}:
+        return True
+    lang = (cfg.language or "").strip().lower()
+    return lang in {"zh", "zh-pinyin"} and str(cfg.chinese_asr_engine or "").strip().lower() == "pinyin"
+
+
+def _ja_uses_romaji_asr(cfg: PipelineConfig) -> bool:
+    return (cfg.language or "").strip().lower() == "ja" and str(
+        cfg.japanese_asr_engine or "romaji"
+    ).strip().lower() != "qwen"
 
 
 def _validate_model_paths(cfg: PipelineConfig) -> None:
@@ -19,14 +28,15 @@ def _validate_model_paths(cfg: PipelineConfig) -> None:
     if cfg.output_lyrics:
         required_paths.append(("HubertFA 模型目录", cfg.hfa_model_dir))
         if _uses_pinyin_asr(cfg):
-            # "中文-拼音" (Chinese-Pinyin) routes to the pinyin ASR; the Qwen model is not used.
+            # Chinese + pinyin ASR routes to the pinyin model; Qwen is not used.
             if cfg.pinyin_asr_model_path:
                 required_paths.append(("拼音ASR模型路径", cfg.pinyin_asr_model_path))
         else:
             required_paths.append(("ASR 模型路径", cfg.asr_model_path))
             # A provided romaji ASR path is used as-is by the ja pipeline;
             # an empty one degrades gracefully, a broken one must fail here.
-            if cfg.language == "ja" and cfg.phoneme_asr_model_path:
+            # With the Qwen engine selected for Japanese it is bypassed entirely.
+            if _ja_uses_romaji_asr(cfg) and cfg.phoneme_asr_model_path:
                 required_paths.append(("音素ASR模型路径", cfg.phoneme_asr_model_path))
 
     # Pitch curves require RMVPE; fail fast with a clear path instead of a

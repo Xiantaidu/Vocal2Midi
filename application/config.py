@@ -70,6 +70,10 @@ class PipelineConfig:
     rmvpe_model_path: str = ""
     phoneme_asr_model_path: str = ""
     pinyin_asr_model_path: str = ""
+    # Direct-phoneme engine selection: "pinyin"|"qwen" for Chinese,
+    # "romaji"|"qwen" for Japanese.
+    chinese_asr_engine: str = "qwen"
+    japanese_asr_engine: str = "romaji"
     output_pitch_curve: bool = False
     cancel_checker: Optional[Callable[[], bool]] = None
 
@@ -105,6 +109,8 @@ class PipelineConfig:
             "rmvpe_model_path": self.rmvpe_model_path,
             "phoneme_asr_model_path": self.phoneme_asr_model_path,
             "pinyin_asr_model_path": self.pinyin_asr_model_path,
+            "chinese_asr_engine": self.chinese_asr_engine,
+            "japanese_asr_engine": self.japanese_asr_engine,
             "output_pitch_curve": self.output_pitch_curve,
             "cancel_checker": self.cancel_checker,
         }

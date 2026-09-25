@@ -38,16 +38,17 @@ class WorkerThread(QThread):
     error_signal = Signal(str)
     progress_signal = Signal(int, int, str)  # (current file index, total files, filename)
 
-    def __init__(self, config: PipelineConfig, audio_files: list):
-        """Initialize the worker thread with a PipelineConfig and audio file list.
+    def __init__(self, tasks: list[tuple[PipelineConfig, str]]):
+        """Initialize the worker thread with a list of (config, filename) tasks.
+
+        Each task carries its own PipelineConfig so every file can have
+        custom settings in batch mode.
 
         Args:
-            config: PipelineConfig with all pipeline parameters.
-            audio_files: List of audio file paths to process.
+            tasks: List of (PipelineConfig, audio filename) tuples.
         """
         super().__init__()
-        self.config = config
-        self.audio_files = audio_files
+        self.tasks = tasks
         self._is_running = True
 
     def run(self):
@@ -56,25 +57,24 @@ class WorkerThread(QThread):
         sys.stdout = StreamRedirector(sys.stdout, self.log_signal)
         sys.stderr = StreamRedirector(sys.stderr, self.log_signal)
 
+        total = len(self.tasks)
         try:
-            save_dir = self.config.output_dir
+            save_dirs = {str(task_config.output_dir) for task_config, _ in self.tasks}
+            save_dir = save_dirs.pop() if len(save_dirs) == 1 else "; ".join(sorted(save_dirs))
 
-            for file_index, audio_path in enumerate(self.audio_files, start=1):
+            for file_index, (config, filename) in enumerate(self.tasks, start=1):
                 if not self._is_running:
                     break
-                original_path = pathlib.Path(audio_path)
-                filename = original_path.name
                 self.log_signal.emit(tr("worker_processing", f=filename))
 
-                # Update per-file fields in config
-                self.config.audio_path = str(original_path)
-                self.config.output_filename = filename
-                self.config.cancel_checker = lambda: (
+                config.audio_path = str(pathlib.Path(filename))
+                config.output_filename = filename
+                config.cancel_checker = lambda: (
                     not self._is_running
                 ) or self.isInterruptionRequested()
 
-                self.progress_signal.emit(file_index, len(self.audio_files), filename)
-                run_auto_lyric_job(self.config)
+                self.progress_signal.emit(file_index, total, filename)
+                run_auto_lyric_job(config)
 
             if self._is_running:
                 self.finished_signal.emit(tr("worker_success", d=save_dir))

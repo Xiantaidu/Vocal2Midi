@@ -36,10 +36,16 @@ _STRINGS: dict[str, dict[str, str]] = {
     "slice_grid": {"zh": "网格搜索切片", "en": "Grid Search"},
     "target_lang": {"zh": "目标语言", "en": "Language"},
     "lang_name_zh": {"zh": "zh", "en": "zh"},
-    "lang_name_zh_pinyin": {"zh": "中文-拼音", "en": "Chinese (Pinyin)"},
     "lang_name_ja": {"zh": "ja", "en": "ja"},
     "lang_name_en": {"zh": "en", "en": "en"},
     "lyric_output_format": {"zh": "歌词输出格式", "en": "Lyric Format"},
+    "lyric_output_locked_hint": {
+        "zh": "已选择 PinyinASR，歌词固定输出为拼音",
+        "en": "PinyinASR is selected; lyrics are always output as pinyin",
+    },
+    "asr_pinyin": {"zh": "PinyinASR", "en": "PinyinASR"},
+    "asr_romaji": {"zh": "RomajiASR", "en": "RomajiASR"},
+    "asr_qwen": {"zh": "Qwen3-ASR", "en": "Qwen3-ASR"},
     "opt_pinyin": {"zh": "拼音", "en": "Pinyin"},
     "opt_hanzi": {"zh": "汉字", "en": "Hanzi"},
     "opt_romaji": {"zh": "罗马音", "en": "Romaji"},
@@ -66,6 +72,11 @@ _STRINGS: dict[str, dict[str, str]] = {
     "quant_simple": {"zh": "简单", "en": "Simple"},
     "save_dir": {"zh": "保存目录:", "en": "Save Directory:"},
     "browse": {"zh": "浏览", "en": "Browse"},
+    "batch_settings_title": {"zh": "批量设置", "en": "Batch Settings"},
+    "batch_settings_tip": {
+        "zh": "已选择多个文件，以下设置为本次批量的公共参数。",
+        "en": "Multiple files selected; these settings apply to the whole batch.",
+    },
     "choose_folder_dialog": {"zh": "选择文件夹", "en": "Select Folder"},
     "run": {"zh": "开始全自动提取", "en": "Start Extraction"},
     "stop": {"zh": "强制停止", "en": "Force Stop"},
@@ -99,6 +110,18 @@ _STRINGS: dict[str, dict[str, str]] = {
     "fail_title": {"zh": "任务失败", "en": "Task Failed"},
     "fail_body": {"zh": "发生错误，详情请查看运行日志", "en": "An error occurred; see the run log for details"},
     "error_prefix": {"zh": "错误", "en": "Error"},
+    # ── per-file batch settings ────────────────────────────────────
+    "file_settings_title": {"zh": "文件参数设置", "en": "File Settings"},
+    "file_settings_hint": {
+        "zh": "该文件的参数已按界面当前设置初始化，可单独调整；调整只对此文件生效。",
+        "en": "Initialized from the current UI settings; edits apply to this file only.",
+    },
+    "apply": {"zh": "应用", "en": "Apply"},
+    "cancel": {"zh": "取消", "en": "Cancel"},
+    "batch_mode": {
+        "zh": "已选择 {n} 个文件，每个文件可单独设置参数",
+        "en": "{n} files selected; each file has its own settings",
+    },
     # ── worker thread ──────────────────────────────────────────────
     "worker_processing": {"zh": "========== 正在处理: {f} ==========", "en": "========== Processing: {f} =========="},
     "worker_success": {"zh": "提取成功！文件已保存至: {d}", "en": "Extraction succeeded! Files saved to: {d}"},
@@ -134,6 +157,8 @@ _STRINGS: dict[str, dict[str, str]] = {
     "round_pitch": {"zh": "音高取整:", "en": "Round Pitch:"},
     # ── model config page ──────────────────────────────────────────
     "model_title": {"zh": "模型配置", "en": "Model Configuration"},
+    "zh_asr_choice": {"zh": "中文ASR选择:", "en": "Chinese ASR:"},
+    "ja_asr_choice": {"zh": "日语ASR选择:", "en": "Japanese ASR:"},
     "game_path": {"zh": "GAME 模型路径:", "en": "GAME Model Path:"},
     "hfa_path": {"zh": "HubertFA模型路径:", "en": "HubertFA Model Path:"},
     "asr_path": {"zh": "Qwen3-ASR模型路径:", "en": "Qwen3-ASR Model Path:"},
