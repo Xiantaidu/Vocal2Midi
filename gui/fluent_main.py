@@ -118,21 +118,31 @@ class MainWindow(FluentWindow):
     def closeEvent(self, event):
         # Destroying a running QThread crashes at exit ("QThread: Destroyed
         # while thread is still running"); stop the worker first.
-        worker = getattr(self.autoLyricInterface, "worker", None)
-        if worker is not None and worker.isRunning():
-            answer = QMessageBox.question(
-                self,
-                tr("close_running_title"),
-                tr("close_running_body"),
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            if answer != QMessageBox.Yes:
-                event.ignore()
-                return
-            worker.stop()
-            worker.wait(5000)
-        event.accept()
+        if not self.autoLyricInterface.is_running():
+            event.accept()
+            return
+        answer = QMessageBox.question(
+            self,
+            tr("close_running_title"),
+            tr("close_running_body"),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            event.ignore()
+            return
+        self.autoLyricInterface.request_stop()
+        if self.autoLyricInterface.wait_for_worker(5000):
+            event.accept()
+            return
+        # Cancellation is cooperative: the worker can sit in an
+        # uninterruptible low-level call (e.g. an ffmpeg decode, which allows
+        # up to 10 minutes) for longer than the grace period. Destroying it
+        # anyway would crash the process, so hide the window and close for
+        # real once the thread has actually finished.
+        self.hide()
+        self.autoLyricInterface.on_worker_settled(self.close)
+        event.ignore()
 
 
 def run_app():

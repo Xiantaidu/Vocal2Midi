@@ -25,6 +25,7 @@ from qfluentwidgets import (
     Theme,
 )
 from gui.i18n import tr, set_language
+from gui.option_tables import fill_combo
 from gui.settings_utils import create_app_settings
 
 THEME_CHOICES = [("light", "theme_light"), ("dark", "theme_dark"), ("auto", "theme_auto")]
@@ -261,16 +262,7 @@ class GlobalSettingsInterface(ScrollArea):
 
     @staticmethod
     def _fill_combo(combo, choices: list[tuple[str, str]], keep_value: bool = False):
-        current = combo.currentData() if keep_value else None
-        combo.blockSignals(True)
-        combo.clear()
-        for value, key in choices:
-            combo.addItem(tr(key), userData=value)
-        if current is not None:
-            index = combo.findData(current)
-            if index >= 0:
-                combo.setCurrentIndex(index)
-        combo.blockSignals(False)
+        fill_combo(combo, choices, keep_value=keep_value)
 
     @staticmethod
     def _index_by_value(combo, value: str) -> int:
@@ -305,6 +297,55 @@ class GlobalSettingsInterface(ScrollArea):
         set_language(value)
         self.retranslate_ui()
         self.languageChanged.emit(value)
+
+    # ── read-only accessors for other pages ─────────────────────────
+    # Other pages read pipeline parameters through these instead of reaching
+    # into the widgets directly.
+    def batch_size(self) -> int:
+        return int(self.batch_spin.value())
+
+    def asr_batch_size(self) -> int:
+        return int(self.asr_batch_spin.value())
+
+    def apply_batch_defaults(self, batch: int, asr_batch: int) -> None:
+        self.batch_spin.setValue(batch)
+        self.asr_batch_spin.setValue(asr_batch)
+
+    def slice_min_sec(self) -> float:
+        return float(self.slice_min_spin.value())
+
+    def slice_max_sec(self) -> float:
+        return float(self.slice_max_spin.value())
+
+    def extra_output_formats(self) -> list[str]:
+        return [
+            fmt for checked, fmt in (
+                (self.cb_txt.isChecked(), "txt"),
+                (self.cb_csv.isChecked(), "csv"),
+                (self.cb_chunks.isChecked(), "chunks"),
+            ) if checked
+        ]
+
+    def pitch_format(self) -> str:
+        return self.pitch_combo.currentText()
+
+    def round_pitch(self) -> bool:
+        return self.cb_round.isChecked()
+
+    def seg_threshold(self) -> float:
+        return float(self.seg_thresh_spin.value())
+
+    def seg_radius(self) -> float:
+        return float(self.seg_rad_spin.value())
+
+    def est_threshold(self) -> float:
+        return float(self.est_thresh_spin.value())
+
+    def t0(self) -> float:
+        return float(self.t0_spin.value())
+
+    def nsteps(self) -> int:
+        return int(self.nsteps_spin.value())
 
     # ── existing behaviour ──────────────────────────────────────────
     def reset_to_default(self):

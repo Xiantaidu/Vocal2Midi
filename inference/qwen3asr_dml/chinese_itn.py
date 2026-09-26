@@ -19,6 +19,9 @@ Example usage:
 __all__ = ['chinese_to_num']
 
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -489,13 +492,13 @@ def replace(original):
             final = head + final
         
         if DEBUG and original_text != final:
-            print(f"[{num_type}] {original_text} → {final}")
+            logger.info(f"[{num_type}] {original_text} → {final}")
             
     except Exception as e:
         num_type = '错误'
         final = original
         if DEBUG:
-            print(f"[错误] {original_text}: {e}")
+            logger.error(f"[错误] {original_text}: {e}")
     
     return final
 
@@ -517,4 +520,4 @@ def chinese_to_num(original):
 # ============================================================
 
 if __name__ == "__main__":
-    print(chinese_to_num('二零二五年十月'))
+    logger.info(chinese_to_num('二零二五年十月'))

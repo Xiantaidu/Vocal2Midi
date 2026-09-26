@@ -34,6 +34,9 @@ from inference.device_utils import (
     default_runtime_device,
     normalize_runtime_device,
 )
+import logging
+
+logger = logging.getLogger(__name__)
 
 ROMAJI_ASR_DEFAULT_DIR = pathlib.Path(__file__).resolve().parents[2] / "models" / "romajiASR"
 PINYIN_ASR_DEFAULT_DIR = pathlib.Path(__file__).resolve().parents[2] / "models" / "pinyinASR"
@@ -138,6 +141,7 @@ def run_qwen_asr_and_fa(
     language="zh",
     lyric_output_mode=None,
     cancel_checker=None,
+    asr_session=None,
 ):
     """
     Runs ASR using the Qwen runtime with batching and prepares .lab files for HubertFA.
@@ -154,6 +158,7 @@ def run_qwen_asr_and_fa(
         device=device,
         force_subprocess=True,
         asr_timeout_sec=180,
+        session=asr_session,
     )
     return process_asr_to_phonemes(
         all_results,
@@ -254,6 +259,7 @@ def auto_lyric_hybrid_pipeline(
     est_threshold: float,
     batch_size: int = 4,
     asr_batch_size: int = 4,
+    quant_simplicity: float = 0.0,
     slice_min_sec: float = DEFAULT_SLICE_MIN_SEC,
     slice_max_sec: float = DEFAULT_SLICE_MAX_SEC,
     output_lyrics: bool = True,
@@ -263,6 +269,7 @@ def auto_lyric_hybrid_pipeline(
     pinyin_asr_model_path: str = "",
     chinese_asr_engine: str = "qwen",
     japanese_asr_engine: str = "romaji",
+    asr_session=None,
     cancel_checker=None,
 ):
     """Auto Lyric Hybrid ONNX pipeline."""
@@ -282,7 +289,7 @@ def auto_lyric_hybrid_pipeline(
     lyric_output_mode = _normalize_lyric_output_mode(language, lyric_output_mode)
     # HFA/GAME/VSQX only know the base languages; the pinyin ASR is a zh variant.
     fa_language = "zh" if language == PINYIN_ASR_LANGUAGE else language
-    print(f"\n[Hybrid Pipeline] Processing audio: {audio_path}")
+    logger.info(f"\n[Hybrid Pipeline] Processing audio: {audio_path}")
 
     def _check_cancel():
         if cancel_checker and cancel_checker():
@@ -296,11 +303,11 @@ def auto_lyric_hybrid_pipeline(
     rmvpe_result = None
     if ("ustx" in output_format_set or "vsqx" in output_format_set) and output_pitch_curve:
         rmvpe_model = _resolve_rmvpe_path(rmvpe_model_path)
-        print(f"[Hybrid Pipeline] Running RMVPE from: {rmvpe_model}")
+        logger.info(f"[Hybrid Pipeline] Running RMVPE from: {rmvpe_model}")
         rmvpe = RmvpeTranscriber(rmvpe_model, device=device)
         try:
             rmvpe_result = rmvpe.infer(waveform, sr, cancel_checker=cancel_checker)
-            print(f"[Hybrid Pipeline] RMVPE done. Frames={len(rmvpe_result.midi_pitch)} step={rmvpe_result.time_step_seconds:.4f}s")
+            logger.info(f"[Hybrid Pipeline] RMVPE done. Frames={len(rmvpe_result.midi_pitch)} step={rmvpe_result.time_step_seconds:.4f}s")
         finally:
             del rmvpe
             free_memory()
@@ -331,7 +338,7 @@ def auto_lyric_hybrid_pipeline(
         _check_cancel()
     else:
         matcher = None
-        print("\n--- No-Lyrics Mode: 跳过 ASR/HFA，仅执行 GAME 提取音高 ---\n")
+        logger.warning("\n--- No-Lyrics Mode: 跳过 ASR/HFA，仅执行 GAME 提取音高 ---\n")
     
     all_notes = []
     chunk_logs = []
@@ -354,19 +361,19 @@ def auto_lyric_hybrid_pipeline(
 
             phoneme_asr_path = None
             if phoneme_asr_engine == "romaji":
-                print("\n--- Stage 1/3: Running mora ASR for Japanese lyric mode ---")
+                logger.info("\n--- Stage 1/3: Running mora ASR for Japanese lyric mode ---")
                 phoneme_asr_path = _select_romaji_asr_path(phoneme_asr_model_path)
                 if phoneme_asr_path is None:
-                    print(
+                    logger.warning(
                         "[Warning] Romaji ASR model not found; "
                         "falling back to text ASR + Japanese G2P."
                     )
                     phoneme_asr_engine = None
             elif phoneme_asr_engine == "pinyin":
-                print("\n--- Stage 1/3: Running pinyin ASR for Chinese-pinyin lyric mode ---")
+                logger.info("\n--- Stage 1/3: Running pinyin ASR for Chinese-pinyin lyric mode ---")
                 phoneme_asr_path = _select_pinyin_asr_path(pinyin_asr_model_path)
                 if phoneme_asr_path is None:
-                    print(
+                    logger.warning(
                         "[Warning] Pinyin ASR model not found; "
                         "falling back to text ASR (Qwen) + Chinese G2P."
                     )
@@ -401,13 +408,13 @@ def auto_lyric_hybrid_pipeline(
             else:
                 if language == "ja" and lyric_output_mode in {"romaji", "kana"}:
                     if ja_wants_romaji:
-                        print("\n--- Stage 1/3: Mora ASR unavailable; fallback to text ASR + Japanese G2P ---")
+                        logger.warning("\n--- Stage 1/3: Mora ASR unavailable; fallback to text ASR + Japanese G2P ---")
                     else:
-                        print("\n--- Stage 1/3: Running text ASR (Qwen) + Japanese G2P ---")
+                        logger.info("\n--- Stage 1/3: Running text ASR (Qwen) + Japanese G2P ---")
                 elif use_pinyin_asr:
-                    print("\n--- Stage 1/3: Pinyin ASR unavailable; fallback to text ASR + Chinese G2P ---")
+                    logger.warning("\n--- Stage 1/3: Pinyin ASR unavailable; fallback to text ASR + Chinese G2P ---")
                 else:
-                    print("\n--- Stage 1/3: Running ASR in subprocess isolation mode ---")
+                    logger.info("\n--- Stage 1/3: Running ASR in subprocess isolation mode ---")
                 chars_dict, chunk_logs = run_qwen_asr_and_fa(
                     chunks,
                     sr,
@@ -419,11 +426,12 @@ def auto_lyric_hybrid_pipeline(
                     language=language,
                     lyric_output_mode=lyric_output_mode,
                     cancel_checker=cancel_checker,
+                    asr_session=asr_session,
                 )
             _check_cancel()
 
             if not chars_dict:
-                print(
+                logger.warning(
                     "[Warning] ASR did not produce valid text for any chunk; "
                     "falling back to GAME pitch-only extraction."
                 )
@@ -432,11 +440,11 @@ def auto_lyric_hybrid_pipeline(
             free_memory()
 
             if run_lyric_alignment:
-                print("\n--- Stage 2/3: Loading HubertFA model ---")
+                logger.info("\n--- Stage 2/3: Loading HubertFA model ---")
                 hfa_model = load_hfa_model(hfa_model_dir, device=device)
                 try:
                     _check_cancel()
-                    print("------------------------------------------\n")
+                    logger.info("------------------------------------------\n")
 
                     pred_dict = run_hubert_fa(
                         hfa_model,
@@ -446,7 +454,7 @@ def auto_lyric_hybrid_pipeline(
                     )
                     _check_cancel()
                     if not pred_dict:
-                        print(
+                        logger.warning(
                             "[Warning] HFA did not produce alignment for any chunk; "
                             "falling back to GAME pitch-only extraction."
                         )
@@ -456,7 +464,7 @@ def auto_lyric_hybrid_pipeline(
                         if missing_hfa:
                             preview = ", ".join(missing_hfa[:8])
                             suffix = " ..." if len(missing_hfa) > 8 else ""
-                            print(
+                            logger.warning(
                                 f"[Warning] HFA missing {len(missing_hfa)} chunk(s) "
                                 f"({preview}{suffix}); those chunks will use pitch-only fallback."
                             )
@@ -475,19 +483,19 @@ def auto_lyric_hybrid_pipeline(
                     free_memory()
 
             if run_lyric_alignment:
-                print("\n--- Stage 3/3: Loading GAME model ---")
+                logger.info("\n--- Stage 3/3: Loading GAME model ---")
             else:
                 if "chunks" in output_format_set:
                     _export_chunk_wavs(chunks, sr, output_key, output_dir, cancel_checker=cancel_checker)
-                print("\n--- Fallback: Loading GAME model (pitch-only mode) ---")
+                logger.warning("\n--- Fallback: Loading GAME model (pitch-only mode) ---")
         else:
             if "chunks" in output_format_set:
                 _export_chunk_wavs(chunks, sr, output_key, output_dir, cancel_checker=cancel_checker)
-            print("\n--- Stage 1/1: Loading GAME model (No-Lyrics Mode) ---")
+            logger.info("\n--- Stage 1/1: Loading GAME model (No-Lyrics Mode) ---")
         game_model = load_game_model(game_model_dir, device=device)
         try:
             _check_cancel()
-            print("--------------------------------------\n")
+            logger.info("--------------------------------------\n")
 
             if run_lyric_alignment:
                 aligned_result = extract_pitches_and_align(
@@ -506,7 +514,7 @@ def auto_lyric_hybrid_pipeline(
                     if chunk_idx not in processed_aligned_chunks:
                         fallback_chunks.append(chunk)
                 if fallback_chunks:
-                    print(
+                    logger.warning(
                         f"[Warning] Running pitch-only GAME fallback for "
                         f"{len(fallback_chunks)} chunk(s) without usable lyric alignment."
                     )
@@ -539,10 +547,10 @@ def auto_lyric_hybrid_pipeline(
         log_path.write_text("\n".join(chunk_logs), encoding="utf-8")
 
     if should_apply_quantization(quantization_mode, quantization_step):
-        quantize_notes(all_notes, tempo, quantization_step, mode=quantization_mode)
+        quantize_notes(all_notes, tempo, quantization_step, mode=quantization_mode, simplicity=quant_simplicity)
     
     lyric_status = "with lyrics" if run_lyric_alignment else "without lyrics"
-    print(f"Extracted {len(all_notes)} notes {lyric_status}.")
+    logger.info(f"Extracted {len(all_notes)} notes {lyric_status}.")
 
     if "mid" in output_format_set:
         _save_midi(all_notes, output_dir / f"{output_key}.mid", int(tempo))
@@ -578,6 +586,7 @@ if __name__ == "__main__":
         """
         Auto Lyric Hybrid ONNX pipeline
         """
+        logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
         out_dir = pathlib.Path(output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -610,6 +619,6 @@ if __name__ == "__main__":
             est_threshold=0.2,
             batch_size=4,
         )
-        print("Done!")
+        logger.info("Done!")
 
     main()

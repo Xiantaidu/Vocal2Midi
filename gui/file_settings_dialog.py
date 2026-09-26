@@ -2,7 +2,8 @@
 
 Presents the full parameter set that the main UI controls, seeded from the
 main UI's current values, so each file in a batch can be customized
-individually.
+individually. Combos are filled from the shared option tables and every
+values() entry is a backend value — display text is never transported.
 """
 from __future__ import annotations
 
@@ -15,18 +16,20 @@ from qfluentwidgets import (
     SwitchButton,
     SpinBox,
 )
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QLabel
 
 from gui.i18n import tr
+from gui.option_tables import (
+    DEFAULT_LYRIC_OUTPUT,
+    EXPORT_FORMAT_CHOICES,
+    LYRIC_OUTPUT_BY_LANGUAGE,
+    QUANT_MODE_CHOICES,
+    QUANT_STEP_CHOICES,
+    SLICE_METHOD_CHOICES,
+    TARGET_LANGUAGE_CHOICES,
+    fill_combo,
+)
 from gui.settings_utils import default_output_dir
-
-
-SLICE_METHODS = ["智能切片", "启发式切片", "默认切片", "网格搜索切片"]
-QUANT_STEPS = ["不量化", "1/4 音符 (1拍)", "1/8 音符 (1/2拍)", "1/16 音符 (1/4拍)", "1/32 音符 (1/8拍)", "1/64 音符 (1/16拍)"]
-QUANT_MODES = ["节奏修复", "贝叶斯", "DP", "简单"]
-# backend value -> display text used by the dialog's language-linked combo
-LYRIC_VALUE_TO_TEXT = {"pinyin": "拼音", "hanzi": "汉字", "romaji": "罗马音", "kana": "假名", "word": "单词"}
 
 
 def _add_pair(grid, row, col, label_text, widget, dialog):
@@ -55,19 +58,18 @@ class FileSettingsDialog(MessageBoxBase):
         grid.setVerticalSpacing(12)
 
         # ── recognition ─────────────────────────────────────────────
-        self.slicing_combo = ComboBox(self)
-        self.slicing_combo.addItems(SLICE_METHODS)
-        self.slicing_combo.setCurrentText(base_values["slicing_method"])
-        _add_pair(grid, 0, 0, tr("slicing_method"), self.slicing_combo, self)
-
         # The Chinese ASR engine is a global choice; when PinyinASR is active
         # the lyric output for zh is locked to pinyin here as well.
         self._pinyin_locked = str(base_values.get("chinese_asr_engine", "qwen")).strip().lower() == "pinyin"
-        language = "zh" if base_values["language"] in {"中文-拼音", "中文拼音", "zh-pinyin"} else base_values["language"]
+
+        self.slicing_combo = ComboBox(self)
+        fill_combo(self.slicing_combo, SLICE_METHOD_CHOICES)
+        self.slicing_combo.setCurrentIndex(max(0, self.slicing_combo.findData(base_values["slicing_method"])))
+        _add_pair(grid, 0, 0, tr("slicing_method"), self.slicing_combo, self)
 
         self.lang_combo = ComboBox(self)
-        self.lang_combo.addItems(["zh", "ja", "en"])
-        self.lang_combo.setCurrentText(language)
+        fill_combo(self.lang_combo, TARGET_LANGUAGE_CHOICES)
+        self.lang_combo.setCurrentIndex(max(0, self.lang_combo.findData(base_values["language"])))
         _add_pair(grid, 0, 2, tr("target_lang"), self.lang_combo, self)
 
         self.lyric_output_combo = ComboBox(self)
@@ -91,8 +93,8 @@ class FileSettingsDialog(MessageBoxBase):
         _add_pair(grid, 2, 2, tr("ref_lyrics"), self.lyrics_edit, self)
 
         self.export_format_combo = ComboBox(self)
-        self.export_format_combo.addItems(["MIDI", "USTX", "VSQX"])
-        self.export_format_combo.setCurrentText(base_values["export_format"])
+        fill_combo(self.export_format_combo, EXPORT_FORMAT_CHOICES)
+        self.export_format_combo.setCurrentIndex(max(0, self.export_format_combo.findData(base_values["export_format"])))
         _add_pair(grid, 3, 0, tr("export_format"), self.export_format_combo, self)
 
         self.cb_output_lyrics = SwitchButton("On", self)
@@ -112,13 +114,13 @@ class FileSettingsDialog(MessageBoxBase):
         _add_pair(grid, 5, 0, tr("tempo_bpm"), self.tempo_spin, self)
 
         self.quantize_combo = ComboBox(self)
-        self.quantize_combo.addItems(QUANT_STEPS)
-        self.quantize_combo.setCurrentText(base_values["quantization_step"])
+        fill_combo(self.quantize_combo, QUANT_STEP_CHOICES)
+        self.quantize_combo.setCurrentIndex(max(0, self.quantize_combo.findData(base_values["quantization_step"])))
         _add_pair(grid, 5, 2, tr("quant_step"), self.quantize_combo, self)
 
         self.quantize_mode_combo = ComboBox(self)
-        self.quantize_mode_combo.addItems(QUANT_MODES)
-        self.quantize_mode_combo.setCurrentText(base_values["quantization_mode"])
+        fill_combo(self.quantize_mode_combo, QUANT_MODE_CHOICES)
+        self.quantize_mode_combo.setCurrentIndex(max(0, self.quantize_mode_combo.findData(base_values["quantization_mode"])))
         _add_pair(grid, 6, 0, tr("quant_mode"), self.quantize_mode_combo, self)
 
         self.batch_spin = SpinBox(self)
@@ -140,55 +142,45 @@ class FileSettingsDialog(MessageBoxBase):
         self.viewLayout.addLayout(grid)
 
     # ── language-linked lyric output options ────────────────────────
-    def _lyric_options_for(self, language: str) -> list[str]:
-        if language == "zh" and self._pinyin_locked:
-            return ["拼音"]
-        options = {
-            "zh": ["拼音", "汉字"],
-            "ja": ["罗马音", "假名"],
-            "en": ["单词"],
-        }
-        return options.get(language, options["zh"])
-
     def _fill_lyric_output_options(self, language: str, selected: str | None):
         """Rebuild the lyric output options for the given language.
 
-        `selected` may be a display text or a backend value; the combo keeps
-        the current selection when it is still available. Under zh with
-        PinyinASR the format is locked to pinyin and the combo is disabled.
+        `selected` is a backend value; the combo keeps it when still
+        available. Under zh with PinyinASR the format is locked to pinyin
+        and the combo is disabled.
         """
-        display = LYRIC_VALUE_TO_TEXT.get(str(selected or ""), selected)
         locked = language == "zh" and self._pinyin_locked
-        options = self._lyric_options_for(language)
-        self.lyric_output_combo.blockSignals(True)
-        self.lyric_output_combo.clear()
-        self.lyric_output_combo.addItems(options)
-        if display in options:
-            self.lyric_output_combo.setCurrentText(display)
-        else:
-            self.lyric_output_combo.setCurrentIndex(0)
+        choices = [
+            (value, key)
+            for value, key in LYRIC_OUTPUT_BY_LANGUAGE.get(language, LYRIC_OUTPUT_BY_LANGUAGE["zh"])
+            if not locked or value == "pinyin"
+        ]
+        fill_combo(self.lyric_output_combo, choices)
+        values = [value for value, _ in choices]
+        if selected not in values:
+            selected = "pinyin" if locked else DEFAULT_LYRIC_OUTPUT.get(language, "hanzi")
+        self.lyric_output_combo.setCurrentIndex(max(0, self.lyric_output_combo.findData(selected)))
         self.lyric_output_combo.setEnabled(not locked)
         self.lyric_output_combo.setToolTip(tr("lyric_output_locked_hint") if locked else "")
-        self.lyric_output_combo.blockSignals(False)
 
     def _on_language_changed(self):
-        self._fill_lyric_output_options(self.lang_combo.currentText(), self.lyric_output_combo.currentText())
+        self._fill_lyric_output_options(self.lang_combo.currentData(), self.lyric_output_combo.currentData())
 
     def values(self) -> dict:
         """Return the edited values as a plain dict keyed by config field names."""
         return {
-            "slicing_method": self.slicing_combo.currentText(),
-            "language": self.lang_combo.currentText(),
-            "lyric_output": self.lyric_output_combo.currentText(),
+            "slicing_method": self.slicing_combo.currentData(),
+            "language": self.lang_combo.currentData(),
+            "lyric_output": self.lyric_output_combo.currentData(),
             "device": self.device_combo.currentText(),
             "match_lyrics": self.cb_match_lyrics.isChecked(),
             "original_lyrics": self.lyrics_edit.text().strip(),
-            "export_format": self.export_format_combo.currentText(),
+            "export_format": self.export_format_combo.currentData(),
             "output_lyrics": self.cb_output_lyrics.isChecked(),
             "pitch_curve": self.cb_pitch_curve.isChecked(),
             "tempo": self.tempo_spin.value(),
-            "quantization_step": self.quantize_combo.currentText(),
-            "quantization_mode": self.quantize_mode_combo.currentText(),
+            "quantization_step": self.quantize_combo.currentData(),
+            "quantization_mode": self.quantize_mode_combo.currentData(),
             "batch_size": self.batch_spin.value(),
             "asr_batch_size": self.asr_batch_spin.value(),
             "output_dir": self.save_dir_edit.text().strip() or str(default_output_dir()),

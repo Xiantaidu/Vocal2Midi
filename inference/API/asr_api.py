@@ -1,6 +1,8 @@
+import logging
 import multiprocessing as mp
 import queue
 import re
+import sys
 import threading
 import time
 
@@ -10,6 +12,8 @@ from inference.device_utils import normalize_runtime_device
 from inference.pinyin_asr.runtime import PinyinASROnnxModel, resolve_model_dir as resolve_pinyin_model_dir
 from inference.qwen3asr_dml.runtime import Qwen3ASRDmlModel
 from inference.romaji_asr.runtime import RomajiASROnnxModel, resolve_model_dir
+
+logger = logging.getLogger(__name__)
 
 # --- Qwen Model Loading ---
 _QWEN_MODEL_CACHE = {}
@@ -113,17 +117,17 @@ def load_qwen_model(model_path, device=None, use_cache=True):
         with _QWEN_MODEL_CACHE_LOCK:
             cached_model = _QWEN_MODEL_CACHE.get(cache_key)
         if cached_model is not None:
-            print(f"Reusing cached Qwen ASR model from '{model_path}' on {requested_device}.")
+            logger.info(f"Reusing cached Qwen ASR model from '{model_path}' on {requested_device}.")
             return cached_model
 
     try:
-        print(f"Loading Qwen ASR runtime from '{model_path}' (requested device: {requested_device})...")
+        logger.info(f"Loading Qwen ASR runtime from '{model_path}' (requested device: {requested_device})...")
         model = Qwen3ASRDmlModel.from_model_path(
             model_path,
             device=requested_device,
             verbose=False,
         )
-        print(
+        logger.info(
             "Qwen ASR runtime ready: "
             f"encoder={model.encoder_provider_name} {model.encoder_frontend_providers}, "
             f"decoder={model.decoder_backend}."
@@ -173,16 +177,16 @@ def load_romaji_asr_model(model_dir, device=None, use_cache=True):
         with _ROMAJI_MODEL_CACHE_LOCK:
             _ROMAJI_MODEL_CACHE.pop(cache_key, None)
         if use_cache and requested_device != "cpu":
-            print("[Romaji ASR] In-process cache is disabled on DML for stability; creating a fresh session.")
+            logger.info("[Romaji ASR] In-process cache is disabled on DML for stability; creating a fresh session.")
 
     if cache_enabled:
         with _ROMAJI_MODEL_CACHE_LOCK:
             cached = _ROMAJI_MODEL_CACHE.get(cache_key)
         if cached is not None:
-            print(f"Reusing cached romaji ASR model from '{resolved_dir}' on {requested_device}.")
+            logger.info(f"Reusing cached romaji ASR model from '{resolved_dir}' on {requested_device}.")
             return cached
 
-    print(f"Loading romaji ASR ONNX model from '{resolved_dir}' on {requested_device}...")
+    logger.info(f"Loading romaji ASR ONNX model from '{resolved_dir}' on {requested_device}...")
     model = RomajiASROnnxModel.from_model_path(resolved_dir, device=requested_device, verbose=True)
 
     payload = {
@@ -218,16 +222,16 @@ def load_pinyin_asr_model(model_dir, device=None, use_cache=True):
         with _PINYIN_MODEL_CACHE_LOCK:
             _PINYIN_MODEL_CACHE.pop(cache_key, None)
         if use_cache and requested_device != "cpu":
-            print("[Pinyin ASR] In-process cache is disabled on DML for stability; creating a fresh session.")
+            logger.info("[Pinyin ASR] In-process cache is disabled on DML for stability; creating a fresh session.")
 
     if cache_enabled:
         with _PINYIN_MODEL_CACHE_LOCK:
             cached = _PINYIN_MODEL_CACHE.get(cache_key)
         if cached is not None:
-            print(f"Reusing cached pinyin ASR model from '{resolved_dir}' on {requested_device}.")
+            logger.info(f"Reusing cached pinyin ASR model from '{resolved_dir}' on {requested_device}.")
             return cached
 
-    print(f"Loading pinyin ASR ONNX model from '{resolved_dir}' on {requested_device}...")
+    logger.info(f"Loading pinyin ASR ONNX model from '{resolved_dir}' on {requested_device}...")
     model = PinyinASROnnxModel.from_model_path(resolved_dir, device=requested_device, verbose=True)
 
     payload = {
@@ -263,7 +267,7 @@ def batch_transcribe_pinyin_asr(
     cancel_checker=None,
 ):
     """Run pinyin ASR directly and return token lists per chunk."""
-    print("[ASR API] Running pinyin ASR (ONNX Runtime) for Chinese-pinyin lyric mode...")
+    logger.info("[ASR API] Running pinyin ASR (ONNX Runtime) for Chinese-pinyin lyric mode...")
     asr = load_pinyin_asr_model(model_dir, device=device, use_cache=True)
     model = asr["model"]
 
@@ -294,7 +298,7 @@ def batch_transcribe_romaji_asr(
     cancel_checker=None,
 ):
     """Run romaji ASR directly and return token lists per chunk."""
-    print("[ASR API] Running romaji ASR (ONNX Runtime) for Japanese lyric mode...")
+    logger.info("[ASR API] Running romaji ASR (ONNX Runtime) for Japanese lyric mode...")
     asr = load_romaji_asr_model(model_dir, device=device, use_cache=True)
     model = asr["model"]
 
@@ -323,9 +327,9 @@ def _init_worker(model_path, device):
     """Initializer for each worker process in the pool."""
     global _WORKER_ASR_MODEL
     proc_name = mp.current_process().name
-    print(f"Initializing ASR worker ({proc_name}) with model '{model_path}' on {device}...")
+    logger.info(f"Initializing ASR worker ({proc_name}) with model '{model_path}' on {device}...")
     _WORKER_ASR_MODEL = load_qwen_model(model_path, device, use_cache=False)
-    print(f"ASR worker ({proc_name}) initialized.")
+    logger.info(f"ASR worker ({proc_name}) initialized.")
 
 
 def _transcribe_task(paths, asr_lang, context, model=None):
@@ -342,12 +346,15 @@ def _transcribe_task(paths, asr_lang, context, model=None):
 
 def _asr_worker_main(model_path, device, task_queue, result_queue):
     """Runs a single non-daemon ASR worker process for Qwen inference."""
+    # Child process: route module logging (including the qwen runtime) to the
+    # inherited console stream, message-only like the old prints.
+    logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
     model = None
     try:
         proc_name = mp.current_process().name
-        print(f"Initializing ASR worker ({proc_name}) with model '{model_path}' on {device}...")
+        logger.info(f"Initializing ASR worker ({proc_name}) with model '{model_path}' on {device}...")
         model = load_qwen_model(model_path, device, use_cache=False)
-        print(f"ASR worker ({proc_name}) initialized.")
+        logger.info(f"ASR worker ({proc_name}) initialized.")
         result_queue.put({"type": "ready"})
 
         while True:
@@ -458,6 +465,165 @@ def _wait_for_worker_message(result_queue, worker, *, timeout_sec, cancel_checke
             continue
 
 
+class AsrSubprocessSession:
+    """A reusable Qwen ASR subprocess worker spanning multiple pipeline runs.
+
+    The worker process (and the multi-GB model it loads) is spawned lazily on
+    the first transcribe() call and reused across calls, so a batch of files
+    pays the model load once instead of per file. If the bound model path or
+    device changes, or the worker died, the next call respawns it. close()
+    releases the worker; jobs that never reach the Qwen text-ASR stage never
+    spawn one.
+    """
+
+    def __init__(self, *, startup_timeout_sec: float = 180, batch_timeout_sec: float = 180):
+        self._startup_timeout_sec = startup_timeout_sec
+        self._batch_timeout_sec = batch_timeout_sec
+        self._worker = None
+        self._task_queue = None
+        self._result_queue = None
+        self._model_path = None
+        self._device = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
+
+    def _spawn_worker(self, model_path, device, cancel_checker=None):
+        ctx = mp.get_context("spawn")
+        task_queue = ctx.Queue()
+        result_queue = ctx.Queue()
+        worker = ctx.Process(
+            target=_asr_worker_main,
+            args=(model_path, device, task_queue, result_queue),
+            daemon=False,
+        )
+        worker.start()
+        self._worker = worker
+        self._task_queue = task_queue
+        self._result_queue = result_queue
+        self._model_path = model_path
+        self._device = device
+        try:
+            startup_message = _wait_for_worker_message(
+                result_queue,
+                worker,
+                timeout_sec=self._startup_timeout_sec,
+                cancel_checker=cancel_checker,
+                on_cancel=self.invalidate,
+            )
+        except mp.TimeoutError:
+            # mp.TimeoutError is not a builtin TimeoutError subclass; give
+            # multi-GB model loads a clear, catchable failure message.
+            self.invalidate()
+            raise TimeoutError(
+                f"ASR worker failed to start within {self._startup_timeout_sec}s"
+            ) from None
+        if startup_message.get("type") == "startup_error":
+            self.invalidate()
+            raise RuntimeError(f"ASR worker failed to start: {startup_message.get('error', 'unknown error')}")
+        if startup_message.get("type") != "ready":
+            self.invalidate()
+            raise RuntimeError(f"Unexpected ASR worker startup message: {startup_message!r}")
+
+    def _ensure_worker(self, model_path, device, cancel_checker=None):
+        if (
+            self._worker is not None
+            and self._worker.is_alive()
+            and self._model_path == model_path
+            and self._device == device
+        ):
+            return
+        self.invalidate()
+        logger.info(f"Starting ASR subprocess worker with model '{model_path}' on {device}...")
+        self._spawn_worker(model_path, device, cancel_checker)
+
+    def transcribe(
+        self,
+        audio_paths,
+        *,
+        model_path,
+        device,
+        asr_lang,
+        asr_prompt,
+        asr_batch_size,
+        cancel_checker=None,
+    ):
+        """Transcribe the given wav paths in batches; one result entry per path."""
+        if not audio_paths:
+            return []
+        batches = [audio_paths[i:i + asr_batch_size] for i in range(0, len(audio_paths), asr_batch_size)]
+        total_batches = len(batches)
+        all_results = []
+        self._ensure_worker(model_path, device, cancel_checker)
+        logger.info(f"ASR subprocess worker ready for {total_batches} batch(es).")
+        for i, batch in enumerate(batches):
+            batch_no = i + 1
+            self._task_queue.put(
+                {
+                    "type": "transcribe",
+                    "task_id": i,
+                    "paths": batch,
+                    "asr_lang": asr_lang,
+                    "asr_prompt": asr_prompt,
+                }
+            )
+            logger.info(f"  Waiting for ASR batch {batch_no}/{total_batches}...")
+            batch_start_time = time.perf_counter()
+            try:
+                message = _wait_for_worker_message(
+                    self._result_queue,
+                    self._worker,
+                    timeout_sec=self._batch_timeout_sec,
+                    cancel_checker=cancel_checker,
+                    on_cancel=self.invalidate,
+                )
+                cost = time.perf_counter() - batch_start_time
+                if message.get("type") != "result" or int(message.get("task_id", -1)) != i:
+                    raise RuntimeError(f"Unexpected ASR worker message: {message!r}")
+
+                error = message.get("error")
+                results = message.get("result", [])
+                if error is None and len(results) == len(batch):
+                    logger.info(f"  ASR batch {batch_no}/{total_batches} done in {cost:.2f}s")
+                    all_results.extend(results)
+                else:
+                    # An empty error string or a short result list both
+                    # count as failure; padding with None keeps
+                    # all_results aligned with the chunk indices.
+                    reason = error if error else f"incomplete result ({len(results)}/{len(batch)})"
+                    logger.error(f"  ASR batch {batch_no}/{total_batches} failed with an error: {reason}")
+                    all_results.extend([None] * len(batch))
+            except mp.TimeoutError:
+                logger.error(f"  ASR batch {batch_no}/{total_batches} timed out after {self._batch_timeout_sec}s.")
+                self.invalidate()
+                raise TimeoutError(
+                    f"ASR batch {batch_no}/{total_batches} timed out after {self._batch_timeout_sec}s"
+                ) from None
+        return all_results
+
+    def close(self):
+        """Gracefully stop the worker (stop message first, terminate as fallback)."""
+        if self._worker is not None:
+            _shutdown_asr_worker(self._worker, self._task_queue, terminate=False)
+            self._detach_worker()
+
+    def invalidate(self):
+        """Hard-terminate the worker (cancel, timeout, or unusable state)."""
+        if self._worker is not None:
+            _shutdown_asr_worker(self._worker, self._task_queue, terminate=True)
+            self._detach_worker()
+
+    def _detach_worker(self):
+        self._worker = None
+        self._task_queue = None
+        self._result_queue = None
+        self._model_path = None
+        self._device = None
+
+
 # --- Main ASR API ---
 def batch_transcribe_asr(
     chunks,
@@ -472,8 +638,14 @@ def batch_transcribe_asr(
     force_subprocess=False,
     asr_timeout_sec=180,
     asr_prompt: str | None = None,
+    session: "AsrSubprocessSession | None" = None,
 ):
-    """Saves chunks to temp_dir and runs batched ASR transcription."""
+    """Saves chunks to temp_dir and runs batched ASR transcription.
+
+    With force_subprocess=True and a shared `session`, the spawned worker
+    process (and its loaded model) is reused across calls; without a session
+    a one-shot worker is spawned for this call only.
+    """
     asr_batch_size = max(1, int(asr_batch_size))
     asr_lang = QWEN_ASR_LANGUAGE_NAMES.get(
         _normalize_lyric_language(language), QWEN_ASR_LANGUAGE_NAMES["zh"]
@@ -484,7 +656,7 @@ def batch_transcribe_asr(
             if asr_lang == "English"
             else DEFAULT_QWEN_ASR_PROMPT
         )
-    print(f"[ASR API] Running ASR with Qwen runtime (Batch Size: {asr_batch_size}, Language: {asr_lang})...")
+    logger.info(f"[ASR API] Running ASR with Qwen runtime (Batch Size: {asr_batch_size}, Language: {asr_lang})...")
 
     audio_paths = []
     chunk_indices = []
@@ -506,80 +678,24 @@ def batch_transcribe_asr(
         if not asr_model_path:
             raise ValueError("asr_model_path is required when force_subprocess=True")
 
-        ctx = mp.get_context("spawn")
-        task_queue = ctx.Queue()
-        result_queue = ctx.Queue()
-        worker = ctx.Process(
-            target=_asr_worker_main,
-            args=(asr_model_path, device, task_queue, result_queue),
-            daemon=False,
+        own_session = session is None
+        worker_session = session if session is not None else AsrSubprocessSession(
+            startup_timeout_sec=asr_timeout_sec,
+            batch_timeout_sec=asr_timeout_sec,
         )
-        worker.start()
         try:
-            try:
-                startup_message = _wait_for_worker_message(
-                    result_queue,
-                    worker,
-                    timeout_sec=asr_timeout_sec,
-                    cancel_checker=cancel_checker,
-                    on_cancel=lambda: _shutdown_asr_worker(worker, task_queue, terminate=True),
-                )
-            except mp.TimeoutError:
-                # mp.TimeoutError is not a builtin TimeoutError subclass; give
-                # multi-GB model loads a clear, catchable failure message.
-                _shutdown_asr_worker(worker, task_queue, terminate=True)
-                raise TimeoutError(
-                    f"ASR worker failed to start within {asr_timeout_sec}s"
-                ) from None
-            if startup_message.get("type") == "startup_error":
-                raise RuntimeError(f"ASR worker failed to start: {startup_message.get('error', 'unknown error')}")
-            if startup_message.get("type") != "ready":
-                raise RuntimeError(f"Unexpected ASR worker startup message: {startup_message!r}")
-
-            print(f"ASR subprocess worker created for {total_batches} batch(es).")
-            for i, batch in enumerate(batches):
-                batch_no = i + 1
-                task_queue.put(
-                    {
-                        "type": "transcribe",
-                        "task_id": i,
-                        "paths": batch,
-                        "asr_lang": asr_lang,
-                        "asr_prompt": asr_prompt,
-                    }
-                )
-                print(f"  Waiting for ASR batch {batch_no}/{total_batches}...")
-                batch_start_time = time.perf_counter()
-                try:
-                    message = _wait_for_worker_message(
-                        result_queue,
-                        worker,
-                        timeout_sec=asr_timeout_sec,
-                        cancel_checker=cancel_checker,
-                        on_cancel=lambda: _shutdown_asr_worker(worker, task_queue, terminate=True),
-                    )
-                    cost = time.perf_counter() - batch_start_time
-                    if message.get("type") != "result" or int(message.get("task_id", -1)) != i:
-                        raise RuntimeError(f"Unexpected ASR worker message: {message!r}")
-
-                    error = message.get("error")
-                    results = message.get("result", [])
-                    if error is None and len(results) == len(batch):
-                        print(f"  ASR batch {batch_no}/{total_batches} done in {cost:.2f}s")
-                        all_results.extend(results)
-                    else:
-                        # An empty error string or a short result list both
-                        # count as failure; padding with None keeps
-                        # all_results aligned with chunk_indices.
-                        reason = error if error else f"incomplete result ({len(results)}/{len(batch)})"
-                        print(f"  ASR batch {batch_no}/{total_batches} failed with an error: {reason}")
-                        all_results.extend([None] * len(batch))
-                except mp.TimeoutError:
-                    print(f"  ASR batch {batch_no}/{total_batches} timed out after {asr_timeout_sec}s.")
-                    _shutdown_asr_worker(worker, task_queue, terminate=True)
-                    raise TimeoutError(f"ASR batch {batch_no}/{total_batches} timed out after {asr_timeout_sec}s")
+            all_results = worker_session.transcribe(
+                audio_paths,
+                model_path=asr_model_path,
+                device=device,
+                asr_lang=asr_lang,
+                asr_prompt=asr_prompt,
+                asr_batch_size=asr_batch_size,
+                cancel_checker=cancel_checker,
+            )
         finally:
-            _shutdown_asr_worker(worker, task_queue, terminate=False)
+            if own_session:
+                worker_session.close()
 
     else:
         if asr_model is None:
@@ -590,15 +706,15 @@ def batch_transcribe_asr(
                 raise InterruptedError("ASR task cancelled")
 
             batch_no = i + 1
-            print(f"  Processing ASR batch {batch_no}/{total_batches} (size={len(batch)})...")
+            logger.info(f"  Processing ASR batch {batch_no}/{total_batches} (size={len(batch)})...")
             try:
                 batch_start = time.perf_counter()
                 results = _transcribe_task(batch, asr_lang, asr_prompt, model=asr_model)
                 cost = time.perf_counter() - batch_start
-                print(f"  ASR batch {batch_no}/{total_batches} done in {cost:.2f}s")
+                logger.info(f"  ASR batch {batch_no}/{total_batches} done in {cost:.2f}s")
                 all_results.extend(results)
             except Exception as e:
-                print(f"Error during in-process ASR for batch {batch_no}: {e}")
+                logger.error(f"Error during in-process ASR for batch {batch_no}: {e}")
                 all_results.extend([None] * len(batch))
 
     return _sanitize_qwen_asr_results(all_results, language), chunk_indices

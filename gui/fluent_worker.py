@@ -1,3 +1,4 @@
+import logging
 import pathlib
 import sys
 import traceback
@@ -9,9 +10,23 @@ from application.exceptions import CancellationError
 from gui.i18n import tr
 
 
+class _QtLogHandler(logging.Handler):
+    """Forwards logging records from the pipeline into the GUI log window."""
+
+    def __init__(self, signal):
+        super().__init__(level=logging.INFO)
+        self.signal = signal
+
+    def emit(self, record):
+        try:
+            self.signal.emit(record.getMessage())
+        except Exception:
+            self.handleError()
+
+
 # Import the hybrid pipeline
 try:
-    from application.pipeline import run_auto_lyric_job
+    from application.pipeline import run_auto_lyric_job, open_asr_session
     HYBRID_AVAILABLE = True
 except ImportError as e:
     print(f"WARNING: Hybrid pipeline not available. Error: {e}")
@@ -58,6 +73,17 @@ class WorkerThread(QThread):
         sys.stderr = StreamRedirector(sys.stderr, self.log_signal)
 
         total = len(self.tasks)
+        # One lazily-spawned ASR subprocess serves the whole batch; the
+        # multi-GB Qwen model loads once instead of per file.
+        session = open_asr_session() if HYBRID_AVAILABLE else None
+        # Pipeline modules log instead of printing; capture those records for
+        # the GUI log window while the worker runs. The stdout redirector
+        # below stays for third-party prints that bypass logging.
+        root_logger = logging.getLogger()
+        old_root_level = root_logger.level
+        log_handler = _QtLogHandler(self.log_signal)
+        root_logger.addHandler(log_handler)
+        root_logger.setLevel(logging.INFO)
         try:
             save_dirs = {str(task_config.output_dir) for task_config, _ in self.tasks}
             save_dir = save_dirs.pop() if len(save_dirs) == 1 else "; ".join(sorted(save_dirs))
@@ -69,6 +95,7 @@ class WorkerThread(QThread):
 
                 config.audio_path = str(pathlib.Path(filename))
                 config.output_filename = filename
+                config.asr_session = session
                 config.cancel_checker = lambda: (
                     not self._is_running
                 ) or self.isInterruptionRequested()
@@ -86,6 +113,10 @@ class WorkerThread(QThread):
         except Exception:
             self.error_signal.emit(tr("worker_error", tb=traceback.format_exc()))
         finally:
+            root_logger.removeHandler(log_handler)
+            root_logger.setLevel(old_root_level)
+            if session is not None:
+                session.close()
             sys.stdout = old_stdout
             sys.stderr = old_stderr
 

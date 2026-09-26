@@ -2,6 +2,9 @@ import pathlib
 
 from inference.device_utils import resolve_onnx_providers
 from inference.HubertFA.onnx_infer import InferenceOnnx
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 _HFA_REPAIR_IGNORE_TOKENS = {"SP", "AP", "EP", "br", "sil", "pau"}
@@ -88,13 +91,13 @@ def _repair_pred_dict_short_words(pred_dict) -> None:
         words = pred[2]
         repair_logs = _repair_short_word_boundaries(words)
         if repair_logs:
-            print(f"[HFA Repair] {stem}: repaired {len(repair_logs)} short word(s)")
+            logger.info(f"[HFA Repair] {stem}: repaired {len(repair_logs)} short word(s)")
             for log in repair_logs:
-                print(log)
+                logger.info(log)
             total_repaired += len(repair_logs)
 
     if total_repaired > 0:
-        print(f"[HFA Repair] Total repaired short words: {total_repaired}")
+        logger.info(f"[HFA Repair] Total repaired short words: {total_repaired}")
 
 # Per-language dictionary files shipped inside the HFA model folder.
 # English uses the DiffSinger CMU dict (no stress digits, reduced vowels).
@@ -109,7 +112,7 @@ def load_hfa_model(model_dir, device=None):
     """
     Load the HubertFA ONNX model on DirectML by default, with CPU fallback.
     """
-    print("Loading HubertFA ONNX model...")
+    logger.info("Loading HubertFA ONNX model...")
     model = InferenceOnnx(onnx_path=pathlib.Path(model_dir) / 'model.onnx')
     model.load_config()
     model.init_decoder()
@@ -120,11 +123,11 @@ def load_hfa_model(model_dir, device=None):
     options.enable_mem_pattern = False
     options.enable_cpu_mem_arena = False
     model.model = ort.InferenceSession(str(model.model_folder / 'model.onnx'), options, providers=providers)
-    print(f"HubertFA ONNX session created with provider={provider_name}: {model.model.get_providers()}")
+    logger.info(f"HubertFA ONNX session created with provider={provider_name}: {model.model.get_providers()}")
     return model
 
 def run_hubert_fa(hfa_model, temp_dir, language="zh", cancel_checker=None, use_phoneme_g2p=False):
-    print("[Hybrid Pipeline] Running HubertFA forced alignment...")
+    logger.info("[Hybrid Pipeline] Running HubertFA forced alignment...")
     if cancel_checker and cancel_checker():
         raise InterruptedError("HFA 任务已取消")
     hfa_model.dataset = []
@@ -183,9 +186,9 @@ def export_hfa_artifacts(chunks, temp_dir_path, hfa_model, output_key, output_di
                 if chunk_wav_path.exists():
                     shutil.copy2(chunk_wav_path, output_dir / f"{new_stem}.wav")
                 else:
-                    print(f"[Warning] Chunk WAV file not found, skipping: {chunk_wav_path}")
+                    logger.warning(f"[Warning] Chunk WAV file not found, skipping: {chunk_wav_path}")
             except Exception as e:
-                print(f"[Error] Failed to copy chunk {chunk_wav_path}: {e}")
+                logger.error(f"[Error] Failed to copy chunk {chunk_wav_path}: {e}")
 
         if tg_subfolder is not None and tg_subfolder.exists():
             tg_path = tg_subfolder / f"{stem}.TextGrid"
@@ -193,4 +196,4 @@ def export_hfa_artifacts(chunks, temp_dir_path, hfa_model, output_key, output_di
                 if tg_path.exists():
                     shutil.copy2(tg_path, output_dir / f"{new_stem}.TextGrid")
             except Exception as e:
-                print(f"[Error] Failed to copy TextGrid {tg_path}: {e}")
+                logger.error(f"[Error] Failed to copy TextGrid {tg_path}: {e}")

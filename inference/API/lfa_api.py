@@ -3,6 +3,9 @@ from inference.LyricFA.tools.JaG2p import JaG2p, KATA_TO_ROMAJI
 from inference.LyricFA.tools.lyric_matcher import LyricMatcher
 
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 _zh_g2p = None
 _ja_g2p = None
@@ -289,7 +292,7 @@ def process_asr_to_phonemes(
                         direct_phoneme_tokens.append(nt)
         if not text.strip() and not direct_phoneme_tokens:
             reason = "ASR output empty or failed"
-            print(f"[Warning] {stem}: {reason}; skipping this chunk for lyric alignment.")
+            logger.warning(f"[Warning] {stem}: {reason}; skipping this chunk for lyric alignment.")
             log_lines = [
                 f"[{stem}]",
                 f"ASR Output: {raw_text or '[Empty or Failed]'}",

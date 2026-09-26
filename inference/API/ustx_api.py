@@ -8,6 +8,9 @@ import numpy as np
 import yaml
 
 from inference.API.rmvpe_api import RmvpeResult
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 UCurveInterval = 5
@@ -40,7 +43,7 @@ def _finite_notes(notes: list[Any]) -> list[Any]:
             continue
         valid_notes.append(note)
     if skipped:
-        print(f"[Warning] Skipped {skipped} invalid note(s) during USTX export.")
+        logger.warning(f"[Warning] Skipped {skipped} invalid note(s) during USTX export.")
     return valid_notes
 
 

@@ -14,6 +14,9 @@ from inference.romaji_asr.common import (
     load_vocab,
     prepare_batch,
 )
+import logging
+
+logger = logging.getLogger(__name__)
 
 # model_fp16_dynb.onnx is the same graph as model_fp16.onnx with the batch axis
 # exported as a symbolic dim, so real multi-chunk batches can run in one pass.
@@ -89,7 +92,7 @@ class PinyinASROnnxModel:
         session = create_session(str(model_file), provider=requested_provider)
         active_provider = "dml" if "DmlExecutionProvider" in session.get_providers() else "cpu"
         if verbose and requested_provider == "dml" and active_provider == "cpu":
-            print("[Pinyin ASR] DML provider unavailable, using CPUExecutionProvider.")
+            logger.info("[Pinyin ASR] DML provider unavailable, using CPUExecutionProvider.")
 
         id2token, blank_id = load_vocab(vocab_file)
         return cls(

@@ -6,6 +6,9 @@ from typing import Literal
 import librosa
 import mido
 import numpy as np
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -29,7 +32,7 @@ def _finite_notes(notes: list[NoteInfo]) -> list[NoteInfo]:
             continue
         valid_notes.append(note)
     if skipped:
-        print(f"[Warning] Skipped {skipped} invalid note(s) during export.")
+        logger.warning(f"[Warning] Skipped {skipped} invalid note(s) during export.")
     return valid_notes
 
 
@@ -94,7 +97,7 @@ def _save_midi(notes: list[NoteInfo], filepath: pathlib.Path, tempo: int = 120):
     with mido.MidiFile(charset="utf8") as midi_file:
         midi_file.tracks.append(track)
         midi_file.save(filepath)
-    print(f"Saved MIDI file: {filepath}")
+    logger.info(f"Saved MIDI file: {filepath}")
 
 
 def _save_text(
@@ -141,4 +144,4 @@ def _save_text(
                 if has_lyrics:
                     row["lyric"] = lyric
                 writer.writerow(row)
-    print(f"Saved {file_format.upper()} file: {filepath}")
+    logger.info(f"Saved {file_format.upper()} file: {filepath}")

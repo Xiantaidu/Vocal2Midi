@@ -26,6 +26,9 @@ from pathlib import Path
 from typing import Iterable, List, Optional
 
 import soundfile as sf
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -319,7 +322,7 @@ def save_timestamps_json(
         "chunks": records,
     }
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"  Timestamps saved: {json_path}")
+    logger.info(f"  Timestamps saved: {json_path}")
     return json_path
 
 
@@ -338,13 +341,13 @@ def slice_audio_from_json(
     loaded = json.loads(json_path.read_text(encoding="utf-8"))
     records = loaded.get("chunks", []) if isinstance(loaded, dict) else loaded
     if not records:
-        print(f"[SKIP] Empty JSON chunk list: {json_path}")
+        logger.warning(f"[SKIP] Empty JSON chunk list: {json_path}")
         return 0
 
     stem = safe_stem(source_audio)
     waveform, actual_sr = load_audio(source_audio, sr=sr)
     if waveform.size == 0:
-        print(f"[SKIP] Empty audio: {source_audio}")
+        logger.warning(f"[SKIP] Empty audio: {source_audio}")
         return 0
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -358,7 +361,7 @@ def slice_audio_from_json(
         start_sample = max(0, int(round(offset * actual_sr)))
         end_sample = min(waveform.shape[-1], int(round((offset + duration) * actual_sr)))
         if start_sample >= end_sample:
-            print(f"  [SKIP] chunk {index}: invalid range [{offset:.4f}s - {offset + duration:.4f}s]")
+            logger.warning(f"  [SKIP] chunk {index}: invalid range [{offset:.4f}s - {offset + duration:.4f}s]")
             continue
 
         chunk_wav = waveform[..., start_sample:end_sample]
@@ -371,7 +374,7 @@ def slice_audio_from_json(
             lab_name = f"{stem}_chunk{index:04d}_off{offset:08.2f}s.lab"
             (output_dir / lab_name).write_text(text, encoding="utf-8")
 
-    print(f"  Sliced {written}/{len(records)} chunks from JSON timestamps -> {output_dir}")
+    logger.info(f"  Sliced {written}/{len(records)} chunks from JSON timestamps -> {output_dir}")
     return written
 
 
@@ -451,14 +454,14 @@ def process_one_file(
 
     waveform, sr = load_audio(audio_path, sr=DEFAULT_SAMPLE_RATE)
     if waveform.size == 0:
-        print(f"[SKIP] Empty audio: {audio_path}")
+        logger.warning(f"[SKIP] Empty audio: {audio_path}")
         return 0, 0
 
     normalized_method = normalize_slicing_method(slicing_method)
-    print(f"\n[FILE] {audio_path.name}")
+    logger.info(f"\n[FILE] {audio_path.name}")
 
     if no_slice:
-        print("  [NO-SLICE] Skipping slicer; using the full audio as a single chunk.")
+        logger.warning("  [NO-SLICE] Skipping slicer; using the full audio as a single chunk.")
         chunks = [{"offset": 0.0, "waveform": waveform}]
     else:
         rmvpe_voiced_mask = None
@@ -466,14 +469,14 @@ def process_one_file(
         if should_use_rmvpe_for_slicing(normalized_method, rmvpe_model_path):
             own_rmvpe_model = rmvpe_model is None
             if own_rmvpe_model:
-                print(f"  [RMVPE] Loading model for smart slicing: {rmvpe_model_path}")
+                logger.info(f"  [RMVPE] Loading model for smart slicing: {rmvpe_model_path}")
                 rmvpe_model = RmvpeTranscriber(rmvpe_model_path, device=device, batch_size=rmvpe_batch_size)
             try:
-                print("  [RMVPE] Running voiced/unvoiced detection for smart slicing...")
+                logger.info("  [RMVPE] Running voiced/unvoiced detection for smart slicing...")
                 rmvpe_result = rmvpe_model.infer(waveform, sr)
                 rmvpe_voiced_mask = rmvpe_result.voiced_mask
                 rmvpe_step = rmvpe_result.time_step_seconds
-                print(f"  [RMVPE] Done. Frames={len(rmvpe_result.midi_pitch)} step={rmvpe_step:.4f}s")
+                logger.info(f"  [RMVPE] Done. Frames={len(rmvpe_result.midi_pitch)} step={rmvpe_step:.4f}s")
             finally:
                 if own_rmvpe_model:
                     del rmvpe_model
@@ -490,7 +493,7 @@ def process_one_file(
         )
 
     if not chunks:
-        print("  No chunks generated, skipping.")
+        logger.warning("  No chunks generated, skipping.")
         return 0, 0
 
     with tempfile.TemporaryDirectory(prefix=f"vocal2midi_{output_stem}_") as tmp_dir:
@@ -548,7 +551,7 @@ def process_one_file(
                 source_md5=source_md5,
             )
 
-    print(f"  chunks: {len(chunks)}, labs: {written}")
+    logger.info(f"  chunks: {len(chunks)}, labs: {written}")
     return len(chunks), written
 
 
@@ -641,6 +644,7 @@ def validate_args(args) -> None:
 
 
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
     args = build_argparser().parse_args()
     validate_args(args)
 
@@ -653,7 +657,7 @@ def main():
             source_audio=args.source_audio.resolve(),
             output_dir=args.output_dir.resolve(),
         )
-        print(f"\nDone. Sliced {written} chunks from JSON.")
+        logger.info(f"\nDone. Sliced {written} chunks from JSON.")
         return 0
 
     input_dir = args.input_dir.resolve()
@@ -669,7 +673,7 @@ def main():
     audio_files = collect_audio_files(input_dir, output_dir=output_dir, recursive=not args.no_recursive)
     if not audio_files:
         exts = ", ".join(sorted(INPUT_AUDIO_EXTENSIONS))
-        print(f"No audio files found ({exts}) in: {input_dir}")
+        logger.info(f"No audio files found ({exts}) in: {input_dir}")
         return 0
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -681,35 +685,35 @@ def main():
 
     use_rmvpe_for_slicing = should_use_rmvpe_for_slicing(args.slicing_method, rmvpe_model_path)
     if args.keep_rmvpe and args.no_slice:
-        print("[Keep-RMVPE] Ignored: --no-slice bypasses slicing entirely.")
+        logger.info("[Keep-RMVPE] Ignored: --no-slice bypasses slicing entirely.")
     elif args.keep_rmvpe and not use_rmvpe_for_slicing:
-        print("[Keep-RMVPE] Ignored: RMVPE is only used with --slicing-method smart and a non-empty --rmvpe-model.")
+        logger.info("[Keep-RMVPE] Ignored: RMVPE is only used with --slicing-method smart and a non-empty --rmvpe-model.")
     if args.no_slice and slice_bounds is not None:
-        print("[Slice Bounds] Ignored: --no-slice sends the full file directly to ASR.")
+        logger.info("[Slice Bounds] Ignored: --no-slice sends the full file directly to ASR.")
 
     asr_model = None
     rmvpe_model = None
     if args.keep_model:
-        print(f"[Keep-Model] Loading ASR runtime once for all files: {args.asr_model}")
+        logger.info(f"[Keep-Model] Loading ASR runtime once for all files: {args.asr_model}")
         asr_model = load_qwen_model(args.asr_model, args.device, use_cache=False)
-        print("[Keep-Model] Runtime loaded. It will be reused for the entire batch.")
+        logger.info("[Keep-Model] Runtime loaded. It will be reused for the entire batch.")
     if args.keep_rmvpe and use_rmvpe_for_slicing:
-        print(f"[Keep-RMVPE] Loading RMVPE runtime once for all files: {rmvpe_model_path}")
+        logger.info(f"[Keep-RMVPE] Loading RMVPE runtime once for all files: {rmvpe_model_path}")
         rmvpe_model = RmvpeTranscriber(rmvpe_model_path, device=args.device, batch_size=args.rmvpe_batch_size)
-        print("[Keep-RMVPE] Runtime loaded. It will be reused for the entire batch.")
+        logger.info("[Keep-RMVPE] Runtime loaded. It will be reused for the entire batch.")
 
     try:
         total_batches = math.ceil(len(audio_files) / args.file_batch_size)
-        print(f"Found {len(audio_files)} audio files. Processing in file batches of {args.file_batch_size}...")
+        logger.info(f"Found {len(audio_files)} audio files. Processing in file batches of {args.file_batch_size}...")
         for batch_no, file_batch in enumerate(batch_iter(audio_files, args.file_batch_size), start=1):
-            print(f"\n=== File batch {batch_no} / {total_batches} ===")
+            logger.info(f"\n=== File batch {batch_no} / {total_batches} ===")
             for audio_path in file_batch:
                 try:
                     source_md5 = file_md5(audio_path)
                 except Exception as exc:
                     skipped_failed += 1
-                    print(f"\n[SKIP failed] {audio_path}")
-                    print(f"  MD5 {type(exc).__name__}: {exc}")
+                    logger.error(f"\n[SKIP failed] {audio_path}")
+                    logger.info(f"  MD5 {type(exc).__name__}: {exc}")
                     continue
 
                 output_key = source_key(audio_path, source_md5)
@@ -717,11 +721,11 @@ def main():
                     indexed_key = index_has_completed_output(source_index, source_md5, output_dir)
                     if indexed_key is not None:
                         skipped_existing += 1
-                        print(f"\n[SKIP existing] {audio_path.name} -> {indexed_key} (md5 index)")
+                        logger.warning(f"\n[SKIP existing] {audio_path.name} -> {indexed_key} (md5 index)")
                         continue
                     if has_existing_outputs(audio_path, output_dir, source_md5):
                         skipped_existing += 1
-                        print(f"\n[SKIP existing] {audio_path.name} -> {output_key}")
+                        logger.warning(f"\n[SKIP existing] {audio_path.name} -> {output_key}")
                         continue
 
                 try:
@@ -745,8 +749,8 @@ def main():
                     )
                 except Exception as exc:
                     skipped_failed += 1
-                    print(f"\n[SKIP failed] {audio_path}")
-                    print(f"  {type(exc).__name__}: {exc}")
+                    logger.error(f"\n[SKIP failed] {audio_path}")
+                    logger.info(f"  {type(exc).__name__}: {exc}")
                     continue
 
                 update_source_index(source_index, audio_path, output_key, source_md5, chunks, labs)
@@ -755,16 +759,16 @@ def main():
                 total_labs += labs
     finally:
         if rmvpe_model is not None:
-            print("\n[Keep-RMVPE] Releasing cached RMVPE runtime...")
+            logger.info("\n[Keep-RMVPE] Releasing cached RMVPE runtime...")
             del rmvpe_model
             free_runtime_memory()
         if asr_model is not None:
-            print("\n[Keep-Model] Releasing cached ASR runtime...")
+            logger.info("\n[Keep-Model] Releasing cached ASR runtime...")
             clear_qwen_model_cache()
             del asr_model
             free_runtime_memory()
 
-    print(
+    logger.error(
         f"\nDone. Total chunks: {total_chunks}, total labs: {total_labs}, "
         f"skipped existing: {skipped_existing}, skipped failed: {skipped_failed}"
     )

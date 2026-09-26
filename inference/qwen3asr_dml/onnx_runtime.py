@@ -33,6 +33,9 @@ from inference.device_utils import normalize_runtime_device
 
 from .encoder import FastWhisperMel
 from .schema import TranscribeResult
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 ENDOFTEXT_TOKEN_ID = 151643
@@ -147,7 +150,7 @@ class QwenOnnxASREngine:
         init_path = _resolve_variant(self.model_dir, "decoder_init")
         step_path = _resolve_variant(self.model_dir, "decoder_step")
         if self.verbose:
-            print(f"[Qwen ONNX] encoder={encoder_path.name}, init={init_path.name}, step={step_path.name}")
+            logger.info(f"[Qwen ONNX] encoder={encoder_path.name}, init={init_path.name}, step={step_path.name}")
 
         # The decoder step graph fails during CoreML compilation on M4, so CPU
         # is used explicitly; this is not silently ignoring the request but

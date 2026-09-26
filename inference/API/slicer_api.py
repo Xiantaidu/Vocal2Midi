@@ -5,6 +5,9 @@ import functools
 from concurrent.futures import ProcessPoolExecutor
 
 from inference.slicer.slicer2 import Slicer
+import logging
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_SLICE_METHOD = "default"
 SLICE_METHOD_CHOICES = ("default", "smart", "heuristic", "grid")
@@ -122,7 +125,7 @@ def _merge_short_segments(chunks: list, sr: int, min_len_sec: float, max_len_sec
 
         # Merge if the current segment is too short and the combined duration remains valid.
         if cur_dur < min_len_sec and combined_dur <= max_len_sec:
-            print(f"  Merging short segment at {nxt['offset']:.2f}s ({nxt_dur:.2f}s) "
+            logger.info(f"  Merging short segment at {nxt['offset']:.2f}s ({nxt_dur:.2f}s) "
                   f"→ combined {combined_dur:.2f}s")
             merged[-1] = _merge_segments(cur, nxt, sr)
         else:
@@ -136,7 +139,7 @@ def _merge_short_segments(chunks: list, sr: int, min_len_sec: float, max_len_sec
             prev = merged[-2]
             combined_dur = _merged_duration_sec(prev, last, sr)
             if combined_dur <= max_len_sec:
-                print(
+                logger.info(
                     f"  Reverse-merging tail fragment at {last['offset']:.2f}s "
                     f"({last_dur:.2f}s) -> combined {combined_dur:.2f}s"
                 )
@@ -165,7 +168,7 @@ def _merge_tiny_chunks(chunks: list, sr: int, tiny_sec: float = 0.35) -> list:
 
         if seg_dur < tiny_sec:
             if merged:
-                print(f"  Merging tiny segment at {seg['offset']:.2f}s ({seg_dur:.2f}s) into previous chunk")
+                logger.info(f"  Merging tiny segment at {seg['offset']:.2f}s ({seg_dur:.2f}s) into previous chunk")
                 merged[-1] = _merge_segments(merged[-1], seg, sr)
             else:
                 if pending_head is None:
@@ -176,7 +179,7 @@ def _merge_tiny_chunks(chunks: list, sr: int, tiny_sec: float = 0.35) -> list:
 
         if pending_head is not None:
             pdur = len(pending_head['waveform']) / sr
-            print(f"  Merging leading tiny segment at {pending_head['offset']:.2f}s ({pdur:.2f}s) into next chunk")
+            logger.info(f"  Merging leading tiny segment at {pending_head['offset']:.2f}s ({pdur:.2f}s) into next chunk")
             seg = _merge_segments(pending_head, seg, sr)
             pending_head = None
 
@@ -184,7 +187,7 @@ def _merge_tiny_chunks(chunks: list, sr: int, tiny_sec: float = 0.35) -> list:
 
     if pending_head is not None:
         # No neighbor chunk available (e.g., all chunks are tiny), keep it to avoid data loss.
-        print(f"  Keeping isolated tiny segment at {pending_head['offset']:.2f}s (no neighbor to merge)")
+        logger.info(f"  Keeping isolated tiny segment at {pending_head['offset']:.2f}s (no neighbor to merge)")
         merged.append(pending_head)
 
     return merged
@@ -300,7 +303,7 @@ def _sliding_window_split(
         chunk_wav = waveform[:, start_sample:end_sample] if waveform.ndim > 1 else waveform[start_sample:end_sample]
         
         dur = cut_sec - current_start_sec
-        print(f"    Sub-split at {cut_sec:.2f}s (duration {dur:.2f}s) - Reason: {cut_type}")
+        logger.info(f"    Sub-split at {cut_sec:.2f}s (duration {dur:.2f}s) - Reason: {cut_type}")
         
         chunks.append({'offset': current_start_sec, 'waveform': chunk_wav})
         current_start_sec = cut_sec
@@ -318,7 +321,7 @@ def grid_search_slice(
     """
     Slices audio by performing a grid search for the best parameters.
     """
-    print(f"Running grid search slicer for target range [{min_len_sec:.1f}s, {max_len_sec:.1f}s]...")
+    logger.info(f"Running grid search slicer for target range [{min_len_sec:.1f}s, {max_len_sec:.1f}s]...")
 
     thresholds = [-45, -40, -35, -30, -25, -20] 
     min_lengths_ms = [8000, 6000, 4000, 2500, 1500] 
@@ -359,7 +362,7 @@ def grid_search_slice(
             
             score += abs(len(chunks) - len(waveform) / sr / ((min_len_sec + max_len_sec) / 2)) * 0.5
 
-            print(f"  Trying params: threshold={threshold}dB, min_length={min_length_ms}ms -> "
+            logger.info(f"  Trying params: threshold={threshold}dB, min_length={min_length_ms}ms -> "
                   f"Score={score:.2f} ({len(chunks)} chunks, {num_short} short, {num_long} long)")
 
             if score < best_score:
@@ -368,14 +371,14 @@ def grid_search_slice(
                 best_params = (threshold, min_length_ms)
 
         except Exception as e:
-            print(f"  Error with params {threshold}, {min_length_ms}: {e}")
+            logger.error(f"  Error with params {threshold}, {min_length_ms}: {e}")
             continue
 
     if best_chunks:
-        print(f"\nFound best slicer params: threshold={best_params[0]}dB, min_length={best_params[1]}ms")
-        print(f"  - Sliced into {len(best_chunks)} chunks.")
+        logger.info(f"\nFound best slicer params: threshold={best_params[0]}dB, min_length={best_params[1]}ms")
+        logger.info(f"  - Sliced into {len(best_chunks)} chunks.")
         durations = [len(c['waveform']) / sr for c in best_chunks]
-        print(f"  - Durations: min={min(durations):.2f}s, max={max(durations):.2f}s, avg={np.mean(durations):.2f}s")
+        logger.info(f"  - Durations: min={min(durations):.2f}s, max={max(durations):.2f}s, avg={np.mean(durations):.2f}s")
     
     return best_chunks or []
 
@@ -392,7 +395,7 @@ def heuristic_slice(
     """
     A two-stage heuristic slicer.
     """
-    print(f"Stage 1: Removing long silences below {silence_removal_threshold_db}dB...")
+    logger.info(f"Stage 1: Removing long silences below {silence_removal_threshold_db}dB...")
     pre_slicer = Slicer(
         sr=sr,
         threshold=silence_removal_threshold_db,
@@ -401,14 +404,14 @@ def heuristic_slice(
         max_sil_kept=100
     )
     vocal_segments = pre_slicer.slice(waveform)
-    print(f"  Found {len(vocal_segments)} vocal segments.")
+    logger.info(f"  Found {len(vocal_segments)} vocal segments.")
 
     final_chunks = []
-    print("\nStage 2: Splitting long segments to fit length constraints...")
+    logger.info("\nStage 2: Splitting long segments to fit length constraints...")
     for segment in vocal_segments:
         seg_dur = len(segment['waveform']) / sr
         if seg_dur > max_len_sec:
-            print(f"  Segment at {segment['offset']:.2f}s is too long ({seg_dur:.2f}s), applying sliding window split...")
+            logger.info(f"  Segment at {segment['offset']:.2f}s is too long ({seg_dur:.2f}s), applying sliding window split...")
             sub_chunks = _sliding_window_split(
                 segment['waveform'], sr,
                 min_len_sec=min_len_sec,
@@ -423,10 +426,10 @@ def heuristic_slice(
         elif seg_dur >= min_len_sec:
             final_chunks.append(segment)
         elif seg_dur >= ultra_short_sec:
-            print(f"  Keeping short segment at {segment['offset']:.2f}s (duration {seg_dur:.2f}s < {min_len_sec}s) to avoid lyric loss")
+            logger.info(f"  Keeping short segment at {segment['offset']:.2f}s (duration {seg_dur:.2f}s < {min_len_sec}s) to avoid lyric loss")
             final_chunks.append(segment)
         else:
-             print(f"  Keeping ultra-short segment at {segment['offset']:.2f}s (duration {seg_dur:.2f}s < {ultra_short_sec}s) for later merge")
+             logger.info(f"  Keeping ultra-short segment at {segment['offset']:.2f}s (duration {seg_dur:.2f}s < {ultra_short_sec}s) for later merge")
              final_chunks.append(segment)
 
     final_chunks.sort(key=lambda x: x['offset'])
@@ -436,12 +439,12 @@ def heuristic_slice(
     if final_chunks:
         merge_before = len(final_chunks)
         durations_before = [len(c["waveform"]) / sr for c in final_chunks]
-        print(f"\nStage 3: Merging short segments towards target [{min_len_sec:.1f}s, {max_len_sec:.1f}s]...")
-        print(f"  Before merge: {merge_before} chunks, durations: min={min(durations_before):.2f}s, "
+        logger.info(f"\nStage 3: Merging short segments towards target [{min_len_sec:.1f}s, {max_len_sec:.1f}s]...")
+        logger.info(f"  Before merge: {merge_before} chunks, durations: min={min(durations_before):.2f}s, "
               f"max={max(durations_before):.2f}s, avg={sum(durations_before)/len(durations_before):.2f}s")
         final_chunks = _merge_short_segments(final_chunks, sr, min_len_sec, max_len_sec)
         durations_after = [len(c["waveform"]) / sr for c in final_chunks]
-        print(f"  After merge:  {len(final_chunks)} chunks, durations: min={min(durations_after):.2f}s, "
+        logger.info(f"  After merge:  {len(final_chunks)} chunks, durations: min={min(durations_after):.2f}s, "
               f"max={max(durations_after):.2f}s, avg={sum(durations_after)/len(durations_after):.2f}s")
 
     return final_chunks
@@ -550,7 +553,7 @@ def _pitch_based_split(
         chunk_wav = waveform[:, start_sample:end_sample] if waveform.ndim > 1 else waveform[start_sample:end_sample]
         
         dur = cut_sec - current_start_sec
-        print(f"    Sub-split at {cut_sec:.2f}s (duration {dur:.2f}s) - Reason: {cut_type}")
+        logger.info(f"    Sub-split at {cut_sec:.2f}s (duration {dur:.2f}s) - Reason: {cut_type}")
         
         chunks.append({'offset': current_start_sec, 'waveform': chunk_wav})
         current_start_sec = cut_sec
@@ -571,7 +574,7 @@ def pitch_based_slice(
     """
     A two-stage slicer using pitch information.
     """
-    print(f"Stage 1: Removing long silences below {silence_removal_threshold_db}dB...")
+    logger.info(f"Stage 1: Removing long silences below {silence_removal_threshold_db}dB...")
     pre_slicer = Slicer(
         sr=sr,
         threshold=silence_removal_threshold_db,
@@ -580,10 +583,10 @@ def pitch_based_slice(
         max_sil_kept=100
     )
     vocal_segments = pre_slicer.slice(waveform)
-    print(f"  Found {len(vocal_segments)} vocal segments.")
+    logger.info(f"  Found {len(vocal_segments)} vocal segments.")
 
     final_chunks = []
-    print("\nStage 2: Splitting long segments based on pitch...")
+    logger.info("\nStage 2: Splitting long segments based on pitch...")
     
     short_segments = []
     long_segments = []
@@ -594,14 +597,14 @@ def pitch_based_slice(
         elif seg_dur >= min_len_sec:
             short_segments.append(seg)
         elif seg_dur >= ultra_short_sec:
-            print(f"  Keeping short segment at {seg['offset']:.2f}s (duration {seg_dur:.2f}s < {min_len_sec}s) to avoid lyric loss")
+            logger.info(f"  Keeping short segment at {seg['offset']:.2f}s (duration {seg_dur:.2f}s < {min_len_sec}s) to avoid lyric loss")
             short_segments.append(seg)
         else:
-            print(f"  Keeping ultra-short segment at {seg['offset']:.2f}s (duration {seg_dur:.2f}s < {ultra_short_sec}s) for later merge")
+            logger.info(f"  Keeping ultra-short segment at {seg['offset']:.2f}s (duration {seg_dur:.2f}s < {ultra_short_sec}s) for later merge")
             short_segments.append(seg)
     
     if long_segments:
-        print(f"  Found {len(long_segments)} long segments to split in parallel...")
+        logger.info(f"  Found {len(long_segments)} long segments to split in parallel...")
         
         # Create a partial function with fixed arguments
         slicer_func = functools.partial(
@@ -636,12 +639,12 @@ def pitch_based_slice(
     if final_chunks:
         merge_before = len(final_chunks)
         durations_before = [len(c["waveform"]) / sr for c in final_chunks]
-        print(f"\nStage 3: Merging short segments towards target [{min_len_sec:.1f}s, {max_len_sec:.1f}s]...")
-        print(f"  Before merge: {merge_before} chunks, durations: min={min(durations_before):.2f}s, "
+        logger.info(f"\nStage 3: Merging short segments towards target [{min_len_sec:.1f}s, {max_len_sec:.1f}s]...")
+        logger.info(f"  Before merge: {merge_before} chunks, durations: min={min(durations_before):.2f}s, "
               f"max={max(durations_before):.2f}s, avg={sum(durations_before)/len(durations_before):.2f}s")
         final_chunks = _merge_short_segments(final_chunks, sr, min_len_sec, max_len_sec)
         durations_after = [len(c["waveform"]) / sr for c in final_chunks]
-        print(f"  After merge:  {len(final_chunks)} chunks, durations: min={min(durations_after):.2f}s, "
+        logger.info(f"  After merge:  {len(final_chunks)} chunks, durations: min={min(durations_after):.2f}s, "
               f"max={max(durations_after):.2f}s, avg={sum(durations_after)/len(durations_after):.2f}s")
 
     return final_chunks
@@ -667,10 +670,10 @@ def slice_audio(
     Top-level API for slicing audio with different methods.
     """
     normalized_method = normalize_slicing_method(method)
-    print(f"Slicing audio with method: '{normalized_method}'")
+    logger.info(f"Slicing audio with method: '{normalized_method}'")
     if normalized_method == "smart":
         if rmvpe_voiced_mask is not None and rmvpe_time_step_seconds and rmvpe_time_step_seconds > 0:
-            print("Using RMVPE voiced mask for smart slicing (pyin fallback disabled for this run).")
+            logger.warning("Using RMVPE voiced mask for smart slicing (pyin fallback disabled for this run).")
         chunks = pitch_based_slice(
             waveform,
             sr,
@@ -684,7 +687,7 @@ def slice_audio(
     else:
         chunks = default_slice(waveform, sr)
     
-    print(f"Sliced into {len(chunks)} chunks.")
+    logger.info(f"Sliced into {len(chunks)} chunks.")
     return chunks
 
 
@@ -751,7 +754,7 @@ def slice_audio_with_custom_bounds(
         )
 
     resolved_min_sec, resolved_max_sec = custom_bounds
-    print(f"Using custom slice bounds: min={resolved_min_sec:.1f}s max={resolved_max_sec:.1f}s")
+    logger.info(f"Using custom slice bounds: min={resolved_min_sec:.1f}s max={resolved_max_sec:.1f}s")
 
     original_pitch_based_slice = pitch_based_slice
     original_heuristic_slice = heuristic_slice

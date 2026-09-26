@@ -1,5 +1,8 @@
 import pyopenjtalk
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def is_letter(character):
@@ -339,6 +342,6 @@ class JaG2p:
 if __name__ == "__main__":
     g2p = JaG2p()
     text = "きょうはいい天気ですね。My way"
-    print("Original:", text)
-    print("Pinyin/Romaji string:", g2p.convert(text))
-    print("Split chars:", g2p.split_string_no_regex(text))
+    logger.info("Original:", text)
+    logger.info("Pinyin/Romaji string:", g2p.convert(text))
+    logger.info("Split chars:", g2p.split_string_no_regex(text))

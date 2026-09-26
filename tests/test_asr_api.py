@@ -285,3 +285,87 @@ def test_qwen_asr_language_names_cover_english():
     assert QWEN_ASR_LANGUAGE_NAMES["en"] == "English"
     assert QWEN_ASR_LANGUAGE_NAMES["ja"] == "Japanese"
     assert QWEN_ASR_LANGUAGE_NAMES["zh"] == "Chinese"
+
+
+# --- shared subprocess session across pipeline runs ---
+
+def test_shared_session_spawns_worker_once(monkeypatch, tmp_path):
+    """A shared AsrSubprocessSession spawns one worker for many calls."""
+    worker = _FakeProcess()
+    task_queue = _FakeQueue()
+    result_queue = _FakeQueue()
+    ctx = _FakeContext(worker, [task_queue, result_queue])
+    monkeypatch.setattr(asr_api.mp, "get_context", lambda method: ctx)
+    messages = iter([
+        {"type": "ready"},
+        {"type": "result", "task_id": 0, "result": [{"text": "你好"}]},
+        {"type": "result", "task_id": 0, "result": [{"text": "世界"}]},
+    ])
+    monkeypatch.setattr(asr_api, "_wait_for_worker_message", lambda *a, **k: next(messages))
+
+    session = asr_api.AsrSubprocessSession()
+    chunks = [{"waveform": np.zeros(16, dtype=np.float32)}]
+    for expected in ("你好", "世界"):
+        results, _ = asr_api.batch_transcribe_asr(
+            chunks, sr=16000, asr_model=None, temp_dir_path=tmp_path,
+            asr_batch_size=1, language="zh", asr_model_path="asr", device="cpu",
+            force_subprocess=True, asr_timeout_sec=1.0, session=session,
+        )
+        assert results == [{"text": expected}]
+
+    assert worker.started is True
+    assert worker.terminated is False  # never hard-killed between calls
+    session.close()
+    assert task_queue.items[-1] == {"type": "stop"}  # graceful shutdown
+
+
+def test_session_respawns_worker_when_device_changes(monkeypatch, tmp_path):
+    worker = _FakeProcess()
+    queues = [_FakeQueue(), _FakeQueue(), _FakeQueue(), _FakeQueue()]
+    ctx = _FakeContext(worker, queues)
+    monkeypatch.setattr(asr_api.mp, "get_context", lambda method: ctx)
+    messages = iter([
+        {"type": "ready"},
+        {"type": "result", "task_id": 0, "result": [{"text": "你好"}]},
+        {"type": "ready"},
+        {"type": "result", "task_id": 0, "result": [{"text": "世界"}]},
+    ])
+    monkeypatch.setattr(asr_api, "_wait_for_worker_message", lambda *a, **k: next(messages))
+
+    session = asr_api.AsrSubprocessSession()
+    chunks = [{"waveform": np.zeros(16, dtype=np.float32)}]
+    for device, expected in (("cpu", "你好"), ("dml", "世界")):
+        results, _ = asr_api.batch_transcribe_asr(
+            chunks, sr=16000, asr_model=None, temp_dir_path=tmp_path,
+            asr_batch_size=1, language="zh", asr_model_path="asr", device=device,
+            force_subprocess=True, asr_timeout_sec=1.0, session=session,
+        )
+        assert results == [{"text": expected}]
+
+    # the stale worker was terminated before respawning for the new device
+    assert worker.terminated is True
+    assert worker.started is True
+
+
+def test_sessionless_call_uses_one_shot_worker(monkeypatch, tmp_path):
+    """Without a session every call spawns and shuts down its own worker."""
+    worker = _FakeProcess()
+    task_queue = _FakeQueue()
+    result_queue = _FakeQueue()
+    ctx = _FakeContext(worker, [task_queue, result_queue])
+    monkeypatch.setattr(asr_api.mp, "get_context", lambda method: ctx)
+    messages = iter([
+        {"type": "ready"},
+        {"type": "result", "task_id": 0, "result": [{"text": "你好"}]},
+    ])
+    monkeypatch.setattr(asr_api, "_wait_for_worker_message", lambda *a, **k: next(messages))
+
+    chunks = [{"waveform": np.zeros(16, dtype=np.float32)}]
+    results, _ = asr_api.batch_transcribe_asr(
+        chunks, sr=16000, asr_model=None, temp_dir_path=tmp_path,
+        asr_batch_size=1, language="zh", asr_model_path="asr", device="cpu",
+        force_subprocess=True, asr_timeout_sec=1.0,
+    )
+    assert results == [{"text": "你好"}]
+    # one-shot lifecycle: graceful shutdown already happened inside the call
+    assert task_queue.items[-1] == {"type": "stop"}

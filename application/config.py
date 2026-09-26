@@ -58,7 +58,10 @@ class PipelineConfig:
     slice_max_sec: float = DEFAULT_SLICE_MAX_SEC
     tempo: float = 120.0
     quantization_step: int = 0
-    quantization_mode: str = "bayes"
+    quantization_mode: str = "smart"
+    # Smart-mode rhythmic simplification strength; intentionally fixed at 0
+    # (conservative) — the GUI exposes no control for it.
+    quant_simplicity: float = 0.0
     pitch_format: str = "name"
     round_pitch: bool = True
     seg_threshold: float = 0.2
@@ -75,6 +78,10 @@ class PipelineConfig:
     chinese_asr_engine: str = "qwen"
     japanese_asr_engine: str = "romaji"
     output_pitch_curve: bool = False
+    # Runtime handles (like cancel_checker): an optional shared ASR
+    # subprocess session so a batch of jobs reuses one spawned worker
+    # instead of reloading the model per file.
+    asr_session: Optional[object] = None
     cancel_checker: Optional[Callable[[], bool]] = None
 
     def to_kwargs(self) -> dict:
@@ -98,6 +105,7 @@ class PipelineConfig:
             "tempo": self.tempo,
             "quantization_step": self.quantization_step,
             "quantization_mode": self.quantization_mode,
+            "quant_simplicity": self.quant_simplicity,
             "pitch_format": self.pitch_format,
             "round_pitch": self.round_pitch,
             "seg_threshold": self.seg_threshold,
@@ -111,6 +119,7 @@ class PipelineConfig:
             "pinyin_asr_model_path": self.pinyin_asr_model_path,
             "chinese_asr_engine": self.chinese_asr_engine,
             "japanese_asr_engine": self.japanese_asr_engine,
+            "asr_session": self.asr_session,
             "output_pitch_curve": self.output_pitch_curve,
             "cancel_checker": self.cancel_checker,
         }

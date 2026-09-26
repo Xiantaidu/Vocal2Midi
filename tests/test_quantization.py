@@ -1,151 +1,205 @@
+"""Tests for the quantization dispatch: simple mode + the smart rhythmic
+alignment engine, strictly per the reference smart_quantize.py.
+
+The smart engine runs on its own fixed 32nd-note grid (60 ticks at PPQ 480):
+``quantization_step`` only toggles quantization on/off, and a failed chain
+(infeasible overlaps, degenerate span) leaves the notes untouched — the
+upstream reference semantics, intentionally not "fixed" here.
+
+All fixtures are synthetic NoteInfo lists at BPM 120, where one tick is
+1/960 s (PPQ 480).
+"""
+
+import logging
+
+import pytest
+
 from inference.io.note_io import NoteInfo
-from inference.quant.quantization import quantize_notes
+from inference.quant.quantization import quantize_notes, should_apply_quantization
+
+TEMPO = 120.0
+STEP = 120  # 1/16 note grid
 
 
-def _ticks(sec: float, tempo: float) -> int:
-    return round(sec * tempo * 8)
+def _tick(note) -> int:
+    return int(round(note.onset * TEMPO * 8))
 
 
-def _note_from_ticks(onset_tick: int, offset_tick: int, *, pitch: float = 60.0, lyric: str = "a") -> NoteInfo:
-    tempo = 120.0
-    scale = tempo * 8
-    return NoteInfo(onset=onset_tick / scale, offset=offset_tick / scale, pitch=pitch, lyric=lyric)
+def _end_tick(note) -> int:
+    return int(round(note.offset * TEMPO * 8))
 
 
-def test_dp_quantization_respects_requested_grid():
-    notes = [
-        _note_from_ticks(73, 221, lyric="la"),
-        _note_from_ticks(226, 407, pitch=62.0, lyric="-"),
-        _note_from_ticks(430, 701, pitch=64.0, lyric="li"),
+def _spans(notes):
+    return [(_tick(n), _end_tick(n)) for n in notes]
+
+
+def _notes_from_ticks(pairs, lyrics=None):
+    lyrics = lyrics or ["a"] * len(pairs)
+    return [
+        NoteInfo(s / 960.0, e / 960.0, 60.0, lyric)
+        for (s, e), lyric in zip(pairs, lyrics)
     ]
 
-    quantize_notes(notes, tempo=120.0, quantization_step=120, mode="dp")
 
-    quantized_ticks = [(_ticks(note.onset, 120.0), _ticks(note.offset, 120.0)) for note in notes]
-    assert quantized_ticks
-    assert all(start % 120 == 0 for start, _ in quantized_ticks)
-    assert all(end % 120 == 0 for _, end in quantized_ticks)
-    assert all(end > start for start, end in quantized_ticks)
-    assert all(
-        quantized_ticks[i][0] >= quantized_ticks[i - 1][1]
-        for i in range(1, len(quantized_ticks))
-    )
+# ── simple mode ──────────────────────────────────────────────────────
 
 
-def test_dp_quantization_changes_with_grid_size():
-    notes_16 = [_note_from_ticks(120, 240, lyric="la")]
-    notes_8 = [_note_from_ticks(120, 240, lyric="la")]
-
-    quantize_notes(notes_16, tempo=120.0, quantization_step=120, mode="dp")
-    quantize_notes(notes_8, tempo=120.0, quantization_step=240, mode="dp")
-
-    ticks_16 = (_ticks(notes_16[0].onset, 120.0), _ticks(notes_16[0].offset, 120.0))
-    ticks_8 = (_ticks(notes_8[0].onset, 120.0), _ticks(notes_8[0].offset, 120.0))
-
-    assert ticks_16 == (120, 240)
-    assert ticks_8 != ticks_16
-    assert ticks_8[0] % 240 == 0
-    assert ticks_8[1] % 240 == 0
+def test_simple_mode_snaps_to_grid():
+    notes = _notes_from_ticks([(73, 221), (350, 407)])
+    quantize_notes(notes, TEMPO, STEP, mode="simple")
+    assert _spans(notes) == [(120, 240), (360, 480)]
 
 
-def test_dp_quantization_no_ops_for_zero_step():
-    # "不量化" ("no quantization") must disable dp too (it used to fall back to an internal
-    # 30-tick grid and quantize anyway).
-    notes = [_note_from_ticks(113, 291, lyric="la")]
-
-    quantize_notes(notes, tempo=120.0, quantization_step=0, mode="dp")
-
-    assert (_ticks(notes[0].onset, 120.0), _ticks(notes[0].offset, 120.0)) == (113, 291)
+def test_simple_mode_keeps_contiguous_notes_glued():
+    notes = _notes_from_ticks([(115, 245), (245, 355)])
+    quantize_notes(notes, TEMPO, STEP, mode="simple")
+    # the joint follows the next onset so the legato chain survives
+    assert _spans(notes) == [(120, 240), (240, 360)]
 
 
-def test_bayes_quantization_prefers_stronger_beat_anchor():
-    notes = [
-        _note_from_ticks(70, 180, lyric="la"),
-        _note_from_ticks(270, 380, pitch=62.0, lyric="li"),
-        _note_from_ticks(470, 640, pitch=64.0, lyric="lu"),
+def test_legacy_mode_names_dispatch_to_simple():
+    # Modes removed from the UI must stay quantizing (not crash) for old
+    # settings: unknown modes fall back to the simple quantizer.
+    notes = _notes_from_ticks([(73, 221)])
+    quantize_notes(notes, TEMPO, STEP, mode="repair")
+    assert _spans(notes) == [(120, 240)]
+
+
+def test_zero_step_disables_every_mode():
+    notes = _notes_from_ticks([(113, 291), (350, 407)])
+    before = [(n.onset, n.offset) for n in notes]
+    for mode in ("simple", "smart", "repair"):
+        current = _notes_from_ticks([(113, 291), (350, 407)])
+        quantize_notes(current, TEMPO, 0, mode=mode)
+        assert [(n.onset, n.offset) for n in current] == pytest.approx(before)
+
+
+def test_should_apply_quantization_gate():
+    assert should_apply_quantization("smart", 120) is True
+    assert should_apply_quantization("simple", 0) is False
+
+
+# ── smart mode ───────────────────────────────────────────────────────
+
+
+def test_smart_mode_keeps_on_grid_phrases_untouched():
+    # A phrase already sitting on strong positions is optimal for every
+    # simplicity level: the engine must not move it.
+    raw = [(0, 480), (480, 960), (960, 1440)]
+    for simplicity in (0.0, 2.5, 5.0):
+        notes = _notes_from_ticks(raw)
+        quantize_notes(notes, TEMPO, STEP, mode="smart", simplicity=simplicity)
+        assert _spans(notes) == raw
+
+
+def test_smart_mode_lands_every_boundary_on_the_32nd_grid():
+    notes = _notes_from_ticks([(85, 205), (205, 325), (325, 445)])
+    quantize_notes(notes, TEMPO, STEP, mode="smart", simplicity=2.5)
+
+    spans = _spans(notes)
+    assert spans == [(60, 240), (240, 360), (360, 420)]
+    for start, end in spans:
+        assert start % 60 == 0
+        assert end % 60 == 0
+        assert end > start
+    for (_, prev_end), (start, _) in zip(spans, spans[1:]):
+        assert start >= prev_end
+
+
+def test_smart_mode_straightens_a_dragged_line():
+    # A line dragging progressively (up to 40 ticks late): every boundary
+    # lands on the engine's 32nd grid while the performed rhythm survives.
+    raw = [int(1380 + k * STEP + 40 * k / 7) for k in range(8)]
+    notes = _notes_from_ticks([(t, t + STEP) for t in raw])
+    quantize_notes(notes, TEMPO, STEP, mode="smart", simplicity=2.5)
+
+    spans = _spans(notes)
+    assert spans == [
+        (1380, 1440), (1560, 1620), (1680, 1740), (1800, 1860),
+        (1920, 1980), (2040, 2100), (2160, 2220), (2280, 2400),
     ]
+    for start, end in spans:
+        assert start % 60 == 0 and end % 60 == 0
+    for (_, prev_end), (start, _) in zip(spans, spans[1:]):
+        assert start >= prev_end
 
-    quantize_notes(notes, tempo=120.0, quantization_step=120, mode="bayes")
 
-    quantized_ticks = [(_ticks(note.onset, 120.0), _ticks(note.offset, 120.0)) for note in notes]
-    assert quantized_ticks == [(0, 120), (240, 360), (480, 600)]
+def test_smart_mode_inflates_micro_rests_to_grid_rests():
+    # Reference behavior: every rest becomes at least one 32nd grid column,
+    # so 15-tick gaps turn into full rests. Not "fixed" on purpose.
+    notes = _notes_from_ticks([(0, 225), (240, 465), (480, 705)])
+    quantize_notes(notes, TEMPO, STEP, mode="smart", simplicity=2.5)
+    assert _spans(notes) == [(0, 120), (240, 360), (480, 720)]
 
 
-def test_bayes_quantization_preserves_repeated_short_note_pattern():
-    notes = [
-        _note_from_ticks(0, 110, lyric="la"),
-        _note_from_ticks(125, 235, pitch=62.0, lyric="li"),
-        _note_from_ticks(250, 420, pitch=64.0, lyric="lu"),
+def test_smart_mode_preserves_authentic_rests():
+    notes = _notes_from_ticks([(0, 310), (480, 725), (960, 1090)])
+    quantize_notes(notes, TEMPO, STEP, mode="smart", simplicity=2.5)
+
+    spans = _spans(notes)
+    assert spans == [(0, 240), (480, 720), (960, 1080)]
+    for (_, prev_end), (start, _) in zip(spans, spans[1:]):
+        assert start > prev_end  # the rests survive
+
+
+def test_smart_mode_ignores_the_grid_step_choice():
+    # The engine's grid is its own fixed 32nd note; the user's step value
+    # only toggles quantization on/off.
+    a = _notes_from_ticks([(37, 880), (1415, 2010)])
+    quantize_notes(a, TEMPO, 480, mode="smart", simplicity=2.5)
+    b = _notes_from_ticks([(37, 880), (1415, 2010)])
+    quantize_notes(b, TEMPO, 60, mode="smart", simplicity=2.5)
+    assert _spans(a) == _spans(b) == [(60, 960), (1920, 2040)]
+
+
+def test_smart_mode_simplicity_controls_aggressiveness():
+    # The reference demo phrase: conservative barely moves durations, higher
+    # simplicity pulls the same material onto stronger positions.
+    phrase = [
+        (0 * 480 + 37, 2 * 480 - 80),
+        (2 * 480 + 65, 3 * 480 + 40),
+        (3 * 480 - 25, 4 * 480 + 90),
+        (4 * 480 + 120, 6 * 480 - 60),
+        (6 * 480 + 30, 7 * 480 + 15),
+        (7 * 480 - 70, 9 * 480 + 150),
+        (9 * 480 + 55, 10 * 480 - 30),
+        (10 * 480 + 95, 12 * 480 - 110),
     ]
-
-    quantize_notes(notes, tempo=120.0, quantization_step=120, mode="bayes")
-
-    durations = [_ticks(note.offset - note.onset, 120.0) for note in notes]
-    assert durations == [120, 120, 120]
-
-
-def test_bayes_quantization_keeps_consistent_phrase_phase_without_overstretching():
-    notes = [
-        _note_from_ticks(85, 205, lyric="la"),
-        _note_from_ticks(205, 325, pitch=62.0, lyric="li"),
-        _note_from_ticks(325, 445, pitch=64.0, lyric="lu"),
-    ]
-
-    quantize_notes(notes, tempo=120.0, quantization_step=120, mode="bayes")
-
-    quantized_ticks = [(_ticks(note.onset, 120.0), _ticks(note.offset, 120.0)) for note in notes]
-    assert quantized_ticks == [(120, 240), (240, 360), (360, 480)]
+    results = {}
+    for simplicity in (0.0, 2.5):
+        notes = _notes_from_ticks(phrase)
+        quantize_notes(notes, TEMPO, 60, mode="smart", simplicity=simplicity)
+        results[simplicity] = _spans(notes)
+        for start, end in results[simplicity]:
+            assert start % 60 == 0 and end % 60 == 0
+    assert results[0.0] != results[2.5]
+    assert results[0.0][-1] == (5040, 5640)
+    assert results[2.5][-1] == (5280, 5640)
 
 
-def test_bayes_quantization_allows_sv_style_half_grid_grace_notes():
-    notes = [_note_from_ticks(62401, 62413, lyric="pang")]
-
-    quantize_notes(notes, tempo=120.0, quantization_step=120, mode="bayes")
-
-    quantized_ticks = [(_ticks(note.onset, 120.0), _ticks(note.offset, 120.0)) for note in notes]
-    assert quantized_ticks == [(62400, 62460)]
-
-
-def test_bayes_quantization_allows_full_grid_start_shift():
-    notes = [
-        _note_from_ticks(142313, 142464, lyric="he"),
-        _note_from_ticks(142464, 142776, pitch=62.0, lyric="ran"),
-    ]
-
-    quantize_notes(notes, tempo=120.0, quantization_step=120, mode="bayes")
-
-    quantized_ticks = [(_ticks(note.onset, 120.0), _ticks(note.offset, 120.0)) for note in notes]
-    assert quantized_ticks == [(142320, 142560), (142560, 142800)]
+def test_smart_mode_absorbs_small_stacked_overlaps():
+    # Reference behavior: the ±16-column band lets the engine squeeze small
+    # overlaps onto the grid instead of failing.
+    notes = _notes_from_ticks([(0, 240), (0, 240), (0, 240)])
+    quantize_notes(notes, TEMPO, STEP, mode="smart", simplicity=2.5)
+    assert _spans(notes) == [(0, 120), (120, 180), (180, 240)]
 
 
-def test_bayes_quantization_prefers_sv_midpoint_duration_prior():
-    notes = [_note_from_ticks(8166, 8480, lyric="la")]
+def test_smart_mode_leaves_notes_unchanged_when_chain_is_infeasible(caplog):
+    # A note fully containing a later one collapses the chain span; the
+    # engine reports failure and the notes stay exactly as sung — the
+    # upstream "left unchanged" semantics, intentionally not "fixed".
+    notes = _notes_from_ticks([(0, 1920), (60, 120)])
+    before = [(n.onset, n.offset) for n in notes]
+    with caplog.at_level(logging.WARNING):
+        quantize_notes(notes, TEMPO, STEP, mode="smart", simplicity=2.5)
 
-    quantize_notes(notes, tempo=120.0, quantization_step=120, mode="bayes")
-
-    quantized_ticks = [(_ticks(note.onset, 120.0), _ticks(note.offset, 120.0)) for note in notes]
-    assert quantized_ticks == [(8160, 8400)]
+    assert any("left notes unchanged" in r.message for r in caplog.records)
+    assert [(n.onset, n.offset) for n in notes] == before
 
 
-def test_bayes_quantization_pulls_back_consistently_late_phrase():
-    spans = [
-        (16635, 17127),
-        (17127, 17598),
-        (17598, 17684),
-        (17684, 17823),
-        (17823, 18076),
-        (18076, 18719),
-    ]
-    notes = [_note_from_ticks(start, end, pitch=60.0 + i, lyric="la") for i, (start, end) in enumerate(spans)]
-
-    quantize_notes(notes, tempo=120.0, quantization_step=120, mode="bayes")
-
-    quantized_ticks = [(_ticks(note.onset, 120.0), _ticks(note.offset, 120.0)) for note in notes]
-    assert quantized_ticks == [
-        (16560, 17040),
-        (17040, 17520),
-        (17520, 17640),
-        (17640, 17760),
-        (17760, 18000),
-        (18000, 18720),
-    ]
+def test_smart_mode_leaves_degenerate_spans_unchanged():
+    # A single note shorter than one grid column cannot form a chain.
+    notes = _notes_from_ticks([(62401, 62413)])
+    quantize_notes(notes, TEMPO, STEP, mode="smart", simplicity=2.5)
+    assert _spans(notes) == [(62401, 62413)]

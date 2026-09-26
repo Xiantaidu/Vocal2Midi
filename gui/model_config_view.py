@@ -2,6 +2,7 @@
 
 import pathlib
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFileDialog
 
 from qfluentwidgets import (
@@ -33,6 +34,10 @@ ASR_ENGINE_ROWS = [
 
 
 class ModelConfigInterface(ScrollArea):
+    # Emitted when the user switches the Chinese ASR engine; the auto lyric
+    # page listens to re-evaluate its pinyin output lock.
+    chinese_asr_engine_changed = Signal(str)
+
     def __init__(self, settings, project_root, parent=None):
         super().__init__(parent=parent)
         self.settings = settings
@@ -92,6 +97,30 @@ class ModelConfigInterface(ScrollArea):
         for fn in self._tr_bindings:
             fn()
 
+    # ── read-only accessors for other pages ─────────────────────────
+    # Other pages read model paths and engine choices through these instead
+    # of reaching into the row widgets directly.
+    def model_path(self, settings_key: str) -> str:
+        edit = getattr(self, f"{settings_key}_edit", None)
+        return edit.text() if edit is not None else ""
+
+    def chinese_asr_engine(self) -> str:
+        return self._engine_choice("chinese_asr_engine", "qwen")
+
+    def japanese_asr_engine(self) -> str:
+        return self._engine_choice("japanese_asr_engine", "romaji")
+
+    def _engine_choice(self, settings_key: str, fallback: str) -> str:
+        combo = getattr(self, f"{settings_key}_combo", None)
+        if combo is None:
+            return fallback
+        return combo.currentData() or fallback
+
+    def _on_engine_choice_changed(self, settings_key: str, value):
+        self.settings.setValue(settings_key, value)
+        if settings_key == "chinese_asr_engine":
+            self.chinese_asr_engine_changed.emit(str(value))
+
     def _add_asr_choice_row(self, parent_layout, label_key: str, settings_key: str, choices: list, default: str):
         row = QHBoxLayout()
         label = BodyLabel(self)
@@ -106,7 +135,7 @@ class ModelConfigInterface(ScrollArea):
         combo.setCurrentIndex(max(0, index))
         self.settings.setValue(settings_key, combo.currentData())
         combo.currentIndexChanged.connect(
-            lambda _i, k=settings_key, c=combo: self.settings.setValue(k, c.currentData())
+            lambda _i, k=settings_key, c=combo: self._on_engine_choice_changed(k, c.currentData())
         )
         setattr(self, f"{settings_key}_combo", combo)
         row.addWidget(combo, 1)

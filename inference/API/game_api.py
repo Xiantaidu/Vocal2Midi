@@ -13,6 +13,9 @@ if str(ROOT_DIR) not in sys.path:
 from inference.io.note_io import NoteInfo, pad_1d_arrays
 from inference.game.alignment_utils import align_notes_to_words
 from inference.game.onnx_runtime import GameOnnxModel
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 _SINGABLE_JA_PHONEMES = {"a", "i", "u", "e", "o"}
@@ -197,7 +200,7 @@ def load_game_model(model_dir: str, device=None):
     """
     Loads the GAME ONNX model suite.
     """
-    print(f"Loading GAME ONNX model from '{model_dir}'...")
+    logger.info(f"Loading GAME ONNX model from '{model_dir}'...")
     try:
         model = GameOnnxModel(pathlib.Path(model_dir), requested_device=device)
     except Exception as e:
@@ -206,7 +209,7 @@ def load_game_model(model_dir: str, device=None):
             "Please ensure the GAME ONNX model directory and its contents are correct."
         )
 
-    print(f"GAME ONNX model loaded successfully with provider: {model.provider_name}.")
+    logger.info(f"GAME ONNX model loaded successfully with provider: {model.provider_name}.")
     return model
 
 
@@ -344,7 +347,7 @@ def extract_pitches_and_align(
     # syllable positions comes from the per-syllable chunk lyrics instead
     # (see _extract_vowel_boundaries_english).
     sustain_lyric = "-"
-    print("[Hybrid Pipeline] Extracting pitches with GAME ONNX...")
+    logger.info("[Hybrid Pipeline] Extracting pitches with GAME ONNX...")
 
     all_notes = []
     batch_infos = []
@@ -355,12 +358,12 @@ def extract_pitches_and_align(
             raise InterruptedError("GAME task cancelled")
         stem = f"chunk_{chunk_idx}"
         if stem not in pred_dict:
-            print(f"[Warning] {stem}: missing HFA prediction; skipping lyric-aligned GAME for this chunk.")
+            logger.warning(f"[Warning] {stem}: missing HFA prediction; skipping lyric-aligned GAME for this chunk.")
             continue
 
         _, _, result_word = pred_dict[stem]
         if not result_word:
-            print(f"[Warning] {stem}: empty HFA word result; skipping lyric-aligned GAME for this chunk.")
+            logger.warning(f"[Warning] {stem}: empty HFA word result; skipping lyric-aligned GAME for this chunk.")
             continue
 
         word_durs, word_vuvs, lyrics = extract_vowel_boundaries(
@@ -369,7 +372,7 @@ def extract_pitches_and_align(
             language=language,
         )
         if not word_durs:
-            print(f"[Warning] {stem}: no usable word durations; skipping lyric-aligned GAME for this chunk.")
+            logger.warning(f"[Warning] {stem}: no usable word durations; skipping lyric-aligned GAME for this chunk.")
             continue
 
         batch_infos.append(
@@ -407,8 +410,7 @@ def extract_pitches_and_align(
                 language=language,
             )
         except Exception:
-            print("Error during GAME ONNX inference batch:")
-            traceback.print_exc()
+            logger.error("Error during GAME ONNX inference batch:", exc_info=True)
             raise
 
         for result, info in zip(batch_results, batch):
@@ -418,7 +420,7 @@ def extract_pitches_and_align(
             valid_presence = presence[durations > 0]
             valid_scores = scores[durations > 0]
             if not note_dur:
-                print(f"[Warning] GAME returned no note durations for chunk at {info['offset']:.2f}s; skipping.")
+                logger.warning(f"[Warning] GAME returned no note durations for chunk at {info['offset']:.2f}s; skipping.")
                 continue
 
             note_seq = [
@@ -493,7 +495,7 @@ def extract_pitches_only(
     """
     Extract pitches using the GAME ONNX runtime without lyric alignment.
     """
-    print("[Hybrid Pipeline] Extracting pitches with GAME ONNX (no-lyrics mode)...")
+    logger.info("[Hybrid Pipeline] Extracting pitches with GAME ONNX (no-lyrics mode)...")
 
     all_notes = []
     batch_infos = []
@@ -530,8 +532,7 @@ def extract_pitches_only(
                 language=language,
             )
         except Exception:
-            print("Error during GAME ONNX inference batch (no-lyrics):")
-            traceback.print_exc()
+            logger.error("Error during GAME ONNX inference batch (no-lyrics):", exc_info=True)
             raise
 
         for result, info in zip(batch_results, batch):
@@ -541,7 +542,7 @@ def extract_pitches_only(
             note_presence = presence[valid].tolist()
             note_scores = scores[valid].tolist()
             if not note_dur:
-                print(f"[Warning] GAME returned no note durations for chunk at {info['offset']:.2f}s; skipping.")
+                logger.warning(f"[Warning] GAME returned no note durations for chunk at {info['offset']:.2f}s; skipping.")
                 continue
 
             current_onset = info["offset"]

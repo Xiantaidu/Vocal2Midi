@@ -31,6 +31,13 @@ and embedded materials may carry their own copyright notices, license terms,
 and attribution requirements. Those notices remain applicable to the
 corresponding materials.
 
+FFmpeg: this repository bundles an FFmpeg command-line binary (ffmpeg.exe at
+the repository root) used for audio decoding. FFmpeg builds are distributed
+under LGPL-2.1-or-later or, when configured with --enable-gpl components,
+GPL licenses. The license that applies to a given binary depends on how that
+build was configured; verify the build you distribute and keep its required
+attribution and source-offer obligations.
+
 See ACKNOWLEDGEMENTS.md and any embedded license or notice files in vendored
 subdirectories for further details.
 

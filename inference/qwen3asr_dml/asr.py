@@ -14,6 +14,9 @@ from . import llama
 from .asr_worker import asr_helper_worker_proc
 from .schema import ASREngineConfig, DecodeResult, MsgType, StreamingMessage, TranscribeResult
 from .utils import normalize_language_name, validate_language
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass
@@ -29,7 +32,7 @@ class QwenASREngine:
         self.config = config
         self.verbose = config.verbose
         if self.verbose:
-            print(f"--- [QwenASR] Initializing engine (DML: {config.use_dml}) ---")
+            logger.info(f"--- [QwenASR] Initializing engine (DML: {config.use_dml}) ---")
 
         llm_gguf = str(Path(config.model_dir) / config.llm_fn)
         self.to_worker_q = mp.Queue()
@@ -51,7 +54,7 @@ class QwenASREngine:
         self.encoder_runtime = msg.data or {}
         self.decoder_backend = getattr(self.model, "backend", "unknown")
         if msg.msg_type == MsgType.MSG_READY and self.verbose:
-            print("--- [QwenASR] Worker is ready ---")
+            logger.info("--- [QwenASR] Worker is ready ---")
 
         self.ID_IM_START = self.model.token_to_id("<|im_start|>")
         self.ID_IM_END = self.model.token_to_id("<|im_end|>")
@@ -65,7 +68,7 @@ class QwenASREngine:
             self.helper_proc.join()
             self.helper_proc = None
         if self.verbose:
-            print("--- [QwenASR] Engine closed ---")
+            logger.info("--- [QwenASR] Engine closed ---")
 
     def _build_prompt_embd(
         self,
@@ -183,23 +186,23 @@ class QwenASREngine:
     ) -> DecodeResult:
         result = self._decode(full_embd, rollback_num, temperature)
         if result.is_aborted and self.verbose:
-            print("\n\n[!] decode stopped by repetition safeguard.\n")
+            logger.warning("\n\n[!] decode stopped by repetition safeguard.\n")
         return result
 
     def _print_stats(self, stats: dict, audio_duration: float, total_time: float) -> None:
         rtf = total_time / audio_duration if audio_duration > 0 else 0.0
         pre_speed = stats["prefill_tokens"] / stats["prefill_time"] if stats["prefill_time"] > 0 else 0.0
         gen_speed = stats["decode_tokens"] / stats["decode_time"] if stats["decode_time"] > 0 else 0.0
-        print("\n\nPerformance:")
-        print(f"  RTF            : {rtf:.3f}")
-        print(f"  Audio duration : {audio_duration:.2f} s")
-        print(f"  Total time     : {total_time:.2f} s")
-        print(f"  Encode wait    : {stats['wait_time']:.2f} s")
-        print(
+        logger.info("\n\nPerformance:")
+        logger.info(f"  RTF            : {rtf:.3f}")
+        logger.info(f"  Audio duration : {audio_duration:.2f} s")
+        logger.info(f"  Total time     : {total_time:.2f} s")
+        logger.info(f"  Encode wait    : {stats['wait_time']:.2f} s")
+        logger.info(
             f"  LLM prefill    : {stats['prefill_time']:.3f} s "
             f"({stats['prefill_tokens']} tokens, {pre_speed:.1f} tok/s)"
         )
-        print(
+        logger.info(
             f"  LLM decode     : {stats['decode_time']:.3f} s "
             f"({stats['decode_tokens']} tokens, {gen_speed:.1f} tok/s)"
         )

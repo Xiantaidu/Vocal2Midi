@@ -7,6 +7,9 @@ import onnxruntime as ort
 import scipy.signal
 
 from inference.device_utils import resolve_onnx_providers
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class FastWhisperMel:
@@ -129,9 +132,9 @@ class QwenAudioEncoder:
         _, providers = resolve_onnx_providers(requested_device, label="Qwen3 Encoder ONNX")
 
         if self.verbose:
-            print(f"--- [Encoder] Loading split ONNX models (DML: {use_dml}) ---")
-            print(f"    Frontend: {os.path.basename(frontend_path)}")
-            print(f"    Backend:  {os.path.basename(backend_path)}")
+            logger.info(f"--- [Encoder] Loading split ONNX models (DML: {use_dml}) ---")
+            logger.info(f"    Frontend: {os.path.basename(frontend_path)}")
+            logger.info(f"    Backend:  {os.path.basename(backend_path)}")
 
         self.sess_fe = ort.InferenceSession(frontend_path, sess_options=sess_opts, providers=providers)
         self.sess_be = ort.InferenceSession(backend_path, sess_options=sess_opts, providers=providers)
@@ -152,11 +155,11 @@ class QwenAudioEncoder:
 
         if warmup_sec > 0:
             if self.verbose:
-                print(f"--- [Encoder] Warming up with {warmup_sec:.1f}s of random audio ---")
+                logger.info(f"--- [Encoder] Warming up with {warmup_sec:.1f}s of random audio ---")
             dummy_wav = np.random.randn(int(16000 * warmup_sec)).astype(np.float32)
             _ = self.encode(dummy_wav)
             if self.verbose:
-                print("--- [Encoder] Warmup complete ---")
+                logger.info("--- [Encoder] Warmup complete ---")
 
     def _prepare_mel(self, audio: np.ndarray) -> tuple[list[np.ndarray], int]:
         mel = self.mel_extractor(audio, dtype=self.input_dtype)

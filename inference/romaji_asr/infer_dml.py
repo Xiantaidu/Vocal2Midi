@@ -5,6 +5,9 @@ from pathlib import Path
 from .common import chunked
 from .runtime import RomajiASROnnxModel
 from inference.device_utils import default_runtime_device
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def load_manifest(manifest_path: str) -> list[dict]:
@@ -35,23 +38,23 @@ def main():
         verbose=True,
     )
 
-    print(f"ONNX Runtime providers: {model.session.get_providers()}")
+    logger.info(f"ONNX Runtime providers: {model.session.get_providers()}")
 
     if args.audio:
         pred = model.transcribe([args.audio], batch_size=1)[0]
-        print(f"Audio: {args.audio}")
-        print(f"Predicted: {pred['text']}")
+        logger.info(f"Audio: {args.audio}")
+        logger.info(f"Predicted: {pred['text']}")
 
     if args.manifest:
         items = load_manifest(args.manifest)
         for batch_items in chunked(items, args.batch_size):
             preds = model.transcribe([item["audio"] for item in batch_items], batch_size=len(batch_items))
             for item, pred in zip(batch_items, preds):
-                print(f"Audio: {item['audio']}")
+                logger.info(f"Audio: {item['audio']}")
                 if "phones" in item:
-                    print(f"Reference: {' '.join(item['phones'])}")
-                print(f"Predicted: {pred['text']}")
-                print("-" * 50)
+                    logger.info(f"Reference: {' '.join(item['phones'])}")
+                logger.info(f"Predicted: {pred['text']}")
+                logger.info("-" * 50)
 
 
 if __name__ == "__main__":

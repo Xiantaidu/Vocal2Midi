@@ -1,5 +1,6 @@
 import os
 
+from inference.API.asr_api import AsrSubprocessSession
 from inference.pipeline.auto_lyric_hybrid import auto_lyric_hybrid_pipeline
 from application.config import PipelineConfig
 from application.exceptions import (
@@ -7,6 +8,17 @@ from application.exceptions import (
     ModelNotFoundError,
     CancellationError,
 )
+
+
+def open_asr_session() -> AsrSubprocessSession:
+    """Open a reusable Qwen ASR subprocess session for a batch of jobs.
+
+    The worker process (and the multi-GB model inside it) is spawned lazily
+    on first use and shared by every job that receives the session via
+    ``PipelineConfig.asr_session``; ``close()`` releases it. Jobs that never
+    reach the Qwen text-ASR stage never spawn a worker.
+    """
+    return AsrSubprocessSession()
 
 
 def _uses_pinyin_asr(cfg: PipelineConfig) -> bool:

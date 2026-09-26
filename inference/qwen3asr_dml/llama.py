@@ -19,6 +19,9 @@ from inference.device_utils import (
     format_gib,
     select_preferred_gpu_adapter,
 )
+import logging
+
+logger = logging.getLogger(__name__)
 
 # =========================================================================
 # Configuration
@@ -934,7 +937,7 @@ def python_log_callback(level, message, user_data):
             logger.info(f"[llama.cpp] {msg_str}")
     except Exception as e:
         # Prevent callback failures from crashing the process.
-        print(f"日志回调出错: {e}")
+        logger.info(f"日志回调出错: {e}")
 
 def configure_logging(quiet=False):
     """Configure the llama.cpp log callback."""

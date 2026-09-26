@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 import onnxruntime as ort
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 RUNTIME_DEVICE_CHOICES = ("dml", "cpu", "cuda", "metal")
@@ -199,22 +202,22 @@ def resolve_onnx_providers(device: str | None, *, label: str = "ONNX") -> tuple[
     if normalized == "cpu":
         return "cpu", ["CPUExecutionProvider"]
     if normalized == "metal":
-        print(f"[{label}] Metal/CoreML is not enabled for this ONNX stage; using CPUExecutionProvider.")
+        logger.info(f"[{label}] Metal/CoreML is not enabled for this ONNX stage; using CPUExecutionProvider.")
         return "cpu", ["CPUExecutionProvider"]
     if "DmlExecutionProvider" in available:
         adapter = _select_preferred_dml_adapter()
         if adapter is not None:
-            print(
+            logger.info(
                 f"[{label}] Using DirectML {describe_gpu_adapter(adapter)}."
             )
             return "dml", [("DmlExecutionProvider", {"device_id": str(adapter.index)}), "CPUExecutionProvider"]
-        print(
+        logger.info(
             f"[{label}] No DirectML adapter with at least "
             f"{format_gib(MIN_GPU_DEDICATED_VRAM_BYTES)} dedicated VRAM was found; "
             "falling back to CPUExecutionProvider."
         )
     else:
-        print(f"[{label}] DmlExecutionProvider unavailable; falling back to CPUExecutionProvider.")
+        logger.info(f"[{label}] DmlExecutionProvider unavailable; falling back to CPUExecutionProvider.")
     return "cpu", ["CPUExecutionProvider"]
 
 

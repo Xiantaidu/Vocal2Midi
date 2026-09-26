@@ -1,9 +1,7 @@
-import html
 import os
 import pathlib
-import re
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFileDialog, QAbstractItemView
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFileDialog
 from PySide6.QtCore import Qt
 
 from qfluentwidgets import (
@@ -17,99 +15,35 @@ from qfluentwidgets import (
     ComboBox,
     DoubleSpinBox,
     TextEdit,
-    ListWidget,
     FluentIcon,
     SubtitleLabel,
     SwitchButton,
     InfoBar,
     InfoBarPosition,
     IndeterminateProgressRing,
-    isDarkTheme,
-    qconfig,
 )
 
 from application.config import PipelineConfig, validate_slice_bounds
+from gui.audio_file_list import AudioFileList
 from gui.fluent_utils import t0_nstep_to_ts
 from gui.fluent_worker import WorkerThread, HYBRID_AVAILABLE
 from gui.i18n import tr
+from gui.log_terminal import LogTerminal
+from gui.option_tables import (
+    DEFAULT_LYRIC_OUTPUT,
+    EXPORT_FORMAT_CHOICES,
+    LYRIC_OUTPUT_BY_LANGUAGE,
+    QUANT_MODE_CHOICES,
+    QUANT_STEP_CHOICES,
+    SLICE_METHOD_CHOICES,
+    TARGET_LANGUAGE_CHOICES,
+    fill_combo,
+)
 from gui.settings_utils import default_output_dir
 from inference.device_utils import VISIBLE_RUNTIME_DEVICE_CHOICES, normalize_runtime_device
 
-# value -> backend value; the display text comes from tr() at build/refresh time
-SLICE_METHOD_CHOICES = [
-    ("智能切片", "slice_smart"),
-    ("启发式切片", "slice_heuristic"),
-    ("默认切片", "slice_default"),
-    ("网格搜索切片", "slice_grid"),
-]
-TARGET_LANGUAGE_CHOICES = [
-    ("zh", "lang_name_zh"),
-    ("ja", "lang_name_ja"),
-    ("en", "lang_name_en"),
-]
-EXPORT_FORMAT_CHOICES = [
-    ("mid", "MIDI"),
-    ("ustx", "USTX"),
-    ("vsqx", "VSQX"),
-]
-QUANT_STEP_CHOICES = [
-    (0, "quant_off"),
-    (480, "quant_1_4"),
-    (240, "quant_1_8"),
-    (120, "quant_1_16"),
-    (60, "quant_1_32"),
-    (30, "quant_1_64"),
-]
-QUANT_MODE_CHOICES = [
-    ("repair", "quant_repair"),
-    ("bayes", "quant_bayes"),
-    ("dp", "quant_dp"),
-    ("simple", "quant_simple"),
-]
-LYRIC_OUTPUT_BY_LANGUAGE = {
-    "zh": [("pinyin", "opt_pinyin"), ("hanzi", "opt_hanzi")],
-    "ja": [("romaji", "opt_romaji"), ("kana", "opt_kana")],
-    "en": [("word", "opt_word")],
-}
-DEFAULT_LYRIC_OUTPUT = {"zh": "hanzi", "ja": "romaji", "en": "word"}
-# Saved preferences used to store display texts; migrate them to values.
-LEGACY_LYRIC_OUTPUT_VALUES = {"拼音": "pinyin", "汉字": "hanzi", "罗马音": "romaji", "假名": "kana", "单词": "word"}
-# Dialog round-trips display texts for these; map them back to backend values.
-LEGACY_LANGUAGE_VALUES = {"中文-拼音": "zh-pinyin"}
-LEGACY_QUANT_STEP_VALUES = {"不量化": 0, "1/4 音符 (1拍)": 480, "1/8 音符 (1/2拍)": 240, "1/16 音符 (1/4拍)": 120, "1/32 音符 (1/8拍)": 60, "1/64 音符 (1/16拍)": 30}
-LEGACY_QUANT_MODE_VALUES = {"节奏修复": "repair", "贝叶斯": "bayes", "DP": "dp", "简单": "simple"}
-
 
 class AutoLyricInterface(ScrollArea):
-    AUDIO_EXTENSIONS = {".wav", ".m4a", ".flac", ".mp3", ".ogg", ".opus", ".wma", ".webm", ".aif", ".aiff"}
-
-    # key: True for the dark theme; the light palette uses darker shades that
-    # keep sufficient contrast on a light background
-    _LOG_PALETTES = {
-        True: {
-            "bg": "#161b22",
-            "border": "rgba(255, 255, 255, 0.08)",
-            "text": "#d4d4d4",
-            "error": "#f14c4c",
-            "warn": "#e5c07b",
-            "success": "#98c379",
-        },
-        False: {
-            "bg": "#ffffff",
-            "border": "rgba(0, 0, 0, 0.10)",
-            "text": "#24292f",
-            "error": "#cf222e",
-            "warn": "#9a6700",
-            "success": "#1a7f37",
-        },
-    }
-
-    _LOG_COLOR_RULES = [
-        ("error", re.compile(r"错误|error|traceback|failed|exception|失败", re.I)),
-        ("warn", re.compile(r"警告|warning|取消|停止|跳过|重试|retry", re.I)),
-        ("success", re.compile(r"成功|完成|finished|done", re.I)),
-    ]
-
     def __init__(self, global_settings, model_config, parent=None):
         super().__init__(parent=parent)
         self.global_settings = global_settings
@@ -151,16 +85,16 @@ class AutoLyricInterface(ScrollArea):
         header_layout.addWidget(btn_clear)
         audio_layout.addLayout(header_layout)
 
-        self.audio_list = ListWidget(self)
-        self.audio_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.audio_list = AudioFileList(self)
         self.audio_list.setMaximumHeight(40)
         audio_layout.addWidget(self.audio_list, 1)  # stretch so batch mode can grow the list
         self._audio_card_stretch = audio_layout
         self.vBoxLayout.addWidget(audio_card)
         self.setAcceptDrops(True)
-        # per-file settings in batch mode: filename -> dict of overrides
-        self._file_settings: dict[str, dict] = {}
         self._is_running = False
+        self.audio_list.filesAdded.connect(lambda n: self.log_msg(tr("files_added", n=n)))
+        self.audio_list.filesChanged.connect(self._update_batch_mode)
+        self.audio_list.settingsRequested.connect(self._open_file_settings)
         self._audio_card = audio_card
         self._combo_card = None  # set after cards are built
         self._output_card = None
@@ -185,13 +119,13 @@ class AutoLyricInterface(ScrollArea):
 
         combo_row1 = QHBoxLayout()
         self.slicing_combo = ComboBox(self)
-        self._fill_combo(self.slicing_combo, SLICE_METHOD_CHOICES)
-        self._bind_tr(lambda: self._fill_combo(self.slicing_combo, SLICE_METHOD_CHOICES, keep_value=True))
+        fill_combo(self.slicing_combo, SLICE_METHOD_CHOICES)
+        self._bind_tr(lambda: fill_combo(self.slicing_combo, SLICE_METHOD_CHOICES, keep_value=True))
         self._add_flow_pair(combo_row1, "slicing_method", self.slicing_combo)
         combo_row1.addSpacing(28)
         self.lang_combo = ComboBox(self)
-        self._fill_combo(self.lang_combo, TARGET_LANGUAGE_CHOICES)
-        self._bind_tr(lambda: self._fill_combo(self.lang_combo, TARGET_LANGUAGE_CHOICES, keep_value=True))
+        fill_combo(self.lang_combo, TARGET_LANGUAGE_CHOICES)
+        self._bind_tr(lambda: fill_combo(self.lang_combo, TARGET_LANGUAGE_CHOICES, keep_value=True))
         self.lang_combo.currentIndexChanged.connect(self.update_lyric_output_options)
         self._add_flow_pair(combo_row1, "target_lang", self.lang_combo)
         combo_row1.addSpacing(28)
@@ -221,7 +155,7 @@ class AutoLyricInterface(ScrollArea):
         self._add_flow_pair(combo_row2, "output_lyrics", self.cb_output_lyrics)
         combo_row2.addSpacing(28)
         self.export_format_combo = ComboBox(self)
-        self._fill_combo(self.export_format_combo, EXPORT_FORMAT_CHOICES)
+        fill_combo(self.export_format_combo, EXPORT_FORMAT_CHOICES)
         self.export_format_combo.setCurrentIndex(max(0, self.export_format_combo.findData(self._initial_export_format_value())))
         self.export_format_combo.currentIndexChanged.connect(self.on_export_format_changed)
         self._add_flow_pair(combo_row2, "export_format", self.export_format_combo)
@@ -252,14 +186,14 @@ class AutoLyricInterface(ScrollArea):
         self._add_flow_pair(opts_layout, "tempo_bpm", self.tempo_spin)
         opts_layout.addSpacing(28)
         self.quantize_combo = ComboBox(self)
-        self._fill_combo(self.quantize_combo, QUANT_STEP_CHOICES)
-        self._bind_tr(lambda: self._fill_combo(self.quantize_combo, QUANT_STEP_CHOICES, keep_value=True))
+        fill_combo(self.quantize_combo, QUANT_STEP_CHOICES)
+        self._bind_tr(lambda: fill_combo(self.quantize_combo, QUANT_STEP_CHOICES, keep_value=True))
         self.quantize_combo.setCurrentIndex(0)
         self._add_flow_pair(opts_layout, "quant_step", self.quantize_combo)
         opts_layout.addSpacing(28)
         self.quantize_mode_combo = ComboBox(self)
-        self._fill_combo(self.quantize_mode_combo, QUANT_MODE_CHOICES)
-        self._bind_tr(lambda: self._fill_combo(self.quantize_mode_combo, QUANT_MODE_CHOICES, keep_value=True))
+        fill_combo(self.quantize_mode_combo, QUANT_MODE_CHOICES)
+        self._bind_tr(lambda: fill_combo(self.quantize_mode_combo, QUANT_MODE_CHOICES, keep_value=True))
         self.quantize_mode_combo.setCurrentIndex(0)
         self._add_flow_pair(opts_layout, "quant_mode", self.quantize_mode_combo)
         opts_layout.addStretch(1)
@@ -305,16 +239,7 @@ class AutoLyricInterface(ScrollArea):
         action_layout.addWidget(self.run_status_label)
         self.vBoxLayout.addLayout(action_layout)
 
-        self.log_edit = TextEdit(self)
-        self.log_edit.setReadOnly(True)
-        self.log_edit.setMinimumHeight(150)
-        self.log_edit.setObjectName("logTerminal")
-        self._log_lines = []
-        self._apply_log_terminal_style()
-        # themeChangedFinished fires after qfluentwidgets reapplies its widget
-        # stylesheets; otherwise our terminal style gets overwritten by the
-        # library's TextEdit stylesheet
-        qconfig.themeChangedFinished.connect(self._on_log_theme_changed)
+        self.log_edit = LogTerminal(self)
         self.vBoxLayout.addWidget(self.log_edit)
 
         self.vBoxLayout.addStretch(1)
@@ -327,9 +252,9 @@ class AutoLyricInterface(ScrollArea):
         self.update_lyrics_visibility()
         self.update_lyric_output_options()
         # Switching the Chinese ASR engine re-evaluates the pinyin output lock.
-        zh_asr_combo = getattr(self.model_config, "chinese_asr_engine_combo", None)
-        if zh_asr_combo is not None:
-            zh_asr_combo.currentIndexChanged.connect(self.update_lyric_output_options)
+        self.model_config.chinese_asr_engine_changed.connect(
+            lambda _value: self.update_lyric_output_options()
+        )
         self._last_device = self.device_combo.currentText()  # baseline; don't wipe saved batches on startup
         self.on_export_format_changed()
         self._update_batch_mode()  # all widgets exist now
@@ -345,16 +270,7 @@ class AutoLyricInterface(ScrollArea):
 
     @staticmethod
     def _fill_combo(combo, choices: list[tuple], keep_value: bool = False):
-        current = combo.currentData() if keep_value else None
-        combo.blockSignals(True)
-        combo.clear()
-        for value, key in choices:
-            combo.addItem(tr(key), userData=value)
-        if current is not None:
-            index = combo.findData(current)
-            if index >= 0:
-                combo.setCurrentIndex(index)
-        combo.blockSignals(False)
+        fill_combo(combo, choices, keep_value=keep_value)
 
     def _add_flow_pair(self, row, label_key, widget, label=None):
         label = label or BodyLabel(self)
@@ -375,118 +291,17 @@ class AutoLyricInterface(ScrollArea):
     def dropEvent(self, event):
         paths = [
             url.toLocalFile() for url in event.mimeData().urls()
-            if url.isLocalFile() and pathlib.Path(url.toLocalFile()).suffix.lower() in self.AUDIO_EXTENSIONS
+            if url.isLocalFile() and pathlib.Path(url.toLocalFile()).suffix.lower() in AudioFileList.AUDIO_EXTENSIONS
         ]
         if paths:
             event.acceptProposedAction()
-            self.add_audio_paths(paths)
+            self.audio_list.add_paths(paths)
         else:
             event.ignore()
 
-    def add_audio_paths(self, paths):
-        existing = {self._list_item_path(self.audio_list.item(i)) for i in range(self.audio_list.count())}
-        added = 0
-        for path in paths:
-            path = str(path)
-            if pathlib.Path(path).suffix.lower() not in self.AUDIO_EXTENSIONS:
-                continue
-            if path in existing:
-                continue
-            self.audio_list.addItem(path)
-            self._attach_gear_button(path)
-            existing.add(path)
-            added += 1
-        if added:
-            self.log_msg(tr("files_added", n=added))
-            self._update_batch_mode()
-
-    def _attach_gear_button(self, path: str):
-        """Attach a gear button row on the given list item.
-
-        The item text is cleared because the row widget draws the file name
-        itself; leaving the text would paint over the widget.
-        """
-        from qfluentwidgets import TransparentToolButton
-
-        item = self.audio_list.item(self.audio_list.count() - 1)
-        if item is None or self._list_item_path(item) != path:
-            return
-        item.setText("")
-        item.setData(Qt.UserRole, path)
-
-        row = QWidget()
-        row_layout = QHBoxLayout(row)
-        row_layout.setContentsMargins(8, 0, 8, 0)
-        name_label = BodyLabel(path, row)
-        row_layout.addWidget(name_label)
-        row_layout.addStretch(1)
-        btn = TransparentToolButton(FluentIcon.SETTING, row)
-        btn.setToolTip(tr("file_settings"))
-        btn.setFixedSize(28, 28)
-        btn.clicked.connect(lambda checked, f=path: self._open_file_settings(f))
-        row_layout.addWidget(btn)
-        btn_del = TransparentToolButton(FluentIcon.DELETE, row)
-        btn_del.setToolTip(tr("clear_files"))
-        btn_del.setFixedSize(28, 28)
-        btn_del.clicked.connect(lambda checked, f=path, it=item: self._remove_audio_item(it, f))
-        row_layout.addWidget(btn_del)
-        from PySide6.QtCore import QSize
-
-        hint = row.sizeHint()
-        hint.setHeight(36)  # fixed row height; QWidget.sizeHint ignores setFixedHeight
-        item.setSizeHint(hint)
-        self.audio_list.setItemWidget(item, row)
-
-    def _remove_audio_item(self, item, path: str):
-        """Remove a single audio list row and its per-file settings."""
-        self._file_settings.pop(path, None)
-        row_widget = self.audio_list.itemWidget(item)
-        if row_widget is not None:
-            self.audio_list.removeItemWidget(item)
-        self.audio_list.takeItem(self.audio_list.row(item))
-        self._update_batch_mode()
-
     # ── log terminal ────────────────────────────────────────────────
-    def _log_palette(self):
-        return self._LOG_PALETTES[isDarkTheme()]
-
-    def _apply_log_terminal_style(self):
-        p = self._log_palette()
-        self.log_edit.setStyleSheet(
-            "#logTerminal{"
-            f"background-color: {p['bg']};"
-            f"color: {p['text']};"
-            f"border: 1px solid {p['border']};"
-            "border-radius: 6px;"
-            "padding: 6px;"
-            "font-family: 'Cascadia Mono', 'Consolas', 'Courier New', monospace;"
-            "font-size: 12px;"
-            "}"
-        )
-
-    def _line_html(self, msg):
-        p = self._log_palette()
-        kind = "text"
-        for rule_kind, pattern in self._LOG_COLOR_RULES:
-            if pattern.search(msg):
-                kind = rule_kind
-                break
-        text = html.escape(msg).replace("\n", "<br>")
-        return f'<span style="color:{p[kind]};">{text}</span>'
-
-    def _on_log_theme_changed(self):
-        # rebuild every log line on theme change so stale colors never sit on
-        # the new background
-        self._apply_log_terminal_style()
-        self.log_edit.setHtml("<br>".join(self._line_html(m) for m in self._log_lines))
-        scrollbar = self.log_edit.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
-
     def log_msg(self, msg):
-        self._log_lines.append(msg)
-        self.log_edit.append(self._line_html(msg))
-        scrollbar = self.log_edit.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        self.log_edit.log(msg)
 
     def _show_error(self, title: str, content: str):
         self.log_msg(f"{tr('error_prefix')}: {content}")
@@ -512,8 +327,7 @@ class AutoLyricInterface(ScrollArea):
         if device == self._last_device:
             return
         self._last_device = device
-        self.global_settings.batch_spin.setValue(1)
-        self.global_settings.asr_batch_spin.setValue(2)
+        self.global_settings.apply_batch_defaults(batch=1, asr_batch=2)
 
     def update_lyrics_visibility(self):
         enabled = self.cb_match_lyrics.isChecked()
@@ -527,17 +341,11 @@ class AutoLyricInterface(ScrollArea):
     def _selected_language(self) -> str:
         return self.lang_combo.currentData() or "zh"
 
-    def _asr_engine(self, settings_key: str, fallback: str) -> str:
-        combo = getattr(self.model_config, f"{settings_key}_combo", None)
-        if combo is None:
-            return fallback
-        return combo.currentData() or fallback
-
     def _chinese_asr_engine(self) -> str:
-        return self._asr_engine("chinese_asr_engine", "qwen")
+        return self.model_config.chinese_asr_engine()
 
     def _japanese_asr_engine(self) -> str:
-        return self._asr_engine("japanese_asr_engine", "romaji")
+        return self.model_config.japanese_asr_engine()
 
     def _pinyin_output_locked(self) -> bool:
         """PinyinASR can only emit pinyin, so hanzi output is unavailable."""
@@ -599,7 +407,6 @@ class AutoLyricInterface(ScrollArea):
             self._lyric_output_setting_key(language),
             DEFAULT_LYRIC_OUTPUT.get(language, "hanzi"),
         ))
-        saved_value = LEGACY_LYRIC_OUTPUT_VALUES.get(saved_value, saved_value)
 
         self._fill_combo(self.lyric_output_combo, choices)
         values = [value for value, _ in choices]
@@ -624,21 +431,12 @@ class AutoLyricInterface(ScrollArea):
             self, tr("pick_files_dialog"), "",
             "Audio Files (*.wav *.m4a *.flac *.mp3 *.ogg *.opus *.wma *.webm *.aif *.aiff)"
         )
-        self.add_audio_paths(files)
+        self.audio_list.add_paths(files)
 
     def clear_audio_files(self):
-        self.audio_list.clear()
-        self._file_settings.clear()
-        self._update_batch_mode()
+        self.audio_list.clear_all()
 
     # ── batch mode ──────────────────────────────────────────────────
-    def _list_item_path(self, item) -> str:
-        """Path of a list item (stored in UserRole; the display text is empty)."""
-        return str(item.data(Qt.UserRole) or item.text())
-
-    def _selected_audio_files(self) -> list[str]:
-        return [self._list_item_path(item) for item in self.audio_list.selectedItems()]
-
     def _update_batch_mode(self):
         """Single file keeps the panels; more than one file in the list enters
         batch mode: panels hide and the list grows to fill the freed space."""
@@ -654,7 +452,11 @@ class AutoLyricInterface(ScrollArea):
             self.run_status_label.setText("")
 
     def _current_base_values(self) -> dict:
-        """Snapshot every parameter the main UI currently controls."""
+        """Snapshot every parameter the main UI currently controls.
+
+        All entries are backend values; the per-file dialog round-trips them
+        without any display-text conversion.
+        """
         return {
             "slicing_method": self.slicing_combo.currentData(),
             "language": self.lang_combo.currentData() or "zh",
@@ -662,44 +464,38 @@ class AutoLyricInterface(ScrollArea):
             "device": self.device_combo.currentText(),
             "match_lyrics": self.cb_match_lyrics.isChecked(),
             "original_lyrics": self.lyrics_edit.toPlainText().strip(),
-            "export_format": {"mid": "MIDI", "ustx": "USTX", "vsqx": "VSQX"}.get(self.get_export_format(), "MIDI"),
+            "export_format": self.get_export_format(),
             "output_lyrics": self.cb_output_lyrics.isChecked(),
             "pitch_curve": self.cb_pitch_curve.isChecked(),
             "tempo": self.tempo_spin.value(),
-            "quantization_step": {0: "不量化", 480: "1/4 音符 (1拍)", 240: "1/8 音符 (1/2拍)", 120: "1/16 音符 (1/4拍)", 60: "1/32 音符 (1/8拍)", 30: "1/64 音符 (1/16拍)"}.get(self.quantize_combo.currentData(), "不量化"),
-            "quantization_mode": {"repair": "节奏修复", "bayes": "贝叶斯", "dp": "DP", "simple": "简单"}.get(self.quantize_mode_combo.currentData(), "节奏修复"),
-            "batch_size": self.global_settings.batch_spin.value(),
-            "asr_batch_size": self.global_settings.asr_batch_spin.value(),
+            "quantization_step": self.quantize_combo.currentData(),
+            "quantization_mode": self.quantize_mode_combo.currentData(),
+            "batch_size": self.global_settings.batch_size(),
+            "asr_batch_size": self.global_settings.asr_batch_size(),
             "output_dir": self.save_dir_edit.text(),
             "chinese_asr_engine": self._chinese_asr_engine(),
             "japanese_asr_engine": self._japanese_asr_engine(),
             "devices": VISIBLE_RUNTIME_DEVICE_CHOICES,
-            "slice_min_sec": float(self.global_settings.slice_min_spin.value()),
-            "slice_max_sec": float(self.global_settings.slice_max_spin.value()),
-            "output_formats_extra": [
-                fmt for checked, fmt in (
-                    (self.global_settings.cb_txt.isChecked(), "txt"),
-                    (self.global_settings.cb_csv.isChecked(), "csv"),
-                    (self.global_settings.cb_chunks.isChecked(), "chunks"),
-                ) if checked
-            ],
-            "pitch_format": self.global_settings.pitch_combo.currentText(),
-            "round_pitch": self.global_settings.cb_round.isChecked(),
-            "seg_threshold": self.global_settings.seg_thresh_spin.value(),
-            "seg_radius": self.global_settings.seg_rad_spin.value(),
-            "est_threshold": self.global_settings.est_thresh_spin.value(),
+            "slice_min_sec": self.global_settings.slice_min_sec(),
+            "slice_max_sec": self.global_settings.slice_max_sec(),
+            "output_formats_extra": self.global_settings.extra_output_formats(),
+            "pitch_format": self.global_settings.pitch_format(),
+            "round_pitch": self.global_settings.round_pitch(),
+            "seg_threshold": self.global_settings.seg_threshold(),
+            "seg_radius": self.global_settings.seg_radius(),
+            "est_threshold": self.global_settings.est_threshold(),
         }
 
     def _open_file_settings(self, filename: str):
         from gui.file_settings_dialog import FileSettingsDialog
 
         base = dict(self._current_base_values())
-        saved = self._file_settings.get(filename)
+        saved = self.audio_list.file_settings.get(filename)
         if saved:
             base.update({k: v for k, v in saved.items() if k in base})
         dialog = FileSettingsDialog(filename, base, self)
         if dialog.exec():
-            self._file_settings[filename] = dialog.values()
+            self.audio_list.file_settings[filename] = dialog.values()
             self.log_msg(f"{filename}: {tr('file_settings')} {tr('apply')}")
 
     def _build_file_config(self, filename: str, base: dict, ts_list: list, overrides: dict | None) -> PipelineConfig:
@@ -707,7 +503,7 @@ class AutoLyricInterface(ScrollArea):
         values = dict(base)
         if overrides:
             values.update(overrides)
-        export_format = {"MIDI": "mid", "USTX": "ustx", "VSQX": "vsqx"}.get(values["export_format"], "mid")
+        export_format = values["export_format"]
         output_formats = [export_format, *values["output_formats_extra"]]
         save_dir = values["output_dir"]
         if not os.path.exists(save_dir):
@@ -721,19 +517,17 @@ class AutoLyricInterface(ScrollArea):
             self._show_error(tr("err_cannot_start"), tr("err_dir_not_dir"))
             raise ValueError(f"save path is not a directory: {save_dir}")
 
-        lyric_output = LEGACY_LYRIC_OUTPUT_VALUES.get(values["lyric_output"], values["lyric_output"])
-        language = LEGACY_LANGUAGE_VALUES.get(values["language"], values["language"])
         return PipelineConfig(
             audio_path="",  # set per-file in worker
             output_filename="",  # set per-file in worker
             output_dir=pathlib.Path(save_dir),
-            game_model_dir=self.model_config.game_model_edit.text(),
-            hfa_model_dir=self.model_config.hfa_model_edit.text(),
-            asr_model_path=self.model_config.asr_model_edit.text(),
+            game_model_dir=self.model_config.model_path("game_model"),
+            hfa_model_dir=self.model_config.model_path("hfa_model"),
+            asr_model_path=self.model_config.model_path("asr_model"),
             device=normalize_runtime_device(values["device"]),
-            language=language,
+            language=values["language"],
             ts=ts_list,
-            lyric_output_mode=lyric_output,
+            lyric_output_mode=values["lyric_output"],
             original_lyrics=values["original_lyrics"] if values["match_lyrics"] else "",
             output_formats=output_formats,
             output_lyrics=values["output_lyrics"],
@@ -742,8 +536,8 @@ class AutoLyricInterface(ScrollArea):
             slice_min_sec=values["slice_min_sec"],
             slice_max_sec=values["slice_max_sec"],
             tempo=float(values["tempo"]),
-            quantization_step=LEGACY_QUANT_STEP_VALUES.get(values["quantization_step"], 0),
-            quantization_mode=LEGACY_QUANT_MODE_VALUES.get(values["quantization_mode"], "repair"),
+            quantization_step=values["quantization_step"],
+            quantization_mode=values["quantization_mode"],
             pitch_format=values["pitch_format"],
             round_pitch=values["round_pitch"],
             seg_threshold=values["seg_threshold"],
@@ -751,9 +545,9 @@ class AutoLyricInterface(ScrollArea):
             est_threshold=values["est_threshold"],
             batch_size=int(values["batch_size"]),
             asr_batch_size=int(values["asr_batch_size"]),
-            rmvpe_model_path=self.model_config.rmvpe_model_edit.text(),
-            phoneme_asr_model_path=self.model_config.phoneme_asr_model_edit.text(),
-            pinyin_asr_model_path=self.model_config.pinyin_asr_model_edit.text(),
+            rmvpe_model_path=self.model_config.model_path("rmvpe_model"),
+            phoneme_asr_model_path=self.model_config.model_path("phoneme_asr_model"),
+            pinyin_asr_model_path=self.model_config.model_path("pinyin_asr_model"),
             chinese_asr_engine=values.get("chinese_asr_engine", "qwen"),
             japanese_asr_engine=values.get("japanese_asr_engine", "romaji"),
         )
@@ -764,17 +558,15 @@ class AutoLyricInterface(ScrollArea):
             return
 
         # Batch mode runs the current selection; otherwise every file in the list.
-        audio_files = self._selected_audio_files() or [
-            self._list_item_path(self.audio_list.item(i)) for i in range(self.audio_list.count())
-        ]
+        audio_files = self.audio_list.selected_paths() or self.audio_list.all_paths()
         if not audio_files:
             self._show_error(tr("err_cannot_start"), tr("err_no_audio"))
             return
 
         base = self._current_base_values()
         ts_list = t0_nstep_to_ts(
-            self.global_settings.t0_spin.value(),
-            int(self.global_settings.nsteps_spin.value()),
+            self.global_settings.t0(),
+            self.global_settings.nsteps(),
         )
         try:
             validate_slice_bounds(base["slice_min_sec"], base["slice_max_sec"])
@@ -786,14 +578,13 @@ class AutoLyricInterface(ScrollArea):
         try:
             for filename in audio_files:
                 config = self._build_file_config(
-                    filename, base, ts_list, self._file_settings.get(filename)
+                    filename, base, ts_list, self.audio_list.file_settings.get(filename)
                 )
                 tasks.append((config, filename))
         except ValueError:
             return  # error already reported
 
         self.log_edit.clear()
-        self._log_lines.clear()
         self._set_running_ui(True)
         self.run_status_label.setText(tr("preparing", n=len(tasks)))
         self.worker = WorkerThread(tasks)
@@ -813,6 +604,23 @@ class AutoLyricInterface(ScrollArea):
             )
             if self.worker.isRunning():
                 self.log_msg(tr("stop_hint"))
+
+    # ── worker lifecycle accessors (used by the main window) ────────
+    def is_running(self) -> bool:
+        return self.worker is not None and self.worker.isRunning()
+
+    def request_stop(self) -> None:
+        if self.worker is not None:
+            self.worker.stop()
+
+    def wait_for_worker(self, timeout_ms: int) -> bool:
+        """True when the worker thread finished within the timeout."""
+        return self.worker is not None and self.worker.wait(timeout_ms)
+
+    def on_worker_settled(self, callback) -> None:
+        """Invoke callback once the current worker thread has finished."""
+        if self.worker is not None:
+            self.worker.finished.connect(callback)
 
     def on_finished(self, msg):
         self.log_msg(msg)

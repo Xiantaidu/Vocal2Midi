@@ -6,6 +6,9 @@ from typing import Dict, List, Optional, Tuple
 
 from .language_processors import ProcessorFactory, LyricData
 from .sequence_aligner import SequenceAligner, calculate_difference_count, SmartHighlighter
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -109,10 +112,10 @@ class LyricMatchingPipeline:
 
     def print_summary(self) -> None:
         if self.missing_lyrics:
-            print(f'Files with missing lyrics: {self.missing_lyrics}')
-        print(f'{self.diff_count} files exceed difference threshold ({self.diff_threshold}).')
-        print(f'Files with no match: {self.no_match_count}')
-        print(f'Total files: {self.total_files}, successfully processed: {self.success_count}.')
+            logger.info(f'Files with missing lyrics: {self.missing_lyrics}')
+        logger.info(f'{self.diff_count} files exceed difference threshold ({self.diff_threshold}).')
+        logger.info(f'Files with no match: {self.no_match_count}')
+        logger.info(f'Total files: {self.total_files}, successfully processed: {self.success_count}.')
 
     def load_all_lyrics(self) -> Dict[str, LyricData]:
         lyric_dict: Dict[str, LyricData] = {}
@@ -124,8 +127,8 @@ class LyricMatchingPipeline:
                 if lyric_data:
                     lyric_dict[lyric_name] = lyric_data
             except Exception as error:
-                print(f"Error processing lyric file {lyric_name}: {str(error)}")
-        print()
+                logger.error(f"Error processing lyric file {lyric_name}: {str(error)}")
+        logger.info()
         return lyric_dict
 
     @staticmethod
@@ -142,21 +145,21 @@ class LyricMatchingPipeline:
 
         if lyric_name not in lyric_dict:
             self.add_missing_lyric(lyric_name)
-            print(f"Lab file: {lab_path}\nMissing lyric file: {lyric_name}")
+            logger.info(f"Lab file: {lab_path}\nMissing lyric file: {lyric_name}")
             return None
 
         try:
             with open(lab_path, 'r', encoding='utf-8') as file:
                 lab_content = file.read().strip()
         except Exception as error:
-            print(f"Error reading lab file {lab_name}: {str(error)}")
+            logger.error(f"Error reading lab file {lab_name}: {str(error)}")
             return None
 
         lyric_data = lyric_dict[lyric_name]
         asr_text, asr_phonetic = self.matcher.process_asr_content(lab_content)
 
         if not asr_phonetic:
-            print(f"Warning: ASR result empty {lab_name}")
+            logger.warning(f"Warning: ASR result empty {lab_name}")
             return None
 
         matched_text, matched_phonetic, reason = self.matcher.align_lyric_with_asr(
@@ -217,21 +220,21 @@ class LyricMatchingPipeline:
                 asr_result_str, matched_phonetic, matched_text
             )
         )
-        print(f"lab_name:         {lab_name}")
-        print(f"match_text:       {highlighted_text}")
-        print(f"asr_result:       {highlighted_asr}")
-        print(f"match_phonetic:   {highlighted_phonetic}")
-        print(f"diff count:       {operation_count}")
-        print("-" * 80)
+        logger.info(f"lab_name:         {lab_name}")
+        logger.info(f"match_text:       {highlighted_text}")
+        logger.info(f"asr_result:       {highlighted_asr}")
+        logger.info(f"match_phonetic:   {highlighted_phonetic}")
+        logger.info(f"diff count:       {operation_count}")
+        logger.info("-" * 80)
 
     @staticmethod
     def _display_no_match(lab_name: str, asr_phonetic: List[str], reason: str = "") -> None:
         asr_str = " ".join(asr_phonetic)
-        print(f"lab_name:         {lab_name}  -> 未能匹配到任何歌词片段")
+        logger.info(f"lab_name:         {lab_name}  -> 未能匹配到任何歌词片段")
         if reason:
-            print(f"失败原因:         {reason}")
-        print(f"asr_result (全部多余): {asr_str}")
-        print("-" * 80)
+            logger.error(f"失败原因:         {reason}")
+        logger.info(f"asr_result (全部多余): {asr_str}")
+        logger.info("-" * 80)
 
     def execute(self) -> None:
         os.makedirs(self.json_folder, exist_ok=True)

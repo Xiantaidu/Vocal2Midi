@@ -5,6 +5,9 @@ from typing import Any
 import numpy as np
 from inference.LyricFA.tools.ZhG2p import ZhG2p
 from inference.API.ustx_api import RmvpeResult, _to_ticks, _PitchPoint, _append_smoothed_points
+import logging
+
+logger = logging.getLogger(__name__)
 PPQ=480
 _PITCH_MAX=8191
 _DEFAULT_PBS=2
@@ -116,7 +119,7 @@ def save_vsqx(notes:list[Any],filepath:Path,tempo:float=120.0,language:str='zh',
     valid.sort(key=lambda n:n.onset)
     end=max((_t(n.offset,tempo) for n in valid),default=PPQ)
     pitch_events=_build_pitch_data(valid,rmvpe_result,tempo) if rmvpe_result is not None else []
-    print(f'[VSQX] rmvpe_result={rmvpe_result is not None}, pitch_events={len(pitch_events)}')
+    logger.info(f'[VSQX] rmvpe_result={rmvpe_result is not None}, pitch_events={len(pitch_events)}')
     P=[]
     P.append('<?xml version="1.0" encoding="UTF-8" standalone="no"?>')
     P.append('<vsq4 xmlns="http://www.yamaha.co.jp/vocaloid/schema/vsq4/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.yamaha.co.jp/vocaloid/schema/vsq4/ vsq4.xsd">')
@@ -252,4 +255,4 @@ def save_vsqx(notes:list[Any],filepath:Path,tempo:float=120.0,language:str='zh',
     raw=P[0]+P[1]+'\n'+'\n'.join(P[2:])
     raw=raw.replace('</cc>\n\t\t\t<cc>','</cc><cc>')
     filepath.write_text(raw,encoding='utf-8')
-    print(f'Saved VSQX file: {filepath}')
+    logger.info(f'Saved VSQX file: {filepath}')

@@ -7,6 +7,9 @@ import soundfile as sf
 from scipy.signal import resample_poly
 
 from inference.device_utils import normalize_runtime_device, resolve_onnx_providers
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_SAMPLE_RATE = 16000
@@ -41,7 +44,7 @@ def create_session(model_path: Path, provider: str | None = None) -> ort.Inferen
         _, providers = resolve_onnx_providers("dml", label="Romaji ASR ONNX")
     elif provider in {"cpu", "metal"}:
         if provider == "metal":
-            print("[Romaji ASR ONNX] Metal provider is unavailable for this model; using CPUExecutionProvider.")
+            logger.info("[Romaji ASR ONNX] Metal provider is unavailable for this model; using CPUExecutionProvider.")
         providers = ["CPUExecutionProvider"]
     else:
         raise ValueError(f"Unsupported provider: {provider}")

@@ -12,6 +12,9 @@ from .common import (
     load_vocab,
     prepare_batch,
 )
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_model_dir(model_path: str | Path) -> Path:
@@ -73,7 +76,7 @@ class RomajiASROnnxModel:
         session = create_session(model_file, provider=requested_provider)
         active_provider = "dml" if "DmlExecutionProvider" in session.get_providers() else "cpu"
         if verbose and requested_provider == "dml" and active_provider == "cpu":
-            print("[Romaji ASR] DML provider unavailable, using CPUExecutionProvider.")
+            logger.info("[Romaji ASR] DML provider unavailable, using CPUExecutionProvider.")
 
         id2token, blank_id = load_vocab(vocab_file)
         return cls(
