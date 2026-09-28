@@ -23,11 +23,7 @@ from inference.API.game_api import load_game_model, extract_pitches_and_align, e
 from inference.API.rmvpe_api import RmvpeTranscriber
 from inference.API.ustx_api import save_ustx
 from inference.API.vsqx_api import save_vsqx
-from inference.device_utils import (
-    RUNTIME_DEVICE_CHOICES,
-    default_runtime_device,
-    normalize_runtime_device,
-)
+from inference.device_utils import normalize_runtime_device
 from inference.pipeline.lyric_alignment import (
     PINYIN_ASR_DEFAULT_DIR,
     PINYIN_ASR_LANGUAGE,
@@ -462,63 +458,3 @@ def auto_lyric_hybrid_pipeline(
         pitch_format=pitch_format,
         round_pitch=round_pitch,
     )
-
-
-if __name__ == "__main__":
-    import click
-
-    @click.command()
-    @click.argument("audio_path", type=click.Path(exists=True))
-    @click.option("--game-model", "-gm", required=True, type=click.Path(exists=True, file_okay=False), help="Path to GAME ONNX model directory")
-    @click.option("--hfa-model", "-hm", required=True, type=click.Path(exists=True, file_okay=False), help="Path to HubertFA ONNX model directory")
-    @click.option("--asr-model", "-am", type=str, default="models/Qwen3-ASR-1.7B-dml", help="Path for the local Qwen3-ASR model directory")
-    @click.option("--output-dir", "-o", type=click.Path(), default=".", help="Directory to save the outputs")
-    @click.option("--lyrics", "-l", type=str, default="", help="Original reference lyrics for alignment")
-    @click.option(
-        "--device",
-        type=click.Choice(list(RUNTIME_DEVICE_CHOICES)),
-        default=default_runtime_device(),
-        help="Runtime device (legacy 'cuda' maps to 'dml')",
-    )
-    @click.option("--t0", type=float, default=0.0, help="D3PM starting t0")
-    @click.option("--nsteps", type=int, default=8, help="D3PM sampling steps")
-    def main(audio_path, game_model, hfa_model, asr_model, output_dir, lyrics, device, t0, nsteps, **kwargs):
-        """
-        Auto Lyric Hybrid ONNX pipeline
-        """
-        logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
-        out_dir = pathlib.Path(output_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        step = (1 - t0) / nsteps
-        ts_list = [t0 + i * step for i in range(nsteps)]
-        device = normalize_runtime_device(device)
-        ts = ts_list
-        
-        auto_lyric_hybrid_pipeline(
-            audio_path=audio_path,
-            output_filename=pathlib.Path(audio_path).name,
-            game_model_dir=game_model,
-            device=device,
-            hfa_model_dir=hfa_model,
-            asr_model_path=asr_model,
-            ts=ts,
-            language="ja",  # Will use the UI parameter when integrated
-            lyric_output_mode="romaji",
-            original_lyrics=lyrics,
-            output_dir=out_dir,
-            output_formats=["mid", "txt"], # Simplified for now
-            slicing_method="default",
-            tempo=120.0, # Simplified
-            quantization_step=60, # Simplified
-            pitch_format="name", # Simplified
-            quantization_mode="simple",
-            round_pitch=True, # Simplified
-            seg_threshold=0.2,
-            seg_radius=0.02,
-            est_threshold=0.2,
-            batch_size=4,
-        )
-        logger.info("Done!")
-
-    main()
