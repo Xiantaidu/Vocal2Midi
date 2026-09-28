@@ -1,6 +1,7 @@
 import pathlib
 import sys
 import tempfile
+from dataclasses import dataclass
 
 from application.config import (
     DEFAULT_SLICE_MAX_SEC,
@@ -235,6 +236,435 @@ def run_pinyin_asr(
     )
     return chars_dict, chunk_logs
 
+@dataclass(frozen=True)
+class _PipelineContext:
+    """Normalized run-wide values shared by the pipeline stages."""
+
+    device: str
+    output_key: str
+    output_dir: pathlib.Path
+    output_formats: list
+    output_format_set: frozenset
+    language: str
+    fa_language: str
+    lyric_output_mode: str
+    use_pinyin_asr: bool
+
+
+@dataclass(frozen=True)
+class _AlignmentOutcome:
+    """Result of the lyric-alignment stage.
+
+    ``aligned`` is the final run_lyric_alignment flag after every fallback
+    decision along the way.
+    """
+
+    chars_dict: dict
+    pred_dict: dict
+    chunk_logs: list
+    aligned: bool
+
+
+def _prepare_context(
+    audio_path: str,
+    output_filename: str,
+    output_dir,
+    output_formats,
+    language: str,
+    chinese_asr_engine: str,
+    lyric_output_mode: str,
+    tempo: float,
+    batch_size: int,
+    asr_batch_size: int,
+    slice_min_sec: float,
+    slice_max_sec: float,
+    device: str,
+) -> _PipelineContext:
+    device = normalize_runtime_device(device)
+    _validate_slice_runtime_options(tempo, batch_size, asr_batch_size, slice_min_sec, slice_max_sec)
+    output_key = _resolve_output_key(output_filename, audio_path)
+    output_formats = _normalize_output_formats(output_formats)
+    output_dir = pathlib.Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    language, use_pinyin_asr = normalize_pipeline_language(language)
+    # Explicit Chinese ASR selection routes plain zh through the direct pinyin
+    # ASR exactly like the legacy 'zh-pinyin' language value.
+    if language == "zh" and str(chinese_asr_engine or "").strip().lower() == "pinyin":
+        language = PINYIN_ASR_LANGUAGE
+        use_pinyin_asr = True
+    lyric_output_mode = _normalize_lyric_output_mode(language, lyric_output_mode)
+    # HFA/GAME/VSQX only know the base languages; the pinyin ASR is a zh variant.
+    fa_language = "zh" if language == PINYIN_ASR_LANGUAGE else language
+    return _PipelineContext(
+        device=device,
+        output_key=output_key,
+        output_dir=output_dir,
+        output_formats=output_formats,
+        output_format_set=frozenset(output_formats),
+        language=language,
+        fa_language=fa_language,
+        lyric_output_mode=lyric_output_mode,
+        use_pinyin_asr=use_pinyin_asr,
+    )
+
+
+def _extract_pitch_curve(
+    waveform,
+    sr,
+    *,
+    rmvpe_model_path,
+    output_format_set,
+    output_pitch_curve,
+    device,
+    cancel_checker,
+):
+    """RMVPE pitch curve for USTX/VSQX export; None when not requested.
+
+    The model reference dies with this frame, releasing its memory before
+    the next stage loads its own model.
+    """
+    if not (("ustx" in output_format_set or "vsqx" in output_format_set) and output_pitch_curve):
+        return None
+    rmvpe_model = _resolve_rmvpe_path(rmvpe_model_path)
+    logger.info(f"[Hybrid Pipeline] Running RMVPE from: {rmvpe_model}")
+    rmvpe = RmvpeTranscriber(rmvpe_model, device=device)
+    try:
+        rmvpe_result = rmvpe.infer(waveform, sr, cancel_checker=cancel_checker)
+        logger.info(f"[Hybrid Pipeline] RMVPE done. Frames={len(rmvpe_result.midi_pitch)} step={rmvpe_result.time_step_seconds:.4f}s")
+        return rmvpe_result
+    finally:
+        del rmvpe
+        free_memory()
+
+
+def _slice_chunks(
+    waveform,
+    sr,
+    *,
+    slicing_method,
+    slice_min_sec,
+    slice_max_sec,
+    rmvpe_result,
+    cancel_checker,
+):
+    rmvpe_voiced_mask = None
+    rmvpe_step = None
+    if rmvpe_result is not None and getattr(rmvpe_result, "voiced_mask", None) is not None:
+        rmvpe_voiced_mask = rmvpe_result.voiced_mask
+        rmvpe_step = rmvpe_result.time_step_seconds
+
+    chunks = slice_audio(
+        waveform,
+        sr,
+        slicing_method,
+        min_len_sec=slice_min_sec,
+        max_len_sec=slice_max_sec,
+        rmvpe_voiced_mask=rmvpe_voiced_mask,
+        rmvpe_time_step_seconds=rmvpe_step,
+    )
+    if cancel_checker and cancel_checker():
+        raise InterruptedError("任务已取消")
+    if not chunks:
+        raise RuntimeError("切片阶段未生成任何音频片段，已中断后续处理。")
+    return chunks
+
+
+def _select_phoneme_engine(
+    language,
+    lyric_output_mode,
+    use_pinyin_asr,
+    japanese_asr_engine,
+    phoneme_asr_model_path,
+    pinyin_asr_model_path,
+):
+    """Pick the direct-phoneme ASR engine; a None engine falls back to text ASR."""
+    ja_wants_romaji = str(japanese_asr_engine or "").strip().lower() != "qwen"
+    engine = None
+    if language == "ja" and lyric_output_mode in {"romaji", "kana"} and ja_wants_romaji:
+        engine = "romaji"
+    elif use_pinyin_asr:
+        engine = "pinyin"
+
+    phoneme_asr_path = None
+    if engine == "romaji":
+        logger.info("\n--- Stage 1/3: Running mora ASR for Japanese lyric mode ---")
+        phoneme_asr_path = _select_romaji_asr_path(phoneme_asr_model_path)
+        if phoneme_asr_path is None:
+            logger.warning(
+                "[Warning] Romaji ASR model not found; "
+                "falling back to text ASR + Japanese G2P."
+            )
+            engine = None
+    elif engine == "pinyin":
+        logger.info("\n--- Stage 1/3: Running pinyin ASR for Chinese-pinyin lyric mode ---")
+        phoneme_asr_path = _select_pinyin_asr_path(pinyin_asr_model_path)
+        if phoneme_asr_path is None:
+            logger.warning(
+                "[Warning] Pinyin ASR model not found; "
+                "falling back to text ASR (Qwen) + Chinese G2P."
+            )
+            engine = None
+    return engine, ja_wants_romaji, phoneme_asr_path
+
+
+def _run_lyric_alignment(
+    chunks,
+    sr,
+    ctx: _PipelineContext,
+    matcher,
+    *,
+    asr_model_path,
+    hfa_model_dir,
+    phoneme_asr_model_path,
+    pinyin_asr_model_path,
+    japanese_asr_engine,
+    asr_batch_size,
+    asr_session,
+    cancel_checker,
+) -> _AlignmentOutcome:
+    """Stages 1+2: phoneme/text ASR followed by HubertFA alignment.
+
+    Owns the temporary directory holding the chunk wavs and .lab files;
+    nothing outside this stage reads them.
+    """
+    def _check_cancel():
+        if cancel_checker and cancel_checker():
+            raise InterruptedError("任务已取消")
+
+    chars_dict = {}
+    pred_dict = {}
+    chunk_logs = []
+    aligned = True
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir_path = pathlib.Path(temp_dir)
+
+        engine, ja_wants_romaji, phoneme_asr_path = _select_phoneme_engine(
+            ctx.language, ctx.lyric_output_mode, ctx.use_pinyin_asr,
+            japanese_asr_engine, phoneme_asr_model_path, pinyin_asr_model_path,
+        )
+        if engine == "romaji":
+            chars_dict, chunk_logs = run_romaji_asr(
+                chunks,
+                sr,
+                temp_dir_path,
+                matcher,
+                asr_model_path=phoneme_asr_path,
+                device=ctx.device,
+                language=ctx.language,
+                lyric_output_mode=ctx.lyric_output_mode,
+                asr_batch_size=asr_batch_size,
+                cancel_checker=cancel_checker,
+            )
+        elif engine == "pinyin":
+            chars_dict, chunk_logs = run_pinyin_asr(
+                chunks,
+                sr,
+                temp_dir_path,
+                matcher,
+                asr_model_path=phoneme_asr_path,
+                device=ctx.device,
+                language=ctx.language,
+                lyric_output_mode=ctx.lyric_output_mode,
+                asr_batch_size=asr_batch_size,
+                cancel_checker=cancel_checker,
+            )
+        else:
+            if ctx.language == "ja" and ctx.lyric_output_mode in {"romaji", "kana"}:
+                if ja_wants_romaji:
+                    logger.warning("\n--- Stage 1/3: Mora ASR unavailable; fallback to text ASR + Japanese G2P ---")
+                else:
+                    logger.info("\n--- Stage 1/3: Running text ASR (Qwen) + Japanese G2P ---")
+            elif ctx.use_pinyin_asr:
+                logger.warning("\n--- Stage 1/3: Pinyin ASR unavailable; fallback to text ASR + Chinese G2P ---")
+            else:
+                logger.info("\n--- Stage 1/3: Running ASR in subprocess isolation mode ---")
+            chars_dict, chunk_logs = run_qwen_asr_and_fa(
+                chunks,
+                sr,
+                temp_dir_path,
+                matcher,
+                asr_model_path=asr_model_path,
+                device=ctx.device,
+                asr_batch_size=asr_batch_size,
+                language=ctx.language,
+                lyric_output_mode=ctx.lyric_output_mode,
+                cancel_checker=cancel_checker,
+                asr_session=asr_session,
+            )
+        _check_cancel()
+
+        if not chars_dict:
+            logger.warning(
+                "[Warning] ASR did not produce valid text for any chunk; "
+                "falling back to GAME pitch-only extraction."
+            )
+            aligned = False
+
+        free_memory()
+
+        if aligned:
+            logger.info("\n--- Stage 2/3: Loading HubertFA model ---")
+            hfa_model = load_hfa_model(hfa_model_dir, device=ctx.device)
+            try:
+                _check_cancel()
+                logger.info("------------------------------------------\n")
+
+                pred_dict = run_hubert_fa(
+                    hfa_model,
+                    temp_dir_path,
+                    language=ctx.fa_language,
+                    cancel_checker=cancel_checker,
+                )
+                _check_cancel()
+                if not pred_dict:
+                    logger.warning(
+                        "[Warning] HFA did not produce alignment for any chunk; "
+                        "falling back to GAME pitch-only extraction."
+                    )
+                    aligned = False
+                else:
+                    missing_hfa = sorted(set(chars_dict) - set(pred_dict))
+                    if missing_hfa:
+                        preview = ", ".join(missing_hfa[:8])
+                        suffix = " ..." if len(missing_hfa) > 8 else ""
+                        logger.warning(
+                            f"[Warning] HFA missing {len(missing_hfa)} chunk(s) "
+                            f"({preview}{suffix}); those chunks will use pitch-only fallback."
+                        )
+
+                    export_hfa_artifacts(
+                        chunks,
+                        temp_dir_path,
+                        hfa_model,
+                        ctx.output_key,
+                        ctx.output_dir,
+                        ctx.output_formats,
+                        cancel_checker=cancel_checker,
+                    )
+            finally:
+                del hfa_model
+                free_memory()
+
+    return _AlignmentOutcome(chars_dict=chars_dict, pred_dict=pred_dict, chunk_logs=chunk_logs, aligned=aligned)
+
+
+def _run_game_stage(
+    chunks,
+    sr,
+    ctx: _PipelineContext,
+    outcome,
+    *,
+    ts,
+    game_model_dir,
+    batch_size,
+    seg_threshold,
+    seg_radius,
+    est_threshold,
+    cancel_checker,
+):
+    """Stage 3: GAME note extraction with per-chunk pitch-only fallback."""
+    all_notes = []
+    if outcome is not None and outcome.aligned:
+        logger.info("\n--- Stage 3/3: Loading GAME model ---")
+    else:
+        if "chunks" in ctx.output_format_set:
+            _export_chunk_wavs(chunks, sr, ctx.output_key, ctx.output_dir, cancel_checker=cancel_checker)
+        if outcome is not None:
+            logger.warning("\n--- Fallback: Loading GAME model (pitch-only mode) ---")
+        else:
+            logger.info("\n--- Stage 1/1: Loading GAME model (No-Lyrics Mode) ---")
+
+    game_model = load_game_model(game_model_dir, device=ctx.device)
+    try:
+        if cancel_checker and cancel_checker():
+            raise InterruptedError("任务已取消")
+        logger.info("--------------------------------------\n")
+
+        if outcome is not None and outcome.aligned:
+            aligned_result = extract_pitches_and_align(
+                chunks, sr, outcome.pred_dict, outcome.chars_dict, game_model, ts,
+                seg_threshold, seg_radius, est_threshold, batch_size,
+                cancel_checker=cancel_checker,
+                language=ctx.fa_language,
+            )
+            if isinstance(aligned_result, tuple):
+                all_notes, processed_aligned_chunks = aligned_result
+            else:
+                all_notes = aligned_result
+                processed_aligned_chunks = set()
+            fallback_chunks = []
+            for chunk_idx, chunk in enumerate(chunks):
+                if chunk_idx not in processed_aligned_chunks:
+                    fallback_chunks.append(chunk)
+            if fallback_chunks:
+                logger.warning(
+                    f"[Warning] Running pitch-only GAME fallback for "
+                    f"{len(fallback_chunks)} chunk(s) without usable lyric alignment."
+                )
+                all_notes.extend(
+                    extract_pitches_only(
+                        fallback_chunks, sr, game_model, ts,
+                        seg_threshold, seg_radius, est_threshold, batch_size,
+                        cancel_checker=cancel_checker,
+                        language=ctx.fa_language,
+                    )
+                )
+        else:
+            all_notes = extract_pitches_only(
+                chunks, sr, game_model, ts,
+                seg_threshold, seg_radius, est_threshold, batch_size,
+                cancel_checker=cancel_checker,
+                language=ctx.fa_language,
+            )
+        if cancel_checker and cancel_checker():
+            raise InterruptedError("任务已取消")
+    finally:
+        del game_model
+        free_memory()
+    return all_notes
+
+
+def _export_outputs(
+    all_notes,
+    ctx: _PipelineContext,
+    *,
+    rmvpe_result,
+    chunk_logs,
+    output_lyrics,
+    aligned,
+    tempo,
+    quantization_step,
+    quantization_mode,
+    quant_simplicity,
+    pitch_format,
+    round_pitch,
+):
+    all_notes.sort(key=lambda x: x.onset)
+
+    export_asr_match_log = output_lyrics and (("asr_match_log" in ctx.output_format_set) or ("chunks" in ctx.output_format_set))
+    if export_asr_match_log:
+        log_path = ctx.output_dir / f"{ctx.output_key}_asr_match_log.txt"
+        log_path.write_text("\n".join(chunk_logs), encoding="utf-8")
+
+    if should_apply_quantization(quantization_mode, quantization_step):
+        quantize_notes(all_notes, tempo, quantization_step, mode=quantization_mode, simplicity=quant_simplicity)
+
+    lyric_status = "with lyrics" if aligned else "without lyrics"
+    logger.info(f"Extracted {len(all_notes)} notes {lyric_status}.")
+
+    if "mid" in ctx.output_format_set:
+        _save_midi(all_notes, ctx.output_dir / f"{ctx.output_key}.mid", int(tempo))
+    if "txt" in ctx.output_format_set:
+        _save_text(all_notes, ctx.output_dir / f"{ctx.output_key}.txt", "txt", pitch_format, round_pitch)
+    if "csv" in ctx.output_format_set:
+        _save_text(all_notes, ctx.output_dir / f"{ctx.output_key}.csv", "csv", pitch_format, round_pitch)
+    if "ustx" in ctx.output_format_set:
+        save_ustx(all_notes, ctx.output_dir / f"{ctx.output_key}.ustx", tempo=float(tempo), rmvpe_result=rmvpe_result)
+    if "vsqx" in ctx.output_format_set:
+        save_vsqx(all_notes, ctx.output_dir / f"{ctx.output_key}.vsqx", tempo=float(tempo), language=ctx.fa_language, rmvpe_result=rmvpe_result)
+
+
 def auto_lyric_hybrid_pipeline(
     audio_path: str,
     output_filename: str,
@@ -273,22 +703,11 @@ def auto_lyric_hybrid_pipeline(
     cancel_checker=None,
 ):
     """Auto Lyric Hybrid ONNX pipeline."""
-    device = normalize_runtime_device(device)
-    _validate_slice_runtime_options(tempo, batch_size, asr_batch_size, slice_min_sec, slice_max_sec)
-    output_key = _resolve_output_key(output_filename, audio_path)
-    output_formats = _normalize_output_formats(output_formats)
-    output_format_set = set(output_formats)
-    output_dir = pathlib.Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    language, use_pinyin_asr = normalize_pipeline_language(language)
-    # Explicit Chinese ASR selection routes plain zh through the direct pinyin
-    # ASR exactly like the legacy 'zh-pinyin' language value.
-    if language == "zh" and str(chinese_asr_engine or "").strip().lower() == "pinyin":
-        language = PINYIN_ASR_LANGUAGE
-        use_pinyin_asr = True
-    lyric_output_mode = _normalize_lyric_output_mode(language, lyric_output_mode)
-    # HFA/GAME/VSQX only know the base languages; the pinyin ASR is a zh variant.
-    fa_language = "zh" if language == PINYIN_ASR_LANGUAGE else language
+    ctx = _prepare_context(
+        audio_path, output_filename, output_dir, output_formats,
+        language, chinese_asr_engine, lyric_output_mode,
+        tempo, batch_size, asr_batch_size, slice_min_sec, slice_max_sec, device,
+    )
     logger.info(f"\n[Hybrid Pipeline] Processing audio: {audio_path}")
 
     def _check_cancel():
@@ -300,268 +719,70 @@ def auto_lyric_hybrid_pipeline(
     waveform, sr = load_audio(audio_path, sr)
     _check_cancel()
 
-    rmvpe_result = None
-    if ("ustx" in output_format_set or "vsqx" in output_format_set) and output_pitch_curve:
-        rmvpe_model = _resolve_rmvpe_path(rmvpe_model_path)
-        logger.info(f"[Hybrid Pipeline] Running RMVPE from: {rmvpe_model}")
-        rmvpe = RmvpeTranscriber(rmvpe_model, device=device)
-        try:
-            rmvpe_result = rmvpe.infer(waveform, sr, cancel_checker=cancel_checker)
-            logger.info(f"[Hybrid Pipeline] RMVPE done. Frames={len(rmvpe_result.midi_pitch)} step={rmvpe_result.time_step_seconds:.4f}s")
-        finally:
-            del rmvpe
-            free_memory()
-
-    rmvpe_voiced_mask = None
-    rmvpe_step = None
-    if rmvpe_result is not None and getattr(rmvpe_result, "voiced_mask", None) is not None:
-        rmvpe_voiced_mask = rmvpe_result.voiced_mask
-        rmvpe_step = rmvpe_result.time_step_seconds
-
-    chunks = slice_audio(
-        waveform,
-        sr,
-        slicing_method,
-        min_len_sec=slice_min_sec,
-        max_len_sec=slice_max_sec,
-        rmvpe_voiced_mask=rmvpe_voiced_mask,
-        rmvpe_time_step_seconds=rmvpe_step,
+    rmvpe_result = _extract_pitch_curve(
+        waveform, sr,
+        rmvpe_model_path=rmvpe_model_path,
+        output_format_set=ctx.output_format_set,
+        output_pitch_curve=output_pitch_curve,
+        device=ctx.device,
+        cancel_checker=cancel_checker,
     )
-    _check_cancel()
-    if not chunks:
-        raise RuntimeError("切片阶段未生成任何音频片段，已中断后续处理。")
 
+    chunks = _slice_chunks(
+        waveform, sr,
+        slicing_method=slicing_method,
+        slice_min_sec=slice_min_sec,
+        slice_max_sec=slice_max_sec,
+        rmvpe_result=rmvpe_result,
+        cancel_checker=cancel_checker,
+    )
+
+    outcome = None
+    chunk_logs = []
     if output_lyrics:
-        matcher = create_lyric_matcher(language, original_lyrics)
+        matcher = create_lyric_matcher(ctx.language, original_lyrics)
         _check_cancel()
         free_memory()
         _check_cancel()
+        outcome = _run_lyric_alignment(
+            chunks, sr, ctx, matcher,
+            asr_model_path=asr_model_path,
+            hfa_model_dir=hfa_model_dir,
+            phoneme_asr_model_path=phoneme_asr_model_path,
+            pinyin_asr_model_path=pinyin_asr_model_path,
+            japanese_asr_engine=japanese_asr_engine,
+            asr_batch_size=asr_batch_size,
+            asr_session=asr_session,
+            cancel_checker=cancel_checker,
+        )
+        chunk_logs = outcome.chunk_logs
     else:
-        matcher = None
         logger.warning("\n--- No-Lyrics Mode: 跳过 ASR/HFA，仅执行 GAME 提取音高 ---\n")
-    
-    all_notes = []
-    chunk_logs = []
-    run_lyric_alignment = output_lyrics
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_dir_path = pathlib.Path(temp_dir)
+    all_notes = _run_game_stage(
+        chunks, sr, ctx, outcome,
+        ts=ts,
+        game_model_dir=game_model_dir,
+        batch_size=batch_size,
+        seg_threshold=seg_threshold,
+        seg_radius=seg_radius,
+        est_threshold=est_threshold,
+        cancel_checker=cancel_checker,
+    )
 
-        pred_dict = {}
-        chars_dict = {}
-
-        if run_lyric_alignment:
-            # Japanese uses the romaji ASR unless the user picked Qwen text ASR.
-            ja_wants_romaji = str(japanese_asr_engine or "").strip().lower() != "qwen"
-            phoneme_asr_engine = None
-            if language == "ja" and lyric_output_mode in {"romaji", "kana"} and ja_wants_romaji:
-                phoneme_asr_engine = "romaji"
-            elif use_pinyin_asr:
-                phoneme_asr_engine = "pinyin"
-
-            phoneme_asr_path = None
-            if phoneme_asr_engine == "romaji":
-                logger.info("\n--- Stage 1/3: Running mora ASR for Japanese lyric mode ---")
-                phoneme_asr_path = _select_romaji_asr_path(phoneme_asr_model_path)
-                if phoneme_asr_path is None:
-                    logger.warning(
-                        "[Warning] Romaji ASR model not found; "
-                        "falling back to text ASR + Japanese G2P."
-                    )
-                    phoneme_asr_engine = None
-            elif phoneme_asr_engine == "pinyin":
-                logger.info("\n--- Stage 1/3: Running pinyin ASR for Chinese-pinyin lyric mode ---")
-                phoneme_asr_path = _select_pinyin_asr_path(pinyin_asr_model_path)
-                if phoneme_asr_path is None:
-                    logger.warning(
-                        "[Warning] Pinyin ASR model not found; "
-                        "falling back to text ASR (Qwen) + Chinese G2P."
-                    )
-                    phoneme_asr_engine = None
-
-            if phoneme_asr_engine == "romaji":
-                chars_dict, chunk_logs = run_romaji_asr(
-                    chunks,
-                    sr,
-                    temp_dir_path,
-                    matcher,
-                    asr_model_path=phoneme_asr_path,
-                    device=device,
-                    language=language,
-                    lyric_output_mode=lyric_output_mode,
-                    asr_batch_size=asr_batch_size,
-                    cancel_checker=cancel_checker,
-                )
-            elif phoneme_asr_engine == "pinyin":
-                chars_dict, chunk_logs = run_pinyin_asr(
-                    chunks,
-                    sr,
-                    temp_dir_path,
-                    matcher,
-                    asr_model_path=phoneme_asr_path,
-                    device=device,
-                    language=language,
-                    lyric_output_mode=lyric_output_mode,
-                    asr_batch_size=asr_batch_size,
-                    cancel_checker=cancel_checker,
-                )
-            else:
-                if language == "ja" and lyric_output_mode in {"romaji", "kana"}:
-                    if ja_wants_romaji:
-                        logger.warning("\n--- Stage 1/3: Mora ASR unavailable; fallback to text ASR + Japanese G2P ---")
-                    else:
-                        logger.info("\n--- Stage 1/3: Running text ASR (Qwen) + Japanese G2P ---")
-                elif use_pinyin_asr:
-                    logger.warning("\n--- Stage 1/3: Pinyin ASR unavailable; fallback to text ASR + Chinese G2P ---")
-                else:
-                    logger.info("\n--- Stage 1/3: Running ASR in subprocess isolation mode ---")
-                chars_dict, chunk_logs = run_qwen_asr_and_fa(
-                    chunks,
-                    sr,
-                    temp_dir_path,
-                    matcher,
-                    asr_model_path=asr_model_path,
-                    device=device,
-                    asr_batch_size=asr_batch_size,
-                    language=language,
-                    lyric_output_mode=lyric_output_mode,
-                    cancel_checker=cancel_checker,
-                    asr_session=asr_session,
-                )
-            _check_cancel()
-
-            if not chars_dict:
-                logger.warning(
-                    "[Warning] ASR did not produce valid text for any chunk; "
-                    "falling back to GAME pitch-only extraction."
-                )
-                run_lyric_alignment = False
-
-            free_memory()
-
-            if run_lyric_alignment:
-                logger.info("\n--- Stage 2/3: Loading HubertFA model ---")
-                hfa_model = load_hfa_model(hfa_model_dir, device=device)
-                try:
-                    _check_cancel()
-                    logger.info("------------------------------------------\n")
-
-                    pred_dict = run_hubert_fa(
-                        hfa_model,
-                        temp_dir_path,
-                        language=fa_language,
-                        cancel_checker=cancel_checker,
-                    )
-                    _check_cancel()
-                    if not pred_dict:
-                        logger.warning(
-                            "[Warning] HFA did not produce alignment for any chunk; "
-                            "falling back to GAME pitch-only extraction."
-                        )
-                        run_lyric_alignment = False
-                    else:
-                        missing_hfa = sorted(set(chars_dict) - set(pred_dict))
-                        if missing_hfa:
-                            preview = ", ".join(missing_hfa[:8])
-                            suffix = " ..." if len(missing_hfa) > 8 else ""
-                            logger.warning(
-                                f"[Warning] HFA missing {len(missing_hfa)} chunk(s) "
-                                f"({preview}{suffix}); those chunks will use pitch-only fallback."
-                            )
-
-                        export_hfa_artifacts(
-                            chunks,
-                            temp_dir_path,
-                            hfa_model,
-                            output_key,
-                            output_dir,
-                            output_formats,
-                            cancel_checker=cancel_checker,
-                        )
-                finally:
-                    del hfa_model
-                    free_memory()
-
-            if run_lyric_alignment:
-                logger.info("\n--- Stage 3/3: Loading GAME model ---")
-            else:
-                if "chunks" in output_format_set:
-                    _export_chunk_wavs(chunks, sr, output_key, output_dir, cancel_checker=cancel_checker)
-                logger.warning("\n--- Fallback: Loading GAME model (pitch-only mode) ---")
-        else:
-            if "chunks" in output_format_set:
-                _export_chunk_wavs(chunks, sr, output_key, output_dir, cancel_checker=cancel_checker)
-            logger.info("\n--- Stage 1/1: Loading GAME model (No-Lyrics Mode) ---")
-        game_model = load_game_model(game_model_dir, device=device)
-        try:
-            _check_cancel()
-            logger.info("--------------------------------------\n")
-
-            if run_lyric_alignment:
-                aligned_result = extract_pitches_and_align(
-                    chunks, sr, pred_dict, chars_dict, game_model, ts,
-                    seg_threshold, seg_radius, est_threshold, batch_size,
-                    cancel_checker=cancel_checker,
-                    language=fa_language,
-                )
-                if isinstance(aligned_result, tuple):
-                    all_notes, processed_aligned_chunks = aligned_result
-                else:
-                    all_notes = aligned_result
-                    processed_aligned_chunks = set()
-                fallback_chunks = []
-                for chunk_idx, chunk in enumerate(chunks):
-                    if chunk_idx not in processed_aligned_chunks:
-                        fallback_chunks.append(chunk)
-                if fallback_chunks:
-                    logger.warning(
-                        f"[Warning] Running pitch-only GAME fallback for "
-                        f"{len(fallback_chunks)} chunk(s) without usable lyric alignment."
-                    )
-                    all_notes.extend(
-                        extract_pitches_only(
-                            fallback_chunks, sr, game_model, ts,
-                            seg_threshold, seg_radius, est_threshold, batch_size,
-                            cancel_checker=cancel_checker,
-                            language=fa_language,
-                        )
-                    )
-            else:
-                all_notes = extract_pitches_only(
-                    chunks, sr, game_model, ts,
-                    seg_threshold, seg_radius, est_threshold, batch_size,
-                    cancel_checker=cancel_checker,
-                    language=fa_language,
-                )
-            _check_cancel()
-        finally:
-            del game_model
-            free_memory()
-
-    all_notes.sort(key=lambda x: x.onset)
-    
-                                                     
-    export_asr_match_log = output_lyrics and (("asr_match_log" in output_format_set) or ("chunks" in output_format_set))
-    if export_asr_match_log:
-        log_path = output_dir / f"{output_key}_asr_match_log.txt"
-        log_path.write_text("\n".join(chunk_logs), encoding="utf-8")
-
-    if should_apply_quantization(quantization_mode, quantization_step):
-        quantize_notes(all_notes, tempo, quantization_step, mode=quantization_mode, simplicity=quant_simplicity)
-    
-    lyric_status = "with lyrics" if run_lyric_alignment else "without lyrics"
-    logger.info(f"Extracted {len(all_notes)} notes {lyric_status}.")
-
-    if "mid" in output_format_set:
-        _save_midi(all_notes, output_dir / f"{output_key}.mid", int(tempo))
-    if "txt" in output_format_set:
-        _save_text(all_notes, output_dir / f"{output_key}.txt", "txt", pitch_format, round_pitch)
-    if "csv" in output_format_set:
-        _save_text(all_notes, output_dir / f"{output_key}.csv", "csv", pitch_format, round_pitch)
-    if "ustx" in output_format_set:
-        save_ustx(all_notes, output_dir / f"{output_key}.ustx", tempo=float(tempo), rmvpe_result=rmvpe_result)
-    if "vsqx" in output_format_set:
-        save_vsqx(all_notes, output_dir / f"{output_key}.vsqx", tempo=float(tempo), language=fa_language, rmvpe_result=rmvpe_result)
+    _export_outputs(
+        all_notes, ctx,
+        rmvpe_result=rmvpe_result,
+        chunk_logs=chunk_logs,
+        output_lyrics=output_lyrics,
+        aligned=outcome is not None and outcome.aligned,
+        tempo=tempo,
+        quantization_step=quantization_step,
+        quantization_mode=quantization_mode,
+        quant_simplicity=quant_simplicity,
+        pitch_format=pitch_format,
+        round_pitch=round_pitch,
+    )
 
 
 if __name__ == "__main__":
