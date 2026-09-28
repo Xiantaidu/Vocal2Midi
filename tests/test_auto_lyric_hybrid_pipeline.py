@@ -8,6 +8,7 @@ import pytest
 from inference.io.note_io import NoteInfo
 from inference.API.rmvpe_api import RmvpeResult
 from inference.pipeline import auto_lyric_hybrid as pipeline
+from inference.pipeline import lyric_alignment
 
 
 def _patch_load_audio(monkeypatch):
@@ -60,14 +61,14 @@ def _patch_common(monkeypatch):
 def test_ja_romaji_mode_uses_mora_asr(monkeypatch, tmp_path):
     chunks = _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
-    monkeypatch.setattr(pipeline, "_select_romaji_asr_path", lambda path: "phoneme")
+    monkeypatch.setattr(lyric_alignment, "_select_romaji_asr_path", lambda path: "phoneme")
     run_phoneme = MagicMock(return_value=({"chunk_0": ["a"]}, ["log"]))
     run_qwen = MagicMock(return_value=({"chunk_0": ["a"]}, ["log"]))
-    monkeypatch.setattr(pipeline, "run_romaji_asr", run_phoneme)
-    monkeypatch.setattr(pipeline, "run_qwen_asr_and_fa", run_qwen)
-    monkeypatch.setattr(pipeline, "load_hfa_model", lambda *args, **kwargs: MagicMock())
-    monkeypatch.setattr(pipeline, "run_hubert_fa", lambda *args, **kwargs: {"chunk_0": (None, None, [MagicMock()])})
-    monkeypatch.setattr(pipeline, "export_hfa_artifacts", lambda *args, **kwargs: None)
+    monkeypatch.setattr(lyric_alignment, "run_romaji_asr", run_phoneme)
+    monkeypatch.setattr(lyric_alignment, "run_qwen_asr_and_fa", run_qwen)
+    monkeypatch.setattr(lyric_alignment, "load_hfa_model", lambda *args, **kwargs: MagicMock())
+    monkeypatch.setattr(lyric_alignment, "run_hubert_fa", lambda *args, **kwargs: {"chunk_0": (None, None, [MagicMock()])})
+    monkeypatch.setattr(lyric_alignment, "export_hfa_artifacts", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         pipeline,
         "extract_pitches_and_align",
@@ -87,16 +88,16 @@ def test_ja_romaji_mode_uses_mora_asr(monkeypatch, tmp_path):
 def test_ja_kana_mode_uses_mora_asr_and_dictionary_hfa(monkeypatch, tmp_path):
     chunks = _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
-    monkeypatch.setattr(pipeline, "_select_romaji_asr_path", lambda path: "phoneme")
+    monkeypatch.setattr(lyric_alignment, "_select_romaji_asr_path", lambda path: "phoneme")
 
     run_phoneme = MagicMock(return_value=({"chunk_0": ["a"]}, ["log"]))
     load_hfa = MagicMock(return_value=MagicMock())
     run_hfa = MagicMock(return_value={"chunk_0": (None, None, [MagicMock()])})
 
-    monkeypatch.setattr(pipeline, "run_romaji_asr", run_phoneme)
-    monkeypatch.setattr(pipeline, "load_hfa_model", load_hfa)
-    monkeypatch.setattr(pipeline, "run_hubert_fa", run_hfa)
-    monkeypatch.setattr(pipeline, "export_hfa_artifacts", lambda *args, **kwargs: None)
+    monkeypatch.setattr(lyric_alignment, "run_romaji_asr", run_phoneme)
+    monkeypatch.setattr(lyric_alignment, "load_hfa_model", load_hfa)
+    monkeypatch.setattr(lyric_alignment, "run_hubert_fa", run_hfa)
+    monkeypatch.setattr(lyric_alignment, "export_hfa_artifacts", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         pipeline,
         "extract_pitches_and_align",
@@ -119,9 +120,9 @@ def test_no_lyrics_mode_skips_asr_and_hfa(monkeypatch, tmp_path):
     run_qwen = MagicMock()
     run_phoneme = MagicMock()
     load_hfa = MagicMock()
-    monkeypatch.setattr(pipeline, "run_qwen_asr_and_fa", run_qwen)
-    monkeypatch.setattr(pipeline, "run_romaji_asr", run_phoneme)
-    monkeypatch.setattr(pipeline, "load_hfa_model", load_hfa)
+    monkeypatch.setattr(lyric_alignment, "run_qwen_asr_and_fa", run_qwen)
+    monkeypatch.setattr(lyric_alignment, "run_romaji_asr", run_phoneme)
+    monkeypatch.setattr(lyric_alignment, "load_hfa_model", load_hfa)
     extract_only = MagicMock(return_value=[NoteInfo(0.0, 0.5, 60.0, "")])
     monkeypatch.setattr(pipeline, "extract_pitches_only", extract_only)
 
@@ -213,9 +214,9 @@ def test_empty_chunks_fail_before_models(monkeypatch, tmp_path):
 def test_empty_hfa_predictions_fall_back_to_pitch_only(monkeypatch, tmp_path):
     _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
-    monkeypatch.setattr(pipeline, "run_qwen_asr_and_fa", lambda *args, **kwargs: ({"chunk_0": ["a"]}, ["log"]))
-    monkeypatch.setattr(pipeline, "load_hfa_model", lambda *args, **kwargs: MagicMock())
-    monkeypatch.setattr(pipeline, "run_hubert_fa", lambda *args, **kwargs: {})
+    monkeypatch.setattr(lyric_alignment, "run_qwen_asr_and_fa", lambda *args, **kwargs: ({"chunk_0": ["a"]}, ["log"]))
+    monkeypatch.setattr(lyric_alignment, "load_hfa_model", lambda *args, **kwargs: MagicMock())
+    monkeypatch.setattr(lyric_alignment, "run_hubert_fa", lambda *args, **kwargs: {})
     extract_aligned = MagicMock(return_value=([NoteInfo(0.0, 0.5, 60.0, "a")], {0}))
     extract_only = MagicMock(return_value=[NoteInfo(0.0, 0.5, 60.0, "")])
     monkeypatch.setattr(pipeline, "extract_pitches_and_align", extract_aligned)
@@ -234,10 +235,10 @@ def test_empty_hfa_predictions_fall_back_to_pitch_only(monkeypatch, tmp_path):
 def test_empty_asr_results_fall_back_to_pitch_only(monkeypatch, tmp_path):
     _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
-    monkeypatch.setattr(pipeline, "run_qwen_asr_and_fa", lambda *args, **kwargs: ({}, ["empty log"]))
+    monkeypatch.setattr(lyric_alignment, "run_qwen_asr_and_fa", lambda *args, **kwargs: ({}, ["empty log"]))
     load_hfa = MagicMock()
     extract_only = MagicMock(return_value=[NoteInfo(0.0, 0.5, 60.0, "")])
-    monkeypatch.setattr(pipeline, "load_hfa_model", load_hfa)
+    monkeypatch.setattr(lyric_alignment, "load_hfa_model", load_hfa)
     monkeypatch.setattr(pipeline, "extract_pitches_only", extract_only)
 
     kwargs = _base_kwargs(tmp_path)
@@ -261,13 +262,13 @@ def test_missing_hfa_chunk_uses_pitch_only_fallback(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline, "load_game_model", lambda *args, **kwargs: MagicMock())
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        pipeline,
+        lyric_alignment,
         "run_qwen_asr_and_fa",
         lambda *args, **kwargs: ({"chunk_0": ["a"], "chunk_1": ["i"]}, ["log0", "log1"]),
     )
-    monkeypatch.setattr(pipeline, "load_hfa_model", lambda *args, **kwargs: MagicMock())
-    monkeypatch.setattr(pipeline, "run_hubert_fa", lambda *args, **kwargs: {"chunk_0": (None, None, [MagicMock()])})
-    monkeypatch.setattr(pipeline, "export_hfa_artifacts", lambda *args, **kwargs: None)
+    monkeypatch.setattr(lyric_alignment, "load_hfa_model", lambda *args, **kwargs: MagicMock())
+    monkeypatch.setattr(lyric_alignment, "run_hubert_fa", lambda *args, **kwargs: {"chunk_0": (None, None, [MagicMock()])})
+    monkeypatch.setattr(lyric_alignment, "export_hfa_artifacts", lambda *args, **kwargs: None)
     extract_aligned = MagicMock(return_value=([NoteInfo(0.0, 0.5, 60.0, "a")], {0}))
     extract_only = MagicMock(return_value=[NoteInfo(1.0, 1.5, 62.0, "")])
     monkeypatch.setattr(pipeline, "extract_pitches_and_align", extract_aligned)
@@ -291,10 +292,10 @@ def test_unproductive_aligned_chunk_uses_pitch_only_fallback(monkeypatch, tmp_pa
     monkeypatch.setattr(pipeline, "free_memory", lambda: None)
     monkeypatch.setattr(pipeline, "load_game_model", lambda *args, **kwargs: MagicMock())
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
-    monkeypatch.setattr(pipeline, "run_qwen_asr_and_fa", lambda *args, **kwargs: ({"chunk_0": ["a"]}, ["log"]))
-    monkeypatch.setattr(pipeline, "load_hfa_model", lambda *args, **kwargs: MagicMock())
-    monkeypatch.setattr(pipeline, "run_hubert_fa", lambda *args, **kwargs: {"chunk_0": (None, None, [MagicMock()])})
-    monkeypatch.setattr(pipeline, "export_hfa_artifacts", lambda *args, **kwargs: None)
+    monkeypatch.setattr(lyric_alignment, "run_qwen_asr_and_fa", lambda *args, **kwargs: ({"chunk_0": ["a"]}, ["log"]))
+    monkeypatch.setattr(lyric_alignment, "load_hfa_model", lambda *args, **kwargs: MagicMock())
+    monkeypatch.setattr(lyric_alignment, "run_hubert_fa", lambda *args, **kwargs: {"chunk_0": (None, None, [MagicMock()])})
+    monkeypatch.setattr(lyric_alignment, "export_hfa_artifacts", lambda *args, **kwargs: None)
     extract_aligned = MagicMock(return_value=([], set()))
     extract_only = MagicMock(return_value=[NoteInfo(0.0, 0.5, 62.0, "")])
     monkeypatch.setattr(pipeline, "extract_pitches_and_align", extract_aligned)
@@ -339,13 +340,13 @@ def test_asr_match_log_exported_when_requested(monkeypatch, tmp_path):
     _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        pipeline,
+        lyric_alignment,
         "run_qwen_asr_and_fa",
         lambda *args, **kwargs: ({"chunk_0": ["a"]}, ["matched chunk_0", "matched chunk_1"]),
     )
-    monkeypatch.setattr(pipeline, "load_hfa_model", lambda *args, **kwargs: MagicMock())
-    monkeypatch.setattr(pipeline, "run_hubert_fa", lambda *args, **kwargs: {"chunk_0": (None, None, [MagicMock()])})
-    monkeypatch.setattr(pipeline, "export_hfa_artifacts", lambda *args, **kwargs: None)
+    monkeypatch.setattr(lyric_alignment, "load_hfa_model", lambda *args, **kwargs: MagicMock())
+    monkeypatch.setattr(lyric_alignment, "run_hubert_fa", lambda *args, **kwargs: {"chunk_0": (None, None, [MagicMock()])})
+    monkeypatch.setattr(lyric_alignment, "export_hfa_artifacts", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         pipeline,
         "extract_pitches_and_align",

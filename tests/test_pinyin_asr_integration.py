@@ -20,6 +20,7 @@ from inference.API.lfa_api import (
 from inference.io.note_io import NoteInfo
 from inference.pinyin_asr.runtime import PinyinASROnnxModel, resolve_model_dir
 from inference.pipeline import auto_lyric_hybrid as pipeline
+from inference.pipeline import lyric_alignment
 
 
 # --- language routing helpers ---
@@ -94,11 +95,11 @@ def _patch_common(monkeypatch):
 
 
 def _patch_alignment_success(monkeypatch):
-    monkeypatch.setattr(pipeline, "load_hfa_model", lambda *a, **k: MagicMock())
+    monkeypatch.setattr(lyric_alignment, "load_hfa_model", lambda *a, **k: MagicMock())
     monkeypatch.setattr(
-        pipeline, "run_hubert_fa", lambda *a, **k: {"chunk_0": (None, None, [MagicMock()])}
+        lyric_alignment, "run_hubert_fa", lambda *a, **k: {"chunk_0": (None, None, [MagicMock()])}
     )
-    monkeypatch.setattr(pipeline, "export_hfa_artifacts", lambda *a, **k: None)
+    monkeypatch.setattr(lyric_alignment, "export_hfa_artifacts", lambda *a, **k: None)
     monkeypatch.setattr(
         pipeline,
         "extract_pitches_and_align",
@@ -109,18 +110,18 @@ def _patch_alignment_success(monkeypatch):
 def test_zh_pinyin_uses_pinyin_asr_and_zh_hfa(monkeypatch, tmp_path):
     _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *a, **k: None)
-    monkeypatch.setattr(pipeline, "_select_pinyin_asr_path", lambda path: "pinyin")
+    monkeypatch.setattr(lyric_alignment, "_select_pinyin_asr_path", lambda path: "pinyin")
     run_pinyin = MagicMock(return_value=({"chunk_0": ["ni"]}, ["log"]))
     run_romaji = MagicMock()
     run_qwen = MagicMock()
-    monkeypatch.setattr(pipeline, "run_pinyin_asr", run_pinyin)
-    monkeypatch.setattr(pipeline, "run_romaji_asr", run_romaji)
-    monkeypatch.setattr(pipeline, "run_qwen_asr_and_fa", run_qwen)
+    monkeypatch.setattr(lyric_alignment, "run_pinyin_asr", run_pinyin)
+    monkeypatch.setattr(lyric_alignment, "run_romaji_asr", run_romaji)
+    monkeypatch.setattr(lyric_alignment, "run_qwen_asr_and_fa", run_qwen)
     _patch_alignment_success(monkeypatch)
     run_hfa = MagicMock(
         side_effect=lambda *a, **k: {"chunk_0": (None, None, [MagicMock()])}
     )
-    monkeypatch.setattr(pipeline, "run_hubert_fa", run_hfa)
+    monkeypatch.setattr(lyric_alignment, "run_hubert_fa", run_hfa)
 
     kwargs = _base_kwargs(tmp_path)
     kwargs["language"] = "中文-拼音"
@@ -140,11 +141,11 @@ def test_zh_pinyin_uses_pinyin_asr_and_zh_hfa(monkeypatch, tmp_path):
 def test_zh_pinyin_falls_back_to_qwen_when_model_missing(monkeypatch, tmp_path):
     _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *a, **k: None)
-    monkeypatch.setattr(pipeline, "_select_pinyin_asr_path", lambda path: None)
+    monkeypatch.setattr(lyric_alignment, "_select_pinyin_asr_path", lambda path: None)
     run_pinyin = MagicMock()
     run_qwen = MagicMock(return_value=({"chunk_0": ["你"]}, ["log"]))
-    monkeypatch.setattr(pipeline, "run_pinyin_asr", run_pinyin)
-    monkeypatch.setattr(pipeline, "run_qwen_asr_and_fa", run_qwen)
+    monkeypatch.setattr(lyric_alignment, "run_pinyin_asr", run_pinyin)
+    monkeypatch.setattr(lyric_alignment, "run_qwen_asr_and_fa", run_qwen)
     _patch_alignment_success(monkeypatch)
 
     kwargs = _base_kwargs(tmp_path)
@@ -162,8 +163,8 @@ def test_plain_zh_still_uses_qwen(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *a, **k: None)
     run_pinyin = MagicMock()
     run_qwen = MagicMock(return_value=({"chunk_0": ["你"]}, ["log"]))
-    monkeypatch.setattr(pipeline, "run_pinyin_asr", run_pinyin)
-    monkeypatch.setattr(pipeline, "run_qwen_asr_and_fa", run_qwen)
+    monkeypatch.setattr(lyric_alignment, "run_pinyin_asr", run_pinyin)
+    monkeypatch.setattr(lyric_alignment, "run_qwen_asr_and_fa", run_qwen)
     _patch_alignment_success(monkeypatch)
 
     kwargs = _base_kwargs(tmp_path)
@@ -180,18 +181,18 @@ def test_zh_with_pinyin_engine_routes_to_pinyin_asr(monkeypatch, tmp_path):
     """The model-config Chinese ASR choice routes plain zh through the pinyin ASR."""
     _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *a, **k: None)
-    monkeypatch.setattr(pipeline, "_select_pinyin_asr_path", lambda path: "pinyin")
+    monkeypatch.setattr(lyric_alignment, "_select_pinyin_asr_path", lambda path: "pinyin")
     run_pinyin = MagicMock(return_value=({"chunk_0": ["ni"]}, ["log"]))
     run_romaji = MagicMock()
     run_qwen = MagicMock()
-    monkeypatch.setattr(pipeline, "run_pinyin_asr", run_pinyin)
-    monkeypatch.setattr(pipeline, "run_romaji_asr", run_romaji)
-    monkeypatch.setattr(pipeline, "run_qwen_asr_and_fa", run_qwen)
+    monkeypatch.setattr(lyric_alignment, "run_pinyin_asr", run_pinyin)
+    monkeypatch.setattr(lyric_alignment, "run_romaji_asr", run_romaji)
+    monkeypatch.setattr(lyric_alignment, "run_qwen_asr_and_fa", run_qwen)
     _patch_alignment_success(monkeypatch)
     run_hfa = MagicMock(
         side_effect=lambda *a, **k: {"chunk_0": (None, None, [MagicMock()])}
     )
-    monkeypatch.setattr(pipeline, "run_hubert_fa", run_hfa)
+    monkeypatch.setattr(lyric_alignment, "run_hubert_fa", run_hfa)
 
     kwargs = _base_kwargs(tmp_path)
     kwargs["lyric_output_mode"] = "hanzi"  # coerced to pinyin by the engine
@@ -212,11 +213,11 @@ def test_ja_with_qwen_engine_skips_romaji_asr(monkeypatch, tmp_path):
     """The model-config Japanese ASR choice can force the Qwen text-ASR path."""
     _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *a, **k: None)
-    monkeypatch.setattr(pipeline, "_select_romaji_asr_path", lambda path: "romaji")
+    monkeypatch.setattr(lyric_alignment, "_select_romaji_asr_path", lambda path: "romaji")
     run_romaji = MagicMock()
     run_qwen = MagicMock(return_value=({"chunk_0": ["ラ"]}, ["log"]))
-    monkeypatch.setattr(pipeline, "run_romaji_asr", run_romaji)
-    monkeypatch.setattr(pipeline, "run_qwen_asr_and_fa", run_qwen)
+    monkeypatch.setattr(lyric_alignment, "run_romaji_asr", run_romaji)
+    monkeypatch.setattr(lyric_alignment, "run_qwen_asr_and_fa", run_qwen)
     _patch_alignment_success(monkeypatch)
 
     kwargs = _base_kwargs(tmp_path)
@@ -234,11 +235,11 @@ def test_ja_with_qwen_engine_skips_romaji_asr(monkeypatch, tmp_path):
 def test_ja_default_engine_still_uses_romaji_asr(monkeypatch, tmp_path):
     _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *a, **k: None)
-    monkeypatch.setattr(pipeline, "_select_romaji_asr_path", lambda path: "romaji")
+    monkeypatch.setattr(lyric_alignment, "_select_romaji_asr_path", lambda path: "romaji")
     run_romaji = MagicMock(return_value=({"chunk_0": ["ra"]}, ["log"]))
     run_qwen = MagicMock()
-    monkeypatch.setattr(pipeline, "run_romaji_asr", run_romaji)
-    monkeypatch.setattr(pipeline, "run_qwen_asr_and_fa", run_qwen)
+    monkeypatch.setattr(lyric_alignment, "run_romaji_asr", run_romaji)
+    monkeypatch.setattr(lyric_alignment, "run_qwen_asr_and_fa", run_qwen)
     _patch_alignment_success(monkeypatch)
 
     kwargs = _base_kwargs(tmp_path)
