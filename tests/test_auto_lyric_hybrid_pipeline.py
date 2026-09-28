@@ -333,3 +333,47 @@ def test_slice_bounds_are_forwarded_to_slicer(monkeypatch, tmp_path):
 
     assert slice_audio.call_args.kwargs["min_len_sec"] == 5.0
     assert slice_audio.call_args.kwargs["max_len_sec"] == 17.5
+
+
+def test_asr_match_log_exported_when_requested(monkeypatch, tmp_path):
+    _patch_common(monkeypatch)
+    monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        pipeline,
+        "run_qwen_asr_and_fa",
+        lambda *args, **kwargs: ({"chunk_0": ["a"]}, ["matched chunk_0", "matched chunk_1"]),
+    )
+    monkeypatch.setattr(pipeline, "load_hfa_model", lambda *args, **kwargs: MagicMock())
+    monkeypatch.setattr(pipeline, "run_hubert_fa", lambda *args, **kwargs: {"chunk_0": (None, None, [MagicMock()])})
+    monkeypatch.setattr(pipeline, "export_hfa_artifacts", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        pipeline,
+        "extract_pitches_and_align",
+        lambda *args, **kwargs: ([NoteInfo(0.0, 0.5, 60.0, "a")], {0}),
+    )
+
+    kwargs = _base_kwargs(tmp_path)
+    kwargs["language"] = "zh"
+    kwargs["lyric_output_mode"] = "hanzi"
+    kwargs["output_formats"] = ["asr_match_log"]
+
+    pipeline.auto_lyric_hybrid_pipeline(**kwargs)
+
+    log_file = tmp_path / "out" / "Song_asr_match_log.txt"
+    assert log_file.exists()
+    assert log_file.read_text(encoding="utf-8") == "matched chunk_0\nmatched chunk_1"
+
+
+def test_chunks_format_exports_chunk_wavs_without_lyrics(monkeypatch, tmp_path):
+    _patch_common(monkeypatch)
+    extract_only = MagicMock(return_value=[NoteInfo(0.0, 0.5, 60.0, "")])
+    monkeypatch.setattr(pipeline, "extract_pitches_only", extract_only)
+
+    kwargs = _base_kwargs(tmp_path)
+    kwargs["output_lyrics"] = False
+    kwargs["output_formats"] = ["chunks"]
+
+    pipeline.auto_lyric_hybrid_pipeline(**kwargs)
+
+    # the memory-waveform path writes chunk wavs directly from the sliced audio
+    assert (tmp_path / "out" / "Song_000.wav").exists()
