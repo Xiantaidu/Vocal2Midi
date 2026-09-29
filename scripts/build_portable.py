@@ -238,6 +238,7 @@ def copy_models(output_dir: Path, selected_models: list[str]) -> None:
 def write_launcher(output_dir: Path, *, runtime_mode_used: str) -> None:
     run_gui = output_dir / "Run Vocal2Midi.bat"
     run_cli = output_dir / "Run Slice ASR CLI.bat"
+    run_auto_lyric_cli = output_dir / "Run Auto Lyric CLI.bat"
     open_shell = output_dir / "Open Portable Shell.bat"
 
     launch_prefix = f"""@echo off
@@ -285,6 +286,13 @@ cmd /k
         encoding="utf-8",
         newline="\r\n",
     )
+    run_auto_lyric_cli.write_text(
+        launch_prefix + f"""
+"%ROOT%{DEFAULT_RUNTIME_DIRNAME}\\python.exe" scripts\\auto_lyric_cli.py %*
+""",
+        encoding="utf-8",
+        newline="\r\n",
+    )
 
 
 def write_portable_notes(output_dir: Path, *, runtime_mode_used: str, selected_models: list[str]) -> None:
@@ -302,7 +310,8 @@ def write_portable_notes(output_dir: Path, *, runtime_mode_used: str, selected_m
                 "1. Keep this folder structure unchanged after extraction.",
                 "2. Start the GUI with 'Run Vocal2Midi.bat'.",
                 "3. Start the batch CLI with 'Run Slice ASR CLI.bat'.",
-                "4. Open a shell with the bundled runtime via 'Open Portable Shell.bat'.",
+                "4. Run the full pipeline headless with 'Run Auto Lyric CLI.bat' (append --help for usage).",
+                "5. Open a shell with the bundled runtime via 'Open Portable Shell.bat'.",
                 "",
                 runtime_note,
                 "",

@@ -272,6 +272,28 @@ CoreML encoder path with a CPU decoder fallback.
 
 
 
+## Auto Lyric CLI
+
+Headless mode: run the full extraction pipeline (ASR / alignment / GAME ->
+MIDI/USTX/VSQX) from the command line, without the GUI. Defaults mirror the
+GUI settings; any flag overrides them.
+
+```bash
+python scripts/auto_lyric_cli.py <input_files_or_dirs...> -o <output_dir>   --language zh   --formats mid ustx
+```
+
+- Inputs may be audio files and/or directories (recursed by default,
+  `--no-recursive` to flatten); supported extensions match the GUI.
+- `--no-lyrics` extracts pitch only and skips ASR/HFA entirely.
+- `--lyrics` / `--lyrics-file` provide reference lyrics for alignment.
+- `--language zh|ja|en` with `--lyric-format pinyin|hanzi|romaji|kana|word`;
+  `--chinese-asr pinyin|qwen` and `--japanese-asr romaji|qwen` select the ASR
+  engines (same choices as the model config page).
+- A batch of files shares one ASR worker process; a failing file is reported
+  and skipped, and the exit code is 1 if any file failed.
+
+
+
 ## Windows Setup Scripts
 
 The repository also includes Windows helper scripts:
