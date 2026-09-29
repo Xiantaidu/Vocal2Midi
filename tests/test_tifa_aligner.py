@@ -50,10 +50,11 @@ def test_run_tifa_fa_end_to_end(tmp_path, model):
 def test_run_tifa_fa_skips_unencodable_text(tmp_path, model):
     fugashi_missing = importlib.util.find_spec("fugashi") is None
     if not fugashi_missing:
-        pytest.skip("fugashi installed; the kanji fallback path cannot be exercised")
+        pytest.skip("fugashi installed; the unencodable fallback path cannot be exercised")
     _write_tone(tmp_path / "chunk_0.wav")
-    # kanji without the optional MeCab stack: no converter can resolve it
-    (tmp_path / "chunk_0.txt").write_text("薔薇", encoding="utf-8")
+    # 们 is a Chinese-only character: absent from the ja lexicon pack, so no
+    # converter can resolve it and the chunk must fall back to pitch-only.
+    (tmp_path / "chunk_0.txt").write_text("们", encoding="utf-8")
 
     from inference.TiFA.aligner import run_tifa_fa
 
@@ -87,3 +88,23 @@ def test_textgrid_export_matches_hfa_layout(tmp_path, model):
     content = tg_file.read_text(encoding="utf-8")
     assert 'name = "words"' in content
     assert 'name = "phones"' in content
+
+
+def test_run_tifa_fa_kanji_lexicon_text(tmp_path, model):
+    if not (MODEL_DIR / "dictionaries" / "ja_lexicon.txz").is_file():
+        pytest.skip("ja_lexicon.txz not present")
+    _write_tone(tmp_path / "chunk_0.wav", seconds=1.6)
+    (tmp_path / "chunk_0.txt").write_text("普通の世界", encoding="utf-8")
+
+    from inference.TiFA.aligner import run_tifa_fa
+
+    pred_dict = run_tifa_fa(model, tmp_path, language="ja")
+
+    assert "chunk_0" in pred_dict
+    _, duration, words = pred_dict["chunk_0"]
+    texts = [word.text for word in words]
+    assert "普通" in texts, texts
+    starts = [word.start for word in words]
+    assert starts == sorted(starts)
+    for word in words:
+        assert 0 <= word.start < word.end <= duration + 0.2

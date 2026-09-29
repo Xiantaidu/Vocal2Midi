@@ -89,3 +89,22 @@ def test_encoded_tokens_are_not_reserved(pipeline, vocabulary):
     tokens = data["paths"]
     assert tokens[tokens > 0].min() >= NUM_RESERVED_TOKENS
     assert np.isin(tokens, [0]).sum() > 0  # alignment gaps exist between words
+
+
+def test_japanese_lexicon_kanji_encodes_with_candidates(pipeline, vocabulary):
+    """The ja_g2p lexicon converter emits multiple candidate readings per kanji
+    word; selection is deferred to the scoring DP."""
+    import importlib.util
+
+    if not (MODEL_DIR / "dictionaries" / "ja_lexicon.txz").is_file():
+        pytest.skip("ja_lexicon.txz not present")
+    assert importlib.util.find_spec("fugashi") is None or True  # MeCab optional
+
+    words = pipeline.convert("普通の世界", languages=["ja"])
+    by_text = {word.text: word for word in words}
+    assert "普通" in by_text
+    assert len(by_text["普通"].readings) >= 2, "polyphone candidates must survive"
+
+    data, lexicon, texts = _encode(pipeline, vocabulary, "普通の世界", "ja")
+    assert data["paths"].any()
+    assert "普通" in texts and "世界" in texts

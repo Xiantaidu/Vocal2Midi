@@ -26,6 +26,16 @@ def build_g2p_pipeline(model_dir: str | Path) -> G2PPipeline:
     converters = [
         get_converter("chinese-pinyin")(dict_path=str(dictionaries / "ds-zh-pinyin-lite.txt")),
     ]
+    lexicon_path = root / "dictionaries" / "ja_lexicon.txz"
+    if lexicon_path.is_file():
+        # Kanji-bearing spans claim their readings from the ja_g2p lexicon
+        # (all candidates emitted; the scoring DP picks in audio context).
+        import inference.TiFA.japanese_lexicon  # noqa: F401 - populates the registry
+
+        converters.append(get_converter("japanese-lexicon")(
+            lexicon_path=str(lexicon_path),
+            dict_path=str(dictionaries / "japanese_dict_full.txt"),
+        ))
     try:
         mecab = get_converter("japanese-mecab")(
             dict_path=str(dictionaries / "japanese_dict_full.txt"),
