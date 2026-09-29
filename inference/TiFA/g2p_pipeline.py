@@ -37,9 +37,14 @@ def build_g2p_pipeline(model_dir: str | Path) -> G2PPipeline:
         mecab.convert("あ")
         converters.append(mecab)
     except Exception as e:
-        # fugashi/unidic are optional; kana and romaji input still converts
-        # through the Japanese dictionary below.
+        # fugashi/unidic are optional; the kana converter covers kana input
+        # and the Japanese dictionary below covers romaji.
         logger.warning(f"Japanese MeCab converter unavailable, kanji input falls back to the dictionary: {e}")
+        kana = get_converter("japanese-kana")(
+            dict_path=str(dictionaries / "japanese_dict_full.txt"),
+            double_written_sokuon=False,
+        )
+        converters.append(kana)
 
     lstm = get_converter("lstm")(
         dict_path=str(dictionaries / "ds_cmudict-07b.txt"),
