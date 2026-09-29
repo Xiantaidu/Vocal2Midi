@@ -4,6 +4,8 @@ Feeds one or more audio files (or directories) through the auto lyric hybrid
 pipeline (ASR / HFA / GAME) and writes MIDI/USTX/VSQX/... outputs. Defaults
 mirror the GUI settings (settings/vocal2midi.ini in portable mode, registry
 otherwise); explicit flags override them.
+
+Full option reference: scripts/auto_lyric_cli.md
 """
 from __future__ import annotations
 

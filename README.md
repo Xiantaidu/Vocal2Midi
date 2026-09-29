@@ -276,7 +276,8 @@ CoreML encoder path with a CPU decoder fallback.
 
 Headless mode: run the full extraction pipeline (ASR / alignment / GAME ->
 MIDI/USTX/VSQX) from the command line, without the GUI. Defaults mirror the
-GUI settings; any flag overrides them.
+GUI settings; any flag overrides them. Full option reference:
+[scripts/auto_lyric_cli.md](scripts/auto_lyric_cli.md).
 
 ```bash
 python scripts/auto_lyric_cli.py <input_files_or_dirs...> -o <output_dir>   --language zh   --formats mid ustx
