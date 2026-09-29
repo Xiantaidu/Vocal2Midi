@@ -141,3 +141,16 @@ def test_process_asr_to_phonemes_en_matches_reference_lyrics(tmp_path):
 def test_normalize_lyric_output_mode_en_defaults_to_word():
     assert lfa_api._normalize_lyric_output_mode("en", None) == "word"
     assert lfa_api._normalize_lyric_output_mode("en", "romaji") == "word"
+
+
+def test_kata_to_romaji_covers_dakuten_digraphs():
+    """The ONNX reading backend emits ぢ-row digraphs and standalone small
+    kana; HFA's romaji dictionary must resolve every resulting mora."""
+    from inference.LyricFA.tools.JaG2p import KATA_TO_ROMAJI
+
+    for kata, romaji in (
+        ("ヂャ", "dya"), ("ヂュ", "dyu"), ("ヂョ", "dyo"),
+        ("ヂェ", "dye"), ("ヂィ", "dyi"), ("フュ", "fyu"),
+        ("テュ", "tyu"), ("デュ", "dyu"), ("ァ", "a"), ("ョ", "yo"),
+    ):
+        assert KATA_TO_ROMAJI.get(kata) == romaji, kata

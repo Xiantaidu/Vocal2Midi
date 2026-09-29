@@ -12,6 +12,7 @@ from pathlib import Path
 
 import inference.TiFA.g2p.converters  # noqa: F401 - populates the registry
 import inference.TiFA.g2p.preprocessors  # noqa: F401
+from inference.ja_onnx_g2p import DEFAULT_MODEL_DIR as JA_G2P_MODEL_DIR
 from inference.TiFA.g2p.pipeline import G2PPipeline
 from inference.TiFA.g2p.registry import get_converter, get_preprocessor
 
@@ -26,6 +27,15 @@ def build_g2p_pipeline(model_dir: str | Path) -> G2PPipeline:
     converters = [
         get_converter("chinese-pinyin")(dict_path=str(dictionaries / "ds-zh-pinyin-lite.txt")),
     ]
+    if (JA_G2P_MODEL_DIR / "g2p_onnx_runtime.py").is_file():
+        # Kanji-bearing runs go through the ja_g2p_onnx model first: its
+        # transformer disambiguates polyphones in sentence context and its
+        # readings convert through the same DiffSinger Japanese dictionary.
+        import inference.TiFA.japanese_onnx  # noqa: F401 - populates the registry
+
+        converters.append(get_converter("japanese-onnx")(
+            dict_path=str(dictionaries / "japanese_dict_full.txt"),
+        ))
     lexicon_path = root / "dictionaries" / "ja_lexicon.txz"
     if lexicon_path.is_file():
         # Kanji-bearing spans claim their readings from the ja_g2p lexicon

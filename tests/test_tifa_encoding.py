@@ -93,21 +93,34 @@ def test_encoded_tokens_are_not_reserved(pipeline, vocabulary):
 
 def test_japanese_lexicon_kanji_encodes_with_candidates(pipeline, vocabulary):
     """The ja_g2p lexicon converter emits multiple candidate readings per kanji
-    word; selection is deferred to the scoring DP."""
+    word; selection is deferred to the scoring DP. Built directly: in the full
+    factory chain the japanese-onnx converter claims kanji runs first."""
     import importlib.util
 
     if not (MODEL_DIR / "dictionaries" / "ja_lexicon.txz").is_file():
         pytest.skip("ja_lexicon.txz not present")
     assert importlib.util.find_spec("fugashi") is None or True  # MeCab optional
 
-    words = pipeline.convert("普通の世界", languages=["ja"])
-    by_text = {word.text: word for word in words}
-    assert "普通" in by_text
-    assert len(by_text["普通"].readings) >= 2, "polyphone candidates must survive"
+    from inference.TiFA.japanese_lexicon import JapaneseLexiconConverter
 
-    data, lexicon, texts = _encode(pipeline, vocabulary, "普通の世界", "ja")
+    conv = JapaneseLexiconConverter(
+        lexicon_path=str(MODEL_DIR / "dictionaries" / "ja_lexicon.txz"),
+        dict_path=str(MODEL_DIR / "dictionaries" / "japanese_dict_full.txt"),
+    )
+    words = conv.convert("普通")
+    assert words and len(words[0].readings) >= 2, "polyphone candidates must survive"
+    for word in words:
+        word.language = "ja"
+
+    from inference.TiFA.aligner import GLOBAL_SYMBOLS, STOP_SYMBOLS
+    from inference.TiFA.g2p.encoding import encode_paths
+
+    data, lexicon, texts = encode_paths(
+        words, vocabulary, "discard", languages=["ja"],
+        global_symbols=GLOBAL_SYMBOLS, stop_symbols=STOP_SYMBOLS,
+    )
     assert data["paths"].any()
-    assert "普通" in texts and "世界" in texts
+    assert texts == ["普通"]
 
 
 def test_ja_dakuten_digraphs_encode(pipeline, vocabulary):
@@ -141,4 +154,3 @@ def test_ja_nonstandard_kana_readings_are_faithful():
     assert phonemes("だょ") == [("d", "a", "y", "o")]
     assert phonemes("づぁ") == [("z", "a")]
     assert phonemes("づぉ") == [("z", "o")]
-

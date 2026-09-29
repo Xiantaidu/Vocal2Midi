@@ -1,8 +1,16 @@
-import pyopenjtalk
 import re
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _get_onnx_runtime():
+    """ja_g2p_onnx runtime when the model folder ships with the app, else None."""
+    try:
+        from inference.ja_onnx_g2p import get_ja_onnx_runtime
+    except ImportError:
+        return None
+    return get_ja_onnx_runtime()
 
 
 def is_letter(character):
@@ -77,6 +85,10 @@ KATA_TO_ROMAJI = {
     'チェ': 'che', 'ジェ': 'je', 'シェ': 'she',
     'ウィ': 'wi', 'ウェ': 'we', 'ウォ': 'wo',
     'クァ': 'kwa', 'グァ': 'gwa',
+    'ヂャ': 'dya', 'ヂュ': 'dyu', 'ヂョ': 'dyo', 'ヂェ': 'dye', 'ヂィ': 'dyi',
+    'フュ': 'fyu', 'テュ': 'tyu', 'デュ': 'dyu',
+    'ァ': 'a', 'ィ': 'i', 'ゥ': 'u', 'ェ': 'e', 'ォ': 'o',
+    'ャ': 'ya', 'ュ': 'yu', 'ョ': 'yo',
     'ッ': 'cl',
 }
 
@@ -197,7 +209,25 @@ class JaG2p:
         if not normalized_segment:
             return []
 
+        # ja_g2p_onnx (LAKE-G2P v5) first: transformer-disambiguated kana
+        # readings per word edge, no 775MB UniDic needed.
+        runtime = _get_onnx_runtime()
+        if runtime is not None:
+            try:
+                from inference.ja_onnx_g2p import normalize_edge_reading
+                predicted = runtime.predict(normalized_segment)
+                analysis = []
+                for edge in predicted["edges"]:
+                    reading = normalize_edge_reading(edge["surface"], edge["reading"])
+                    analysis.extend(
+                        self._parse_pron_to_entry(edge["surface"], reading))
+                if analysis:
+                    return analysis
+            except Exception as e:
+                logger.warning(f"JaG2p ONNX backend failed ({e}); falling back to pyopenjtalk")
+
         try:
+            import pyopenjtalk
             words_info = pyopenjtalk.run_frontend(normalized_segment)
         except Exception:
             words_info = []
@@ -239,6 +269,10 @@ class JaG2p:
 
         if all(ch in self.number_map for ch in normalized_token):
             if convert_number:
+                if _get_onnx_runtime() is not None:
+                    # The model's number rules read digit strings natively
+                    # (12年 -> じゅうにねん); keep digits unconverted.
+                    return self._analyze_japanese_segment(normalized_token)
                 mapped = ''.join(self.number_map.get(ch, ch) for ch in normalized_token)
                 return self._analyze_japanese_segment(mapped)
             return self._fallback_entry(normalized_token)

@@ -40,6 +40,31 @@ def _contains_kanji(text: str) -> bool:
     return _KANJI_RE.search(text) is not None
 
 
+def kana_reading_to_path(kana: JapaneseKanaConverter, reading: str):
+    """Kana reading -> phoneme path via the kana converter's two phases.
+
+    Each group's script carries its kana character (not romaji) so the
+    aligner can emit per-mora kana display tokens; romaji is recovered by
+    merging the group's CV phonemes. A reading that cannot be converted
+    (rare malformed lexicon entries) returns None so only its own candidate
+    is dropped.
+    """
+    try:
+        words = kana.convert(reading)
+    except KeyError:
+        return None
+    kana_tokens = split_words(reading)
+    if len(words) != len(kana_tokens):
+        return None
+    path = []
+    for word, kana_char in zip(words, kana_tokens):
+        if not word.readings or not word.readings[0].paths:
+            return None
+        for group in word.readings[0].paths[0]:
+            path.append(G2PGroup(script=kana_char, phonemes=list(group.phonemes)))
+    return path or None
+
+
 class JapaneseLexiconConverter(Converter):
     """Claims kanji-bearing spans and emits every lexicon reading as a candidate.
 
@@ -108,27 +133,7 @@ class JapaneseLexiconConverter(Converter):
         return surfaces
 
     def _reading_to_path(self, reading: str):
-        """Kana reading -> phoneme path via the kana converter's two phases.
-
-        Each group's script carries its kana character (not romaji) so the
-        aligner can emit per-mora kana display tokens; romaji is recovered by
-        merging the group's CV phonemes. A reading that cannot be converted
-        (rare malformed lexicon entries) drops only its own candidate.
-        """
-        try:
-            words = self._kana.convert(reading)
-        except KeyError:
-            return None
-        kana_tokens = split_words(reading)
-        if len(words) != len(kana_tokens):
-            return None
-        path = []
-        for word, kana in zip(words, kana_tokens):
-            if not word.readings or not word.readings[0].paths:
-                return None
-            for group in word.readings[0].paths[0]:
-                path.append(G2PGroup(script=kana, phonemes=list(group.phonemes)))
-        return path or None
+        return kana_reading_to_path(self._kana, reading)
 
     def find(self, text: str) -> tuple[int, int] | None:
         surfaces = self._load()
