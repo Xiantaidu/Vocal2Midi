@@ -77,6 +77,9 @@ class PipelineConfig:
     # "romaji"|"qwen" for Japanese.
     chinese_asr_engine: str = "qwen"
     japanese_asr_engine: str = "romaji"
+    # Forced-alignment engine: "hfa" (default) or "tifa".
+    alignment_engine: str = "hfa"
+    tifa_model_path: str = ""
     output_pitch_curve: bool = False
     # Runtime handles (like cancel_checker): an optional shared ASR
     # subprocess session so a batch of jobs reuses one spawned worker
@@ -119,6 +122,8 @@ class PipelineConfig:
             "pinyin_asr_model_path": self.pinyin_asr_model_path,
             "chinese_asr_engine": self.chinese_asr_engine,
             "japanese_asr_engine": self.japanese_asr_engine,
+            "alignment_engine": self.alignment_engine,
+            "tifa_model_path": self.tifa_model_path,
             "asr_session": self.asr_session,
             "output_pitch_curve": self.output_pitch_curve,
             "cancel_checker": self.cancel_checker,

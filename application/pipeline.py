@@ -38,7 +38,11 @@ def _validate_model_paths(cfg: PipelineConfig) -> None:
     """Validate that required model paths exist before starting the pipeline."""
     required_paths = [("GAME 模型目录", cfg.game_model_dir)]
     if cfg.output_lyrics:
-        required_paths.append(("HubertFA 模型目录", cfg.hfa_model_dir))
+        # The forced-alignment engine decides which aligner model is required.
+        if str(cfg.alignment_engine or "").strip().lower() == "tifa":
+            required_paths.append(("TiFA 模型目录", cfg.tifa_model_path))
+        else:
+            required_paths.append(("HubertFA 模型目录", cfg.hfa_model_dir))
         if _uses_pinyin_asr(cfg):
             # Chinese + pinyin ASR routes to the pinyin model; Qwen is not used.
             if cfg.pinyin_asr_model_path:

@@ -374,6 +374,8 @@ def auto_lyric_hybrid_pipeline(
     pinyin_asr_model_path: str = "",
     chinese_asr_engine: str = "qwen",
     japanese_asr_engine: str = "romaji",
+    alignment_engine: str = "hfa",
+    tifa_model_path: str = "",
     asr_session=None,
     cancel_checker=None,
 ):
@@ -423,6 +425,8 @@ def auto_lyric_hybrid_pipeline(
             chunks, sr, ctx, matcher,
             asr_model_path=asr_model_path,
             hfa_model_dir=hfa_model_dir,
+            tifa_model_path=tifa_model_path,
+            alignment_engine=alignment_engine,
             phoneme_asr_model_path=phoneme_asr_model_path,
             pinyin_asr_model_path=pinyin_asr_model_path,
             japanese_asr_engine=japanese_asr_engine,

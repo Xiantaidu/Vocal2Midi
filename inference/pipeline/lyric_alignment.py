@@ -16,6 +16,9 @@ from inference.API.asr_api import (
     batch_transcribe_romaji_asr,
 )
 from inference.API.hfa_api import load_hfa_model, run_hubert_fa, export_hfa_artifacts
+from inference.TiFA.aligner import run_tifa_fa
+from inference.TiFA.runtime import load_tifa_model
+from inference.TiFA.textgrid import save_textgrids as export_textgrids
 from inference.API.lfa_api import process_asr_to_phonemes
 from inference.pipeline.memory_utils import free_memory
 
@@ -212,6 +215,8 @@ def _run_lyric_alignment(
     *,
     asr_model_path,
     hfa_model_dir,
+    tifa_model_path,
+    alignment_engine,
     phoneme_asr_model_path,
     pinyin_asr_model_path,
     japanese_asr_engine,
@@ -219,7 +224,7 @@ def _run_lyric_alignment(
     asr_session,
     cancel_checker,
 ) -> _AlignmentOutcome:
-    """Stages 1+2: phoneme/text ASR followed by HubertFA alignment.
+    """Stages 1+2: phoneme/text ASR followed by forced alignment (HFA or TiFA).
 
     Owns the temporary directory holding the chunk wavs and .lab files;
     nothing outside this stage reads them.
@@ -301,46 +306,81 @@ def _run_lyric_alignment(
         free_memory()
 
         if aligned:
-            logger.info("\n--- Stage 2/3: Loading HubertFA model ---")
-            hfa_model = load_hfa_model(hfa_model_dir, device=ctx.device)
-            try:
-                _check_cancel()
-                logger.info("------------------------------------------\n")
+            use_tifa = str(alignment_engine or "").strip().lower() == "tifa"
+            if use_tifa:
+                logger.info("\n--- Stage 2/3: Loading TiFA model ---")
+                tifa_model = load_tifa_model(tifa_model_path, device=ctx.device)
+                try:
+                    _check_cancel()
+                    logger.info("------------------------------------------\n")
 
-                pred_dict = run_hubert_fa(
-                    hfa_model,
-                    temp_dir_path,
-                    language=ctx.fa_language,
-                    cancel_checker=cancel_checker,
-                )
+                    pred_dict = run_tifa_fa(
+                        tifa_model,
+                        temp_dir_path,
+                        language=ctx.language,
+                        cancel_checker=cancel_checker,
+                    )
+                finally:
+                    del tifa_model
+                    free_memory()
+            else:
+                logger.info("\n--- Stage 2/3: Loading HubertFA model ---")
+                hfa_model = load_hfa_model(hfa_model_dir, device=ctx.device)
+                try:
+                    _check_cancel()
+                    logger.info("------------------------------------------\n")
+
+                    pred_dict = run_hubert_fa(
+                        hfa_model,
+                        temp_dir_path,
+                        language=ctx.fa_language,
+                        cancel_checker=cancel_checker,
+                    )
+                    _check_cancel()
+                    if not pred_dict:
+                        logger.warning(
+                            "[Warning] HFA did not produce alignment for any chunk; "
+                            "falling back to GAME pitch-only extraction."
+                        )
+                        aligned = False
+                    else:
+                        missing_hfa = sorted(set(chars_dict) - set(pred_dict))
+                        if missing_hfa:
+                            preview = ", ".join(missing_hfa[:8])
+                            suffix = " ..." if len(missing_hfa) > 8 else ""
+                            logger.warning(
+                                f"[Warning] HFA missing {len(missing_hfa)} chunk(s) "
+                                f"({preview}{suffix}); those chunks will use pitch-only fallback."
+                            )
+
+                        export_hfa_artifacts(
+                            chunks,
+                            temp_dir_path,
+                            hfa_model,
+                            ctx.output_key,
+                            ctx.output_dir,
+                            ctx.output_formats,
+                            cancel_checker=cancel_checker,
+                        )
+                finally:
+                    del hfa_model
+                    free_memory()
+            if use_tifa:
                 _check_cancel()
                 if not pred_dict:
                     logger.warning(
-                        "[Warning] HFA did not produce alignment for any chunk; "
+                        "[Warning] TiFA did not produce alignment for any chunk; "
                         "falling back to GAME pitch-only extraction."
                     )
                     aligned = False
                 else:
-                    missing_hfa = sorted(set(chars_dict) - set(pred_dict))
-                    if missing_hfa:
-                        preview = ", ".join(missing_hfa[:8])
-                        suffix = " ..." if len(missing_hfa) > 8 else ""
-                        logger.warning(
-                            f"[Warning] HFA missing {len(missing_hfa)} chunk(s) "
-                            f"({preview}{suffix}); those chunks will use pitch-only fallback."
-                        )
-
-                    export_hfa_artifacts(
-                        chunks,
-                        temp_dir_path,
-                        hfa_model,
-                        ctx.output_key,
+                    # TextGrid debug output shares the HFA file naming; chunk
+                    # WAVs go through the memory-waveform path in _run_game_stage.
+                    export_textgrids(
+                        list(pred_dict.values()),
                         ctx.output_dir,
-                        ctx.output_formats,
+                        ctx.output_key,
                         cancel_checker=cancel_checker,
                     )
-            finally:
-                del hfa_model
-                free_memory()
 
     return _AlignmentOutcome(chars_dict=chars_dict, pred_dict=pred_dict, chunk_logs=chunk_logs, aligned=aligned)

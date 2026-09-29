@@ -363,6 +363,10 @@ def process_asr_to_phonemes(
             match_status = "Direct ASR (No original lyrics)"
 
         (temp_dir_path / f"{stem}.lab").write_text(pinyin_str, encoding="utf-8")
+        # TiFA reads the raw ASR text (chunk_N.txt takes precedence over .lab);
+        # HubertFA ignores .txt files, so writing both is safe.
+        if raw_text:
+            (temp_dir_path / f"{stem}.txt").write_text(raw_text, encoding="utf-8")
         chars_dict[stem] = chars
 
         assigned_lyrics = _join_display_tokens(language, lyric_output_mode, chars)
