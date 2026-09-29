@@ -15,6 +15,7 @@ integration, including:
 - HubertFA
 - LyricFA
 - FunASR
+- TIFA
 - llama.cpp
 - ONNX Runtime
 - PyQt-Fluent-Widgets
@@ -24,6 +25,7 @@ Known vendored or adapted directories in this repository include:
 - inference/romaji_asr/
 - inference/HubertFA/
 - inference/LyricFA/
+- inference/TiFA/
 - inference/qwen3asr_dml/gguf/
 
 Additional third-party components, model assets, dictionaries, bundled data,
