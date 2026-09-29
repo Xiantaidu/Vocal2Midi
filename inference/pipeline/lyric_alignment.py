@@ -314,7 +314,7 @@ def _run_lyric_alignment(
                     _check_cancel()
                     logger.info("------------------------------------------\n")
 
-                    pred_dict = run_tifa_fa(
+                    pred_dict, tifa_display = run_tifa_fa(
                         tifa_model,
                         temp_dir_path,
                         language=ctx.language,
@@ -374,6 +374,16 @@ def _run_lyric_alignment(
                     )
                     aligned = False
                 else:
+                    # TiFA words are mora-level for ja: use its own romaji/kana
+                    # display tokens so every aligned word gets a lyric (the
+                    # lfa ja display cannot tokenize unspaced kanji text).
+                    for stem, pairs in tifa_display.items():
+                        if ctx.lyric_output_mode == "kana":
+                            tokens = [kana for _romaji, kana in pairs if kana]
+                        else:
+                            tokens = [romaji for romaji, _kana in pairs]
+                        if tokens:
+                            chars_dict[stem] = tokens
                     # TextGrid debug output shares the HFA file naming; chunk
                     # WAVs go through the memory-waveform path in _run_game_stage.
                     export_textgrids(

@@ -32,9 +32,10 @@ def test_run_tifa_fa_end_to_end(tmp_path, model):
 
     from inference.TiFA.aligner import run_tifa_fa
 
-    pred_dict = run_tifa_fa(model, tmp_path, language="zh")
+    pred_dict, display = run_tifa_fa(model, tmp_path, language="zh")
 
     assert "chunk_0" in pred_dict
+    assert display == {}  # zh keeps the lfa display tokens
     wav_path, duration, words = pred_dict["chunk_0"]
     assert abs(duration - 1.0) < 0.05
     assert len(words) >= 1
@@ -58,8 +59,8 @@ def test_run_tifa_fa_skips_unencodable_text(tmp_path, model):
 
     from inference.TiFA.aligner import run_tifa_fa
 
-    pred_dict = run_tifa_fa(model, tmp_path, language="ja")
-    assert pred_dict == {}
+    pred_dict, display = run_tifa_fa(model, tmp_path, language="ja")
+    assert pred_dict == {} and display == {}
 
 
 def test_run_tifa_fa_respects_cancellation(tmp_path, model):
@@ -79,7 +80,7 @@ def test_textgrid_export_matches_hfa_layout(tmp_path, model):
     from inference.TiFA.aligner import run_tifa_fa
     from inference.TiFA.textgrid import save_textgrids
 
-    pred_dict = run_tifa_fa(model, tmp_path, language="zh")
+    pred_dict, _display = run_tifa_fa(model, tmp_path, language="zh")
     predictions = [pred_dict["chunk_0"]]
     save_textgrids(predictions, tmp_path, "Song")
 
@@ -98,12 +99,17 @@ def test_run_tifa_fa_kanji_lexicon_text(tmp_path, model):
 
     from inference.TiFA.aligner import run_tifa_fa
 
-    pred_dict = run_tifa_fa(model, tmp_path, language="ja")
+    pred_dict, display = run_tifa_fa(model, tmp_path, language="ja")
 
     assert "chunk_0" in pred_dict
     _, duration, words = pred_dict["chunk_0"]
-    texts = [word.text for word in words]
-    assert "普通" in texts, texts
+    # mora-level romaji words paired with kana display tokens; the SP word
+    # appended by add_SP consumes no lyric and has no display entry
+    romaji = [word.text for word in words if word.text != "SP"]
+    kana = [kana for _romaji, kana in display["chunk_0"]]
+    assert "fu" in romaji and "tsu" in romaji, romaji
+    assert "ふ" in kana and "つ" in kana, kana
+    assert len(romaji) == len(kana), (romaji, kana)
     starts = [word.start for word in words]
     assert starts == sorted(starts)
     for word in words:

@@ -14,8 +14,9 @@ import lzma
 import pathlib
 import re
 
-from inference.TiFA.g2p.converters.base import Converter, G2PReading, G2PWord
+from inference.TiFA.g2p.converters.base import Converter, G2PGroup, G2PReading, G2PWord
 from inference.TiFA.g2p.converters.japanese import JapaneseKanaConverter
+from inference.TiFA.g2p.converters.text import split_words
 from inference.TiFA.g2p.registry import converter
 
 # Same source ranking as the ja_g2p runtime's UnifiedLexiconProvider.
@@ -107,12 +108,22 @@ class JapaneseLexiconConverter(Converter):
         return surfaces
 
     def _reading_to_path(self, reading: str):
-        """Kana reading -> phoneme path via the kana converter's two phases."""
+        """Kana reading -> phoneme path via the kana converter's two phases.
+
+        Each group's script carries its kana character (not romaji) so the
+        aligner can emit per-mora kana display tokens; romaji is recovered by
+        merging the group's CV phonemes.
+        """
+        words = self._kana.convert(reading)
+        kana_tokens = split_words(reading)
+        if len(words) != len(kana_tokens):
+            return None
         path = []
-        for word in self._kana.convert(reading):
+        for word, kana in zip(words, kana_tokens):
             if not word.readings or not word.readings[0].paths:
                 return None
-            path.extend(word.readings[0].paths[0])
+            for group in word.readings[0].paths[0]:
+                path.append(G2PGroup(script=kana, phonemes=list(group.phonemes)))
         return path or None
 
     def find(self, text: str) -> tuple[int, int] | None:

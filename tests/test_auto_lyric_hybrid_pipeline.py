@@ -385,7 +385,7 @@ def test_tifa_engine_routes_to_tifa_fa(monkeypatch, tmp_path):
     chunks = _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
     monkeypatch.setattr(lyric_alignment, "run_qwen_asr_and_fa", lambda *a, **k: ({"chunk_0": ["a"]}, ["log"]))
-    run_tifa = MagicMock(return_value={"chunk_0": (None, 1.0, [MagicMock()])})
+    run_tifa = MagicMock(return_value=({"chunk_0": (None, 1.0, [MagicMock()])}, {}))
     monkeypatch.setattr(lyric_alignment, "run_tifa_fa", run_tifa)
     load_tifa = MagicMock(return_value=MagicMock())
     monkeypatch.setattr(lyric_alignment, "load_tifa_model", load_tifa)

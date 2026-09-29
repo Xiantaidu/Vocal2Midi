@@ -18,6 +18,7 @@ import soundfile as sf
 
 from inference.API.hfa_api import _repair_pred_dict_short_words
 from inference.HubertFA.tools.align_word import Phoneme, Word, WordList
+from inference.HubertFA.tools.g2p import JapanesePhonemeMoraG2P
 from inference.TiFA.decoding import decode_alignment_flat
 from inference.TiFA.g2p.encoding import G2PEncodingError, encode_paths
 from inference.TiFA.g2p_pipeline import build_g2p_pipeline
@@ -55,10 +56,22 @@ def _padded_length(sample_count: int, model: TifaModel) -> int:
     return count + ((model.hop_size - remainder) % model.hop_size)
 
 
+def _merge_mora_phonemes(phonemes: list[str]) -> str:
+    """CV phoneme list -> romaji mora text (f u -> fu, ts u -> tsu, k y a -> kya)."""
+    if not phonemes:
+        return ""
+    text = " ".join(phonemes)
+    groups = JapanesePhonemeMoraG2P._parse_groups(text)
+    if groups:
+        return "".join(mora for mora, _phones in groups)
+    return "".join(phonemes)
+
+
 def _build_word_list(
     spans: np.ndarray,
     tokens: np.ndarray,
     word_ids: np.ndarray,
+    group_ids: np.ndarray,
     choices: np.ndarray,
     lexicon: list[list[dict]],
     texts: list[str],
@@ -66,9 +79,15 @@ def _build_word_list(
     language: str,
     timestep: float,
     duration: float,
-) -> WordList:
-    """Group aligned tokens into words matching the HubertFA WordList contract."""
+) -> tuple[WordList, list[tuple[str, str]]]:
+    """Group aligned tokens into words matching the HubertFA WordList contract.
+
+    For ja the words are split down to mora level (group boundaries = kana
+    units) so that one aligned word consumes exactly one romaji/kana lyric
+    token, and the returned display pairs carry both renderings per mora.
+    """
     word_list = WordList()
+    display: list[tuple[str, str]] = []
     phoneme_cursor = 0.0
     n = len(tokens)
     i = 0
@@ -79,34 +98,72 @@ def _build_word_list(
         word_index = word_ids[i] - 1
         text = texts[word_index] if 0 <= word_index < len(texts) else f"word{word_index}"
         choice = int(choices[word_index])
-        candidate = lexicon[word_index][choice - 1] if choice > 0 else None
+        candidate = lexicon[word_index][choice - 1] if choice > 0 and lexicon else None
         candidate_phonemes = list(candidate["phonemes"]) if candidate else []
+        candidate_scripts = list(candidate["scripts"]) if candidate else []
 
-        phonemes = []
-        for k in range(i, j):
-            onset = float(spans[k, 0]) * timestep
-            offset = float(spans[k, 1]) * timestep
+        def _token_label(k: int) -> str:
             symbol = candidate_phonemes[k - i] if k - i < len(candidate_phonemes) else None
             if symbol is None:
                 symbols = vocabulary.decode(int(tokens[k]))
                 symbol = symbols[0] if symbols else str(int(tokens[k]))
-            label = _strip_language_prefix(symbol, language)
-            onset = max(onset, phoneme_cursor)
-            offset = max(offset, onset + _EPSILON)
-            phonemes.append(Phoneme(onset, offset, label))
-            phoneme_cursor = offset
+            return _strip_language_prefix(symbol, language)
 
-        start = phonemes[0].start
-        end = max(phonemes[-1].end, start + _EPSILON)
-        word = Word(start, end, text)
-        for phoneme in phonemes:
-            word.append_phoneme(phoneme)
-        word_list.append(word)
+        if language != "ja":
+            phonemes = []
+            for k in range(i, j):
+                onset = float(spans[k, 0]) * timestep
+                offset = float(spans[k, 1]) * timestep
+                onset = max(onset, phoneme_cursor)
+                offset = max(offset, onset + _EPSILON)
+                phonemes.append(Phoneme(onset, offset, _token_label(k)))
+                phoneme_cursor = offset
+            start = phonemes[0].start
+            end = max(phonemes[-1].end, start + _EPSILON)
+            word = Word(start, end, text)
+            for phoneme in phonemes:
+                word.append_phoneme(phoneme)
+            word_list.append(word)
+            i = j
+            continue
+
+        # ja: one Word per mora; group boundaries delimit kana units.
+        # best_groups are globally renumbered by select.onnx, so the mora
+        # index within the word is recovered by counting group transitions.
+        k = i
+        mora_index = -1
+        prev_gid = None
+        while k < j:
+            gid = int(group_ids[k])
+            if gid != prev_gid:
+                mora_index += 1
+                prev_gid = gid
+            m = k
+            while m < j and int(group_ids[m]) == gid:
+                m += 1
+            phonemes = []
+            for t in range(k, m):
+                onset = float(spans[t, 0]) * timestep
+                offset = float(spans[t, 1]) * timestep
+                onset = max(onset, phoneme_cursor)
+                offset = max(offset, onset + _EPSILON)
+                phonemes.append(Phoneme(onset, offset, _token_label(t)))
+                phoneme_cursor = offset
+            romaji = _merge_mora_phonemes([p.text for p in phonemes])
+            kana = candidate_scripts[mora_index] if mora_index < len(candidate_scripts) else ""
+            start = phonemes[0].start
+            end = max(phonemes[-1].end, start + _EPSILON)
+            word = Word(start, end, romaji or kana or text)
+            for phoneme in phonemes:
+                word.append_phoneme(phoneme)
+            word_list.append(word)
+            display.append((romaji, kana))
+            k = m
         i = j
 
     word_list.fill_small_gaps(duration)
     word_list.add_SP(duration)
-    return word_list
+    return word_list, display
 
 
 def run_tifa_fa(
@@ -115,15 +172,19 @@ def run_tifa_fa(
     language: str = "zh",
     cancel_checker=None,
     g2p_pipeline=None,
-) -> dict:
-    """Align every chunk_N.wav/.txt pair in temp_dir; returns the HFA pred_dict.
+) -> tuple[dict, dict[str, list[tuple[str, str]]]]:
+    """Align every chunk_N.wav/.txt pair in temp_dir.
 
-    Chunks whose text cannot be converted or encoded are skipped with a
-    warning; the pipeline treats missing predictions as pitch-only fallbacks.
+    Returns ``(pred_dict, display)`` where pred_dict matches the HubertFA
+    contract and ``display[stem]`` carries per-mora ``(romaji, kana)`` lyric
+    tokens for ja chunks (empty for other languages). Chunks whose text
+    cannot be converted or encoded are skipped with a warning; the pipeline
+    treats missing predictions as pitch-only fallbacks.
     """
     language = (language or "zh").strip().lower()
     g2p = g2p_pipeline or build_g2p_pipeline(model.model_dir)
     pred_dict: dict = {}
+    display: dict[str, list[tuple[str, str]]] = {}
     timestep = model.timestep
 
     for wav_path in sorted(pathlib.Path(temp_dir).rglob("*.wav")):
@@ -249,12 +310,15 @@ def run_tifa_fa(
         valid_spans = spans[0, :token_count]
         valid_tokens = best_tokens[0, :token_count]
         valid_words = best_words[0, :token_count]
-        word_list = _build_word_list(
-            valid_spans, valid_tokens, valid_words, choices[0], lexicon,
-            texts, model.vocabulary, language, timestep, duration,
+        valid_groups = best_groups[0, :token_count]
+        word_list, mora_display = _build_word_list(
+            valid_spans, valid_tokens, valid_words, valid_groups,
+            choices[0], lexicon, texts, model.vocabulary, language, timestep, duration,
         )
         pred_dict[stem] = (wav_path, duration, word_list)
+        if mora_display:
+            display[stem] = mora_display
         logger.info(f"[TiFA] {stem}: aligned {token_count} tokens into {len(word_list)} word(s)")
 
     _repair_pred_dict_short_words(pred_dict)
-    return pred_dict
+    return pred_dict, display
