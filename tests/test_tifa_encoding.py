@@ -116,3 +116,29 @@ def test_ja_dakuten_digraphs_encode(pipeline, vocabulary):
     for text in ("ぢょう", "ちぢむ", "ぢゃ無い"):
         data, lexicon, texts = _encode(pipeline, vocabulary, text, "ja")
         assert data["paths"].any(), text
+
+
+def test_ja_nonstandard_kana_readings_are_faithful():
+    """A handful of lexicon typos were mapped to the wrong sound. Pin the
+    corrected readings so they never regress to the collapsed palatalized form:
+    だョ (東京だョ = da-yo) must stay two mora, and づ-onset foreign spellings
+    (zain/zopfli) must keep the z consonant, not gain a spurious 'du'."""
+    from inference.TiFA.g2p.converters.japanese import JapaneseKanaConverter
+
+    conv = JapaneseKanaConverter(
+        dict_path=str(MODEL_DIR / "dictionaries" / "japanese_dict_full.txt")
+    )
+
+    def phonemes(kana):
+        return [
+            tuple(g.phonemes)
+            for w in conv.convert(kana)
+            for r in w.readings
+            for path in r.paths
+            for g in path
+        ]
+
+    assert phonemes("だょ") == [("d", "a", "y", "o")]
+    assert phonemes("づぁ") == [("z", "a")]
+    assert phonemes("づぉ") == [("z", "o")]
+
