@@ -27,6 +27,8 @@ class AudioFileList(ListWidget):
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
         # per-file settings in batch mode: filename -> dict of overrides
         self.file_settings: dict[str, dict] = {}
+        # path -> gear button; visibility is managed batch-wide
+        self._gear_buttons: dict[str, TransparentToolButton] = {}
 
     def add_paths(self, paths) -> int:
         """Add audio files (deduplicated); returns the number added."""
@@ -42,6 +44,7 @@ class AudioFileList(ListWidget):
             self._attach_gear_row(path)
             existing.add(path)
             added += 1
+        self._update_gear_visibility()
         if added:
             self.filesAdded.emit(added)
             self.filesChanged.emit()
@@ -49,17 +52,28 @@ class AudioFileList(ListWidget):
 
     def clear_all(self):
         self.file_settings.clear()
+        self._gear_buttons.clear()
         self.clear()
         self.filesChanged.emit()
 
     def remove_item(self, item):
         """Remove a single row and its per-file settings."""
-        self.file_settings.pop(self.item_path(item), None)
+        path = self.item_path(item)
+        self.file_settings.pop(path, None)
+        # drop the gear reference before the row widget is destroyed
+        self._gear_buttons.pop(path, None)
         row_widget = self.itemWidget(item)
         if row_widget is not None:
             self.removeItemWidget(item)
         self.takeItem(self.row(item))
+        self._update_gear_visibility()
         self.filesChanged.emit()
+
+    def _update_gear_visibility(self):
+        """Per-file settings only exist in batch mode (two or more files)."""
+        visible = self.count() >= 2
+        for button in self._gear_buttons.values():
+            button.setVisible(visible)
 
     def item_path(self, item) -> str:
         return str(item.data(Qt.UserRole) or item.text())
@@ -88,6 +102,8 @@ class AudioFileList(ListWidget):
         btn.setToolTip(tr("file_settings"))
         btn.setFixedSize(28, 28)
         btn.clicked.connect(lambda checked, f=path: self.settingsRequested.emit(f))
+        btn.setVisible(self.count() >= 2)  # batch mode only
+        self._gear_buttons[path] = btn
         row_layout.addWidget(btn)
         btn_del = TransparentToolButton(FluentIcon.DELETE, row)
         btn_del.setToolTip(tr("clear_files"))

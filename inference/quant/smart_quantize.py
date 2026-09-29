@@ -2,20 +2,23 @@
 
 The algorithm mirrors the reference smart_quantize.py implementation and
 must not be modified here: any change is made in the reference first and
-re-ported verbatim. Only the MIDI I/O and CLI live in the reference file.
+re-ported verbatim. Only the reference's MIDI I/O and CLI are omitted.
 
 Aligns the note boundaries of a monophonic melody (transcribed vocals,
-recorded MIDI, etc.) to "rhythmically important" positions (bar heads,
-half-bar, strong beats, weak beats, ...) while changing the original
-performance as little as possible. Rests between notes take part
-in the alignment as part of the chain, so after quantization the whole phrase
-is contiguous and every boundary lands on the 32nd-note grid.
+recorded MIDI, etc.) to "rhythmically important" positions (on the beat,
+8th, 16th, 32nd, 64th, ...) while changing the original performance as
+little as possible. Rests between notes take part in the alignment as part
+of the chain, so after quantization the whole phrase is contiguous and
+every boundary lands on the correction grid.
 
-The time scale is fully arbitrary: the algorithm only relies on ratios. A bar
-is BAR ticks and the grid step is GRID = BAR/32 (a 32nd note); all distances
-are normalized by the bar length. The fixed high-resolution integer scale
-(BAR = 705,600,000) keeps the integer arithmetic exact;
+The time scale is fully arbitrary: the algorithm only relies on ratios.
+A quarter note (the beat) is QUARTER ticks and the correction grid is
+GRID = QUARTER/32 (a 128th note); all distances are normalized by the
+quarter length. The default constants use a high-resolution integer
+scale (QUARTER = 705,600,000) purely to keep integer arithmetic exact;
 ``smart_quantize_musical`` converts from the caller's PPQ automatically.
+There is no bar/measure awareness: the importance ladder is relative to
+the beat.
 
 simplicity (0~5) is the rhythmic simplification strength:
 0 = conservative (barely move anything), 5 = aggressive (snap to strong
@@ -35,14 +38,21 @@ Algorithm outline
        max(1, dcols - 16) <= j <= dcols + 16,  dcols = floor(orig duration / GRID)
    The start column of record r = end column of record r-1 + 1.
 4. Score (maximized):
-       start:  M(pos_start)               - 0.5 * ((pos_start - orig_start)/BAR)^2
-       dur:    - ((j*GRID - orig_dur)/BAR)^2
-       end:    M(pos_end)                 - 0.5 * ((pos_end - orig_end)/BAR)^2
-   M(p) is the rhythmic-importance ladder (p = absolute position mod BAR).
+       start:  M(pos_start)               - 0.5 * ((pos_start - orig_start)/QUARTER)^2
+       dur:    - ((j*GRID - orig_dur)/QUARTER)^2
+       end:    M(pos_end)                 - 0.5 * ((pos_end - orig_end)/QUARTER)^2
+   M(p) is the rhythmic-importance ladder (p = absolute position mod QUARTER):
+       on the beat            0
+       8th note              -0.05*lambda
+       16th note             -0.1 *lambda
+       32nd note             -0.2 *lambda
+       64th note             -0.4 *lambda
+       anything else (grid)  -0.8 *lambda
 5. Dynamic programming: two tables, s0[r][c] (record r STARTS at column c)
    and s1[r][c] (record r ENDS at column c); s0 has a single predecessor
    (s1[r-1][c-1], the chain is head-to-tail); s1 maximizes over the j
-   band. Backtracking starts at (last record, colCount-1); a best score
+   band. Backtracking starts from the best cell of the last row (the
+   final boundary is chosen freely by the DP, not forced); a best score
    below -1e9 is reported as failure (typical cause: heavily overlapping
    notes make the chain infeasible).
 6. Write-back: every record boundary lands on a grid column and the end
@@ -56,12 +66,12 @@ from typing import List, Optional, Sequence, Tuple
 # --------------------------------------------------------------------------
 # Time constants (any uniform scale works; fixed integers keep math exact)
 # --------------------------------------------------------------------------
-BAR = 705_600_000                 # one bar (4/4)
-GRID = 22_050_000                 # BAR // 32, the 32nd-note grid step
+QUARTER = 705_600_000             # one quarter note (the beat)
+GRID = 22_050_000                 # QUARTER // 32, the correction grid (a 128th note)
 BAND = 16                         # search band for durations / windows (±16 columns)
 NEG_INF = -1.0e10                 # DP initial value
 FAIL_THRESHOLD = -1.0e9           # best score below this → failure
-TICKS_PER_QUARTER = BAR // 4      # quarter note (176,400,000)
+TICKS_PER_QUARTER = QUARTER
 
 
 def lam_from_simplicity(s: float) -> float:
@@ -70,35 +80,35 @@ def lam_from_simplicity(s: float) -> float:
 
 
 def metric_bonus(abs_pos: int, lam: float) -> float:
-    """Rhythmic-importance ladder M(p); p = absolute position mod BAR."""
-    p = abs_pos % BAR
+    """Rhythmic-importance ladder M(p); p = absolute position mod QUARTER."""
+    p = abs_pos % QUARTER
     if p == 0:
         return 0.0
-    if p % (BAR // 2) == 0:
+    if p % (QUARTER // 2) == 0:
         return -0.05 * lam
-    if p % (BAR // 4) == 0:
+    if p % (QUARTER // 4) == 0:
         return -0.1 * lam
-    if p % (BAR // 8) == 0:
+    if p % (QUARTER // 8) == 0:
         return -0.2 * lam
-    if p % (BAR // 16) == 0:
+    if p % (QUARTER // 16) == 0:
         return -0.4 * lam
     return -0.8 * lam
 
 
 def metric_level(abs_pos: int) -> str:
     """Debug helper: name of the beat level a position sits on."""
-    p = abs_pos % BAR
+    p = abs_pos % QUARTER
     if p == 0:
-        return "bar"
-    if p % (BAR // 2) == 0:
-        return "half"
-    if p % (BAR // 4) == 0:
-        return "quarter"
-    if p % (BAR // 8) == 0:
+        return "beat"
+    if p % (QUARTER // 2) == 0:
         return "8th"
-    if p % (BAR // 16) == 0:
+    if p % (QUARTER // 4) == 0:
         return "16th"
-    return "32nd/off"
+    if p % (QUARTER // 8) == 0:
+        return "32nd"
+    if p % (QUARTER // 16) == 0:
+        return "64th"
+    return "128th"
 
 
 @dataclass
@@ -115,7 +125,7 @@ def smart_quantize(
 ) -> Result:
     """
     Core algorithm. notes: [(start, end), ...] in any uniform tick scale,
-    given in the same scale as the BAR/GRID constants (the MIDI path
+    given in the same scale as the QUARTER/GRID constants (the MIDI path
     converts automatically).
     """
     lam = lam_from_simplicity(simplicity)
@@ -172,14 +182,14 @@ def smart_quantize(
             if r == 0:
                 if c == 0:
                     d = abs(0 - rel[0][0])                      # anchor rounding residual
-                    s0 = metric_bonus(anchor, lam) - 0.5 * (d / BAR) ** 2
+                    s0 = metric_bonus(anchor, lam) - 0.5 * (d / QUARTER) ** 2
                 else:
                     s0 = NEG_INF
             else:
                 prev = S1[r - 1].get(c - 1, NEG_INF)
                 pos = anchor + GRID * c
                 d = abs(GRID * c - rel[r][0])
-                s0 = prev + metric_bonus(pos, lam) - 0.5 * (d / BAR) ** 2
+                s0 = prev + metric_bonus(pos, lam) - 0.5 * (d / QUARTER) ** 2
             S0[r][c] = s0 if s0 > NEG_INF else NEG_INF
 
             # ---- s1[r][c]: pick the start column within the j band ----
@@ -192,18 +202,18 @@ def smart_quantize(
                 if cand <= NEG_INF:
                     continue
                 dd = abs(GRID * j - dur_ticks[r])
-                cand -= (dd / BAR) ** 2                         # duration distortion cost
+                cand -= (dd / QUARTER) ** 2                         # duration distortion cost
                 if cand > best:
                     best, best_start = cand, scol
             end_pos = anchor + GRID * (c + 1)                   # exclusive end
             d_end = abs(GRID * (c + 1) - rel[r][1])
-            s1 = best - 0.5 * (d_end / BAR) ** 2 + metric_bonus(end_pos, lam)
+            s1 = best - 0.5 * (d_end / QUARTER) ** 2 + metric_bonus(end_pos, lam)
             S1[r][c] = s1 if s1 > NEG_INF else NEG_INF
             BP[r][c] = best_start
 
-    # ---- 6. Final end column forced to colCount-1, backtrack ----
-    final = S1[R - 1].get(col_count - 1, NEG_INF)
-    if final < FAIL_THRESHOLD or col_count - 1 not in BP[R - 1]:
+    # ---- 6. Free final end: backtrack from the best cell of the last row ----
+    last_col, final = max(S1[R - 1].items(), key=lambda kv: kv[1])
+    if final < FAIL_THRESHOLD:
         return Result(
             ok=False,
             message=("quantize failed: overlapping notes make the "
@@ -211,7 +221,7 @@ def smart_quantize(
         )
 
     start_cols = [0] * R
-    end_col = col_count - 1
+    end_col = last_col
     for r in range(R - 1, -1, -1):
         sc = BP[r][end_col]
         if sc is None:
@@ -219,14 +229,14 @@ def smart_quantize(
         start_cols[r] = sc
         end_col = sc - 1                                       # end column of previous record
 
-    # ---- 7. Write-back (head-to-tail; last end = GRID*colCount) ----
+    # ---- 7. Write-back (head-to-tail; last end = chosen by the DP) ----
     new_pairs = []
     for r in range(R):
         start = anchor + GRID * start_cols[r]
         if r < R - 1:
             end = anchor + GRID * start_cols[r + 1]
         else:
-            end = anchor + GRID * col_count
+            end = anchor + GRID * (last_col + 1)
         new_pairs.append((start, end))
 
     out: List[Tuple[int, int]] = [(0, 0)] * len(notes)
@@ -253,6 +263,9 @@ def smart_quantize(
     )
 
 
+# --------------------------------------------------------------------------
+# Convenience wrapper: call directly in a common DAW tick scale (e.g. 480/quarter)
+# --------------------------------------------------------------------------
 def smart_quantize_musical(
     notes: Sequence[Tuple[int, int]],
     simplicity: float = 0.0,

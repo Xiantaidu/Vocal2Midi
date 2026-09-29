@@ -72,3 +72,23 @@ def test_audio_file_list_settings_request_signal(qapp):
     # the gear row's settings button targets the file path
     file_list.settingsRequested.emit("a.wav")
     assert requested == ["a.wav"]
+
+
+def test_gear_button_hidden_for_single_file_visible_in_batch(qapp):
+    file_list = AudioFileList()
+
+    file_list.add_paths(["a.wav"])
+    assert file_list.count() == 1
+    # isHidden reflects the explicit visibility flag even when unshown
+    assert all(btn.isHidden() for btn in file_list._gear_buttons.values())
+
+    file_list.add_paths(["b.wav"])
+    assert file_list.count() == 2
+    assert len(file_list._gear_buttons) == 2
+    assert all(not btn.isHidden() for btn in file_list._gear_buttons.values())
+
+    # back down to one file: the remaining gear hides again
+    file_list.remove_item(file_list.item(0))
+    assert file_list.count() == 1
+    assert list(file_list._gear_buttons) == ["b.wav"]
+    assert all(btn.isHidden() for btn in file_list._gear_buttons.values())

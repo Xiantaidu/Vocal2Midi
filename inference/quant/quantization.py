@@ -57,10 +57,11 @@ def _quantize_notes_smart(notes: list[Any], tempo: float, quantization_step: int
 
     The notes live in PPQ-480 ticks (one quarter note = tempo*8 seconds-ticks),
     so the engine's own ``smart_quantize_musical`` wrapper applies unchanged:
-    the grid is the engine's fixed 32nd note (60 ticks), ``quantization_step``
-    only toggles quantization on/off, and overlapping notes that make the
-    rhythmic chain infeasible report failure — the notes are then left
-    unchanged, exactly like the upstream MIDI path.
+    the correction grid is the engine's fixed 128th note (15 ticks, no
+    bar/measure awareness — the importance ladder is relative to the beat),
+    ``quantization_step`` only toggles quantization on/off, and overlapping
+    notes that make the rhythmic chain infeasible report failure — the notes
+    are then left unchanged, exactly like the reference's MIDI path.
     """
     if quantization_step <= 0 or not notes:
         return
