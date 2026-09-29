@@ -32,6 +32,7 @@ def test_argparser_defaults(defaults):
     assert args.lyric_format is None  # resolved from settings per language in main
     assert args.chinese_asr == "qwen"
     assert args.japanese_asr == "romaji"
+    assert args.aligner == "hfa"
     assert args.slicing == "smart"
     assert args.quant_step == 0
     assert args.quant_mode == "smart"

@@ -20,6 +20,7 @@ from gui.i18n import tr
 MODEL_ROWS = [
     ("game_model", "game_path"),
     ("hfa_model", "hfa_path"),
+    ("tifa_model", "tifa_path"),
     ("asr_model", "asr_path"),
     ("phoneme_asr_model", "phoneme_path"),
     ("pinyin_asr_model", "pinyin_path"),
@@ -27,10 +28,14 @@ MODEL_ROWS = [
 ]
 
 # settings key, label key, (value, tr key) choices, default value
-ASR_ENGINE_ROWS = [
+ENGINE_ROWS = [
     ("chinese_asr_engine", "zh_asr_choice", [("pinyin", "asr_pinyin"), ("qwen", "asr_qwen")], "qwen"),
     ("japanese_asr_engine", "ja_asr_choice", [("romaji", "asr_romaji"), ("qwen", "asr_qwen")], "romaji"),
+    ("alignment_engine", "aligner_choice", [("tifa", "aligner_tifa"), ("hfa", "aligner_hfa")], "hfa"),
 ]
+
+# Backward-compatible alias for the ASR subset of ENGINE_ROWS.
+ASR_ENGINE_ROWS = ENGINE_ROWS[:2]
 
 
 class ModelConfigInterface(ScrollArea):
@@ -47,6 +52,7 @@ class ModelConfigInterface(ScrollArea):
         self.default_values = {
             "game_model": "models/GAME-1.0.3-medium-onnx",
             "hfa_model": "models/1218_hfa_model_new_dict",
+            "tifa_model": "models/tifa-1.0-onnx",
             "asr_model": "models/Qwen3-ASR-1.7B-dml",
             "phoneme_asr_model": "models/romajiASR",
             "pinyin_asr_model": "models/pinyinASR",
@@ -75,7 +81,7 @@ class ModelConfigInterface(ScrollArea):
         card = CardWidget(self)
         layout = QVBoxLayout(card)
 
-        for settings_key, label_key, choices, default in ASR_ENGINE_ROWS:
+        for settings_key, label_key, choices, default in ENGINE_ROWS:
             self._add_asr_choice_row(layout, label_key, settings_key, choices, default)
 
         for settings_key, label_key in MODEL_ROWS:
@@ -109,6 +115,9 @@ class ModelConfigInterface(ScrollArea):
 
     def japanese_asr_engine(self) -> str:
         return self._engine_choice("japanese_asr_engine", "romaji")
+
+    def alignment_engine(self) -> str:
+        return self._engine_choice("alignment_engine", "hfa")
 
     def _engine_choice(self, settings_key: str, fallback: str) -> str:
         combo = getattr(self, f"{settings_key}_combo", None)
@@ -186,7 +195,7 @@ class ModelConfigInterface(ScrollArea):
             line_edit.setText(self._to_project_relative(dir_path))
 
     def reset_to_default(self):
-        for settings_key, _label_key, choices, default in ASR_ENGINE_ROWS:
+        for settings_key, _label_key, choices, default in ENGINE_ROWS:
             combo = getattr(self, f"{settings_key}_combo", None)
             if combo is not None:
                 index = combo.findData(default)

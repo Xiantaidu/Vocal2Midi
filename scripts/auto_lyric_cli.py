@@ -46,6 +46,7 @@ FALLBACK_DEFAULTS = {
     "rmvpe_model": "models/RMVPE",
     "chinese_asr_engine": "qwen",
     "japanese_asr_engine": "romaji",
+    "alignment_engine": "hfa",
     "batch_size": 1,
     "asr_batch_size": 2,
     "slice_min_sec": 5.0,
@@ -105,6 +106,7 @@ def _load_settings_defaults() -> dict:
             "rmvpe_model",
             "chinese_asr_engine",
             "japanese_asr_engine",
+            "alignment_engine",
             "pitch_format",
         ):
             defaults[key] = str(settings.value(key, defaults[key]) or defaults[key])
@@ -150,6 +152,8 @@ def build_argparser(defaults: dict) -> argparse.ArgumentParser:
                         help="Chinese ASR engine (default: the GUI setting)")
     parser.add_argument("--japanese-asr", choices=("romaji", "qwen"), default=defaults["japanese_asr_engine"],
                         help="Japanese ASR engine (default: the GUI setting)")
+    parser.add_argument("--aligner", choices=("tifa", "hfa"), default=defaults["alignment_engine"],
+                        help="Forced-alignment engine (default: the GUI setting, hfa)")
     parser.add_argument("--lyrics", default="", help="Reference lyrics text for alignment")
     parser.add_argument("--lyrics-file", type=Path, default=None,
                         help="Read reference lyrics from a UTF-8 text file (overrides --lyrics)")
@@ -186,6 +190,7 @@ def build_argparser(defaults: dict) -> argparse.ArgumentParser:
     parser.add_argument("--est-threshold", type=float, default=defaults["est_threshold"], help="Note existence threshold")
     parser.add_argument("--game-model", default=defaults["game_model"], help="GAME ONNX model directory")
     parser.add_argument("--hfa-model", default=defaults["hfa_model"], help="HubertFA ONNX model directory")
+    parser.add_argument("--tifa-model", default="models/tifa-1.0-onnx", help="TiFA ONNX model directory")
     parser.add_argument("--asr-model", default=defaults["asr_model"], help="Qwen3-ASR model directory")
     parser.add_argument("--phoneme-asr-model", default=defaults["phoneme_asr_model"], help="Romaji ASR model directory")
     parser.add_argument("--pinyin-asr-model", default=defaults["pinyin_asr_model"], help="Pinyin ASR model directory")
@@ -291,6 +296,8 @@ def build_config(args, audio_path: Path, ts_list: list, asr_session=None):
         pinyin_asr_model_path=args.pinyin_asr_model,
         chinese_asr_engine=args.chinese_asr,
         japanese_asr_engine=args.japanese_asr,
+        alignment_engine=args.aligner,
+        tifa_model_path=args.tifa_model,
         asr_session=asr_session,
     )
 

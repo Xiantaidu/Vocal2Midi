@@ -475,6 +475,7 @@ class AutoLyricInterface(ScrollArea):
             "output_dir": self.save_dir_edit.text(),
             "chinese_asr_engine": self._chinese_asr_engine(),
             "japanese_asr_engine": self._japanese_asr_engine(),
+            "alignment_engine": self.model_config.alignment_engine(),
             "devices": VISIBLE_RUNTIME_DEVICE_CHOICES,
             "slice_min_sec": self.global_settings.slice_min_sec(),
             "slice_max_sec": self.global_settings.slice_max_sec(),
@@ -550,6 +551,8 @@ class AutoLyricInterface(ScrollArea):
             pinyin_asr_model_path=self.model_config.model_path("pinyin_asr_model"),
             chinese_asr_engine=values.get("chinese_asr_engine", "qwen"),
             japanese_asr_engine=values.get("japanese_asr_engine", "romaji"),
+            alignment_engine=values.get("alignment_engine", "hfa"),
+            tifa_model_path=self.model_config.model_path("tifa_model"),
         )
 
     def run_pipeline(self):

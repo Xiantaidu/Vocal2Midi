@@ -34,7 +34,7 @@ Defaults are read from the same settings store the GUI uses —
 `settings/vocal2midi.ini` in portable mode (when `V2M_PORTABLE_ROOT` is set),
 the Windows registry store (`GAME_Extractor\\Vocal2Midi`) otherwise. Keys
 read: the six model paths, `chinese_asr_engine`, `japanese_asr_engine`,
-`batch_size`, `asr_batch`, `slice_min_sec`, `slice_max_sec`, `t0`, `nsteps`,
+`alignment_engine`, `batch_size`, `asr_batch`, `slice_min_sec`, `slice_max_sec`, `t0`, `nsteps`,
 `seg_thresh`, `seg_rad`, `est_thresh`, `pitch_format`, `round_pitch`,
 `output_pitch_curve`, `save_dir` (used as the default output directory) and
 `lyric_output_mode_<language>` (used as the default lyric format). Any flag
@@ -73,6 +73,7 @@ Valid lyric formats per language:
 |---|---|
 | `--chinese-asr {pinyin,qwen}` | `pinyin` runs the direct PinyinASR phoneme model (output is locked to pinyin — choosing `hanzi` emits a warning and the pipeline falls back to pinyin); `qwen` runs text ASR + G2P. |
 | `--japanese-asr {romaji,qwen}` | `romaji` runs the direct RomajiASR mora model; `qwen` runs text ASR + Japanese G2P. |
+| `--aligner {tifa,hfa}` | Forced-alignment engine: `tifa` runs the TiFA aligner (audio + raw ASR text, built-in G2P with polyphone disambiguation); `hfa` runs HubertFA on the phoneme sequence. Default: the GUI setting, `hfa`. |
 
 Both default to the model config page's engine selection. The engine not in
 use is not loaded and its model path is not required.
@@ -135,6 +136,7 @@ is respawned automatically.
 |---|---|
 | `--game-model` | `models/GAME-1.0.3-medium-onnx` |
 | `--hfa-model` | `models/1218_hfa_model_new_dict` |
+| `--tifa-model` | `models/tifa-1.0-onnx` |
 | `--asr-model` | `models/Qwen3-ASR-1.7B-dml` |
 | `--phoneme-asr-model` | `models/romajiASR` |
 | `--pinyin-asr-model` | `models/pinyinASR` |
