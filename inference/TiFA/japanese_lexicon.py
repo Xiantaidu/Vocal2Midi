@@ -112,9 +112,13 @@ class JapaneseLexiconConverter(Converter):
 
         Each group's script carries its kana character (not romaji) so the
         aligner can emit per-mora kana display tokens; romaji is recovered by
-        merging the group's CV phonemes.
+        merging the group's CV phonemes. A reading that cannot be converted
+        (rare malformed lexicon entries) drops only its own candidate.
         """
-        words = self._kana.convert(reading)
+        try:
+            words = self._kana.convert(reading)
+        except KeyError:
+            return None
         kana_tokens = split_words(reading)
         if len(words) != len(kana_tokens):
             return None

@@ -108,3 +108,11 @@ def test_japanese_lexicon_kanji_encodes_with_candidates(pipeline, vocabulary):
     data, lexicon, texts = _encode(pipeline, vocabulary, "普通の世界", "ja")
     assert data["paths"].any()
     assert "普通" in texts and "世界" in texts
+
+
+def test_ja_dakuten_digraphs_encode(pipeline, vocabulary):
+    """ぢ-row digraphs are missing from the upstream kana->romaji map (the
+    chunk_11/chunk_2 production failure); the additions must cover them."""
+    for text in ("ぢょう", "ちぢむ", "ぢゃ無い"):
+        data, lexicon, texts = _encode(pipeline, vocabulary, text, "ja")
+        assert data["paths"].any(), text
