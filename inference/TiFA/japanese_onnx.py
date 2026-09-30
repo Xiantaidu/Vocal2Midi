@@ -41,8 +41,11 @@ from inference.TiFA.japanese_lexicon import _KANJI_RE, kana_reading_to_path
 
 logger = logging.getLogger(__name__)
 
-BEAM_WIDTH = 8  # N-best complete-cover paths kept by the beam search
-MAX_READING_CANDIDATES = 8  # per-word readings handed to TiFA's scoring DP
+# Beam-16 is the audited width: the correct reading lies within the beam-16
+# candidate grid (oracle CER 0.776% vs 2.462% top-1, ja_g2p EXPERIMENTS.md
+# §18.1). The per-word cap matches the base runtime's MAX_SPAN_READINGS.
+BEAM_WIDTH = 16  # N-best complete-cover paths kept by the beam search
+MAX_READING_CANDIDATES = 16  # per-word readings handed to TiFA's scoring DP
 
 _VOWEL_KANA = {"a": "あ", "i": "い", "u": "う", "e": "え", "o": "お"}
 _VOWELS = frozenset("aiueo")
