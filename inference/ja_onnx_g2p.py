@@ -22,6 +22,7 @@ DEFAULT_MODEL_DIR = PROJECT_ROOT / "models" / "ja_g2p_onnx"
 
 _lock = threading.Lock()
 _runtime = None
+_runtime_module: ModuleType | None = None
 _runtime_dir: Path | None = None
 
 
@@ -35,13 +36,25 @@ def _load_runtime_module(model_dir: Path) -> ModuleType:
     return module
 
 
+def get_ja_onnx_runtime_module(model_dir: str | Path | None = None) -> ModuleType | None:
+    """Return the loaded ``g2p_onnx_runtime`` module, or None if absent.
+
+    Exposes the base runtime's building blocks (build_edges, safe_windows,
+    local_edges, decode_viterbi, ...) so adapters reuse its exact candidate
+    graph and scoring instead of reimplementing them.
+    """
+    if get_ja_onnx_runtime(model_dir) is None:
+        return None
+    return _runtime_module
+
+
 def get_ja_onnx_runtime(model_dir: str | Path | None = None):
     """Return the cached ``G2POnnxRuntime`` for *model_dir*, or None if absent.
 
     Loading the bundle takes a few seconds (one-time per process); failures
     are logged once and the caller falls back to its legacy G2P path.
     """
-    global _runtime, _runtime_dir
+    global _runtime, _runtime_module, _runtime_dir
     resolved = Path(model_dir) if model_dir else DEFAULT_MODEL_DIR
     if _runtime is not None and _runtime_dir == resolved:
         return _runtime
@@ -58,6 +71,7 @@ def get_ja_onnx_runtime(model_dir: str | Path | None = None):
             return None
         logger.info(f"[JaG2P-ONNX] loaded from {resolved} ({runtime.provider_name})")
         _runtime = runtime
+        _runtime_module = module
         _runtime_dir = resolved
         return _runtime
 

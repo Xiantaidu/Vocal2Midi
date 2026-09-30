@@ -67,21 +67,20 @@ def test_tifa_converter_emits_word_per_edge_with_kana_scripts():
     words = conv.convert("普通の世界")
     assert [word.text for word in words] == ["普通", "の", "世界"]
     for word in words:
-        assert len(word.readings) == 1
+        assert word.readings
         groups = word.readings[0].paths[0]
         assert groups
         for group in groups:
             assert group.script and group.phonemes
     # scripts carry kana for per-mora display; phonemes are in-vocab CV pairs
-    texts = [word.text for word in words]
     ordinary = next(word for word in words if word.text == "普通")
     assert [group.script for group in ordinary.readings[0].paths[0]] == ["ふ", "つ", "う"]
 
+    for word in words:
+        word.language = "ja"
     from inference.TiFA.lib.vocabulary import Vocabulary
     from inference.TiFA.aligner import GLOBAL_SYMBOLS, STOP_SYMBOLS
 
-    for word in words:
-        word.language = "ja"
     vocabulary = Vocabulary.from_file(TIFA_MODEL_DIR / "vocabulary.json")
     data, lexicon, texts = encode_paths(
         words, vocabulary, "discard", languages=["ja"],
@@ -89,6 +88,25 @@ def test_tifa_converter_emits_word_per_edge_with_kana_scripts():
     )
     assert data["paths"].any()
     assert texts == ["普通", "の", "世界"]
+
+
+def test_tifa_converter_beams_reading_candidates():
+    """Beam N-best over the scored candidate graph feeds TiFA's polling DP:
+    polyphone words carry multiple ranked readings, model-best first."""
+    from inference.TiFA.japanese_onnx import JapaneseOnnxConverter
+
+    conv = JapaneseOnnxConverter(
+        dict_path=str(TIFA_MODEL_DIR / "dictionaries" / "japanese_dict_full.txt")
+    )
+    words = conv.convert("私は東京へ行く")
+    by_text = {word.text: word for word in words}
+    assert len(by_text["私"].readings) >= 2, "polyphone must carry candidates"
+    assert [group.script for group in by_text["私"].readings[0].paths[0]] == ["わ", "た", "し"]
+    assert len(by_text["行"].readings) >= 2, "okurigana stem must carry candidates"
+    assert [group.script for group in by_text["行"].readings[0].paths[0]] == ["い"]
+    # particle edges normalize to pronunciation
+    assert [group.script for group in by_text["は"].readings[0].paths[0]] == ["わ"]
+    assert [group.script for group in by_text["へ"].readings[0].paths[0]] == ["え"]
 
 
 def test_tifa_converter_expands_katakana_long_vowels():
@@ -117,9 +135,11 @@ def test_factory_prefers_onnx_converter_for_kanji():
     words = pipeline.convert("普通の世界", languages=["ja"])
     texts = [word.text for word in words]
     assert "普通" in texts and "世界" in texts
-    # ONNX readings are single-candidate: the model itself disambiguates
+    # ONNX readings are beam-ranked candidates: the model's best first,
+    # TiFA's scoring DP polls among them against the audio
     ordinary = next(word for word in words if word.text == "普通")
-    assert len(ordinary.readings) == 1
+    assert ordinary.readings
+    assert [group.script for group in ordinary.readings[0].paths[0]] == ["ふ", "つ", "う"]
 
 
 def test_jag2p_uses_onnx_backend_for_kanji():
