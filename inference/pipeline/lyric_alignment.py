@@ -207,6 +207,30 @@ def _select_phoneme_engine(
     return engine, ja_wants_romaji, phoneme_asr_path
 
 
+def _export_chunk_wavs_from_temp(
+    temp_dir_path,
+    chunk_count: int,
+    output_key: str,
+    output_dir,
+    cancel_checker=None,
+) -> None:
+    """Copy the stage's chunk_N.wav files out under the {key}_{idx:03d} naming.
+
+    Mirrors the WAV half of hfa_api.export_hfa_artifacts so the chunks switch
+    yields the same per-chunk WAV + TextGrid pairs on the TiFA path.
+    """
+    import shutil
+
+    for chunk_idx in range(chunk_count):
+        if cancel_checker and cancel_checker():
+            raise InterruptedError("切片导出任务已取消")
+        src = temp_dir_path / f"chunk_{chunk_idx}.wav"
+        if not src.is_file():
+            logger.warning(f"[Warning] Chunk WAV file not found, skipping: {src}")
+            continue
+        shutil.copy2(src, output_dir / f"{output_key}_{chunk_idx:03d}.wav")
+
+
 def _run_lyric_alignment(
     chunks,
     sr,
@@ -384,13 +408,25 @@ def _run_lyric_alignment(
                             tokens = [romaji for romaji, _kana in pairs]
                         if tokens:
                             chars_dict[stem] = tokens
-                    # TextGrid debug output shares the HFA file naming; chunk
-                    # WAVs go through the memory-waveform path in _run_game_stage.
-                    export_textgrids(
-                        list(pred_dict.values()),
-                        ctx.output_dir,
-                        ctx.output_key,
-                        cancel_checker=cancel_checker,
-                    )
+                    # Same chunks-switch contract as export_hfa_artifacts:
+                    # the chunks switch yields per-chunk WAV + TextGrid pairs.
+                    export_chunks = "chunks" in ctx.output_format_set
+                    export_textgrid = ("textgrid" in ctx.output_format_set) or export_chunks
+                    if export_textgrid:
+                        # TextGrid debug output shares the HFA file naming.
+                        export_textgrids(
+                            list(pred_dict.values()),
+                            ctx.output_dir,
+                            ctx.output_key,
+                            cancel_checker=cancel_checker,
+                        )
+                    if export_chunks:
+                        _export_chunk_wavs_from_temp(
+                            temp_dir_path,
+                            len(chunks),
+                            ctx.output_key,
+                            ctx.output_dir,
+                            cancel_checker=cancel_checker,
+                        )
 
     return _AlignmentOutcome(chars_dict=chars_dict, pred_dict=pred_dict, chunk_logs=chunk_logs, aligned=aligned)

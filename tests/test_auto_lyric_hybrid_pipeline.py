@@ -408,7 +408,43 @@ def test_tifa_engine_routes_to_tifa_fa(monkeypatch, tmp_path):
     load_tifa.assert_called_once()
     run_tifa.assert_called_once()
     assert run_tifa.call_args.kwargs["language"] == "zh"
+    # debug artifacts are format-gated like the HFA path: no chunks/textgrid
+    # in output_formats means no TextGrid export
+    export_tg.assert_not_called()
+
+
+def test_tifa_chunks_switch_exports_wav_and_textgrid(monkeypatch, tmp_path):
+    """The chunks switch must yield per-chunk WAV + TextGrid pairs on the
+    TiFA path, mirroring export_hfa_artifacts' contract."""
+    _patch_common(monkeypatch)
+    monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
+
+    def _fake_qwen_asr(chunks, sr, temp_dir_path, *args, **kwargs):
+        (temp_dir_path / "chunk_0.wav").write_bytes(b"RIFF")
+        return ({"chunk_0": ["a"]}, ["log"])
+
+    monkeypatch.setattr(lyric_alignment, "run_qwen_asr_and_fa", _fake_qwen_asr)
+    monkeypatch.setattr(lyric_alignment, "run_tifa_fa", MagicMock(return_value=({"chunk_0": (None, 1.0, [MagicMock()])}, {})))
+    monkeypatch.setattr(lyric_alignment, "load_tifa_model", MagicMock(return_value=MagicMock()))
+    export_tg = MagicMock()
+    monkeypatch.setattr(lyric_alignment, "export_textgrids", export_tg)
+    monkeypatch.setattr(
+        pipeline,
+        "extract_pitches_and_align",
+        lambda *args, **kwargs: ([NoteInfo(0.0, 0.5, 60.0, "a")], {0}),
+    )
+
+    kwargs = _base_kwargs(tmp_path)
+    kwargs["language"] = "zh"
+    kwargs["lyric_output_mode"] = "hanzi"
+    kwargs["alignment_engine"] = "tifa"
+    kwargs["tifa_model_path"] = "models/tifa-1.0-onnx"
+    kwargs["output_formats"] = ["chunks"]
+
+    pipeline.auto_lyric_hybrid_pipeline(**kwargs)
+
     export_tg.assert_called_once()
+    assert (tmp_path / "out" / "Song_000.wav").is_file()
 
 
 def test_default_alignment_engine_uses_hfa(monkeypatch, tmp_path):
