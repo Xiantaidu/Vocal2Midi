@@ -8,14 +8,23 @@ from __future__ import annotations
 
 import logging
 import pathlib
+import re
 
 import textgrid as tg_lib
 
 logger = logging.getLogger(__name__)
 
 
+def _chunk_index(stem) -> int:
+    """Numeric chunk index from a ``chunk_N`` stem (or an int passed directly)."""
+    if isinstance(stem, int):
+        return stem
+    m = re.search(r"(\d+)\s*$", str(stem))
+    return int(m.group(1)) if m else 0
+
+
 def save_textgrids(
-    predictions: list,
+    predictions,
     output_dir: pathlib.Path,
     output_key: str,
     chunks: list | None = None,
@@ -23,10 +32,16 @@ def save_textgrids(
 ) -> None:
     """Write one TextGrid per prediction as {output_key}_{idx:03d}.TextGrid.
 
-    ``predictions`` is a list of (wav_path, wav_length, WordList) tuples in
-    chunk order, matching the export_hfa_artifacts conventions.
+    ``predictions`` is the ``{stem: (wav_path, wav_length, WordList)}`` mapping
+    produced by run_tifa_fa. The output index is the chunk's own numeric suffix
+    (``chunk_10`` -> 010), NOT the position in the mapping: pred_dict is built
+    in rglob order and iteration position would misname every chunk past
+    chunk_9, so a TextGrid would land next to the wrong {output_key}_NNN.wav.
+    A plain list is still accepted (index = position) for legacy callers.
     """
-    for chunk_idx, (wav_path, wav_length, words) in enumerate(predictions):
+    items = predictions.items() if hasattr(predictions, "items") else enumerate(predictions)
+    count = 0
+    for stem, (wav_path, wav_length, words) in items:
         if cancel_checker and cancel_checker():
             raise InterruptedError("任务已取消")
         tg = tg_lib.TextGrid(minTime=0, maxTime=wav_length)
@@ -41,8 +56,9 @@ def save_textgrids(
         tg.append(word_tier)
         tg.append(phone_tier)
 
-        new_stem = f"{output_key}_{chunk_idx:03d}"
+        new_stem = f"{output_key}_{_chunk_index(stem):03d}"
         target = output_dir / f"{new_stem}.TextGrid"
         target.parent.mkdir(parents=True, exist_ok=True)
         tg.write(str(target))
-    logger.info(f"[TiFA] Saved {len(predictions)} TextGrid file(s) to {output_dir}")
+        count += 1
+    logger.info(f"[TiFA] Saved {count} TextGrid file(s) to {output_dir}")

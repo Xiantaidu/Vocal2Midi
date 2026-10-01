@@ -413,9 +413,12 @@ def _run_lyric_alignment(
                     export_chunks = "chunks" in ctx.output_format_set
                     export_textgrid = ("textgrid" in ctx.output_format_set) or export_chunks
                     if export_textgrid:
-                        # TextGrid debug output shares the HFA file naming.
+                        # Pass the stem-keyed mapping so each TextGrid is named
+                        # by its real chunk index and pairs with the matching
+                        # {output_key}_NNN.wav (pred_dict is in rglob order, not
+                        # positionally aligned to the numeric chunk indices).
                         export_textgrids(
-                            list(pred_dict.values()),
+                            pred_dict,
                             ctx.output_dir,
                             ctx.output_key,
                             cancel_checker=cancel_checker,

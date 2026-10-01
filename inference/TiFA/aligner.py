@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import math
 import pathlib
+import re
 
 import librosa
 import numpy as np
@@ -187,7 +188,14 @@ def run_tifa_fa(
     display: dict[str, list[tuple[str, str]]] = {}
     timestep = model.timestep
 
-    for wav_path in sorted(pathlib.Path(temp_dir).rglob("*.wav")):
+    # Numeric chunk order (chunk_2 before chunk_10): a plain lexicographic sort
+    # would put chunk_10 before chunk_2, scrambling the pred_dict order relative
+    # to the numeric chunk indices every downstream export keys on.
+    def _chunk_order(path):
+        m = re.search(r"(\d+)\s*$", path.stem)
+        return (int(m.group(1)) if m else 0, path.stem)
+
+    for wav_path in sorted(pathlib.Path(temp_dir).rglob("*.wav"), key=_chunk_order):
         if cancel_checker and cancel_checker():
             raise InterruptedError("任务已取消")
         stem = wav_path.stem
