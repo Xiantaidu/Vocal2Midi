@@ -108,11 +108,35 @@ def test_extract_vowel_boundaries_en_uses_arpabet_vowels():
         words, ["fall", "fly"], language="en"
     )
 
-    # English emits one syllable chunk per word (fall -> f+ao+l is one chunk,
-    # fly -> f+l+ay likewise), each carrying the word as its lyric.
-    assert word_durs == pytest.approx([0.40, 0.30])
-    assert word_vuvs == [1, 1]
-    assert lyrics == ["fall", "fly"]
+    # Vowel-nucleus chunks like zh/ja: each chunk starts at its vowel, so the
+    # consonant onsets (f.../fl...) become unvoiced gap entries before the note.
+    assert word_durs == pytest.approx([0.05, 0.35, 0.10, 0.20])
+    assert word_vuvs == [0, 1, 0, 1]
+    assert lyrics == ["", "fall", "", "fly"]
+
+
+def test_extract_vowel_boundaries_en_multisyllable_starts_at_vowels():
+    words = [
+        _make_word(
+            0.0, 0.86, "possible",
+            [
+                (0.00, 0.06, "p"), (0.06, 0.22, "aa"), (0.22, 0.30, "s"),
+                (0.30, 0.46, "ax"), (0.46, 0.52, "b"), (0.52, 0.74, "ax"),
+                (0.74, 0.86, "l"),
+            ],
+        ),
+    ]
+
+    word_durs, word_vuvs, lyrics = extract_vowel_boundaries(
+        words, ["possible"], language="en"
+    )
+
+    # three vowel nuclei -> three chunks; the word-initial p becomes an
+    # unvoiced gap entry while inter-syllable onsets (s, b) stay inside the
+    # preceding note span, exactly like the zh/ja semantics
+    assert word_durs == pytest.approx([0.06, 0.24, 0.22, 0.34])
+    assert word_vuvs == [0, 1, 1, 1]
+    assert lyrics == ["", "possible", "+", "+"]
 
 
 def test_en_singable_phones_reject_consonant_v_names():

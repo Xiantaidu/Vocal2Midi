@@ -74,23 +74,14 @@ def _find_word_nucleus_start(word, language: str | None) -> float | None:
     return None
 
 
-# Stops begin a new syllable chunk; other inter-vowel consonants (fricatives,
-# nasals, liquids) close the previous chunk as its coda.
-_EN_STOPS = {"p", "b", "t", "d", "k", "g", "dx", "jh", "ch"}
-
-
 def _english_syllable_chunks(word):
     """Split one aligned English word into per-syllable time chunks.
 
-    Each vowel nucleus owns one chunk. The boundary before a nucleus falls
-    immediately before the last stop consonant (p/b/t/d/k/g/dx) of the
-    consonant run that precedes it, so the stop begins the next chunk while
-    fricatives and sonorants close the previous one as coda
-    (impossible -> [ih m][p aa s ax][b ax l] = im/poss/ible). A run without a
-    stop creates no boundary, which keeps a word-final "ax"+sonorant
-    (syllabic consonant, e.g. -le/-en) inside the last chunk automatically.
-
-    Returns [(start, end), ...] or None when the word has no singable vowel.
+    Vowel-nucleus semantics, matching the zh/ja path: every chunk starts at
+    its vowel nucleus, so the consonant onset before a nucleus falls into the
+    unvoiced gap the caller emits (vuvs=0) while the syllable's own coda
+    closes its chunk. Returns [(start, end), ...] or None when the word has
+    no singable vowel.
     """
     phones = getattr(word, "phonemes", None) or []
     if not phones:
@@ -100,41 +91,11 @@ def _english_syllable_chunks(word):
     if not vowel_idx:
         return None
 
-    bounds = [float(phones[0].start)]
+    bounds = [float(phones[vowel_idx[0]].start)]
     for k in range(1, len(vowel_idx)):
-        run = phones[vowel_idx[k - 1] + 1 : vowel_idx[k]]
-        stop_start = None
-        for ph in run:
-            # Lowercase: _is_singable_phone is case-insensitive, so the stop
-            # check must be too (uppercase ARPABET would hide every stop).
-            if _normalize_phone_text(ph.text).lower() in _EN_STOPS:
-                stop_start = float(ph.start)
-        if stop_start is not None:
-            bounds.append(stop_start)
-        else:
-            bounds.append(float(phones[vowel_idx[k]].start))
+        bounds.append(float(phones[vowel_idx[k]].start))
     bounds.append(float(word.end))
-
-    # A chunk made of a single lone vowel (no onset, no coda — e.g. the "i" of
-    # -ible squeezed between two stops) has no note of its own; fold it into
-    # the following chunk so it does not become a phantom syllable.
-    merged = []
-    spans = list(zip(bounds, bounds[1:]))
-    i = 0
-    while i < len(spans):
-        start, end = spans[i]
-        span_phones = [ph for ph in phones if start <= ph.start < end]
-        if (
-            len(span_phones) == 1
-            and _is_singable_phone(getattr(span_phones[0], "text", ""), "en")
-            and i + 1 < len(spans)
-        ):
-            merged.append((start, spans[i + 1][1]))
-            i += 2
-            continue
-        merged.append((start, end))
-        i += 1
-    return merged
+    return list(zip(bounds, bounds[1:]))
 
 
 def _extract_vowel_boundaries_english(result_word, original_chars: list[str]):
