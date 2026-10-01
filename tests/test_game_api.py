@@ -108,11 +108,32 @@ def test_extract_vowel_boundaries_en_uses_arpabet_vowels():
         words, ["fall", "fly"], language="en"
     )
 
-    # Vowel-nucleus chunks like zh/ja: each chunk starts at its vowel, so the
-    # consonant onsets (f.../fl...) become unvoiced gap entries before the note.
-    assert word_durs == pytest.approx([0.05, 0.35, 0.10, 0.20])
+    # Chunks start at the vowel, but a word-initial voiced consonant is pitched
+    # and sung on the note: "fall" keeps only its unvoiced "f" in the gap, while
+    # "fly" also pulls its voiced "l" into the note so just "f" stays in the gap.
+    assert word_durs == pytest.approx([0.05, 0.35, 0.05, 0.25])
     assert word_vuvs == [0, 1, 0, 1]
     assert lyrics == ["", "fall", "", "fly"]
+
+
+def test_extract_vowel_boundaries_en_voiced_onset_sung_in_note():
+    words = [
+        _make_word(0.0, 0.40, "my", [(0.0, 0.10, "m"), (0.10, 0.40, "ay")]),
+        _make_word(
+            0.40, 0.85, "stop",
+            [(0.40, 0.46, "s"), (0.46, 0.52, "t"), (0.52, 0.75, "aa"), (0.75, 0.85, "p")],
+        ),
+    ]
+
+    word_durs, word_vuvs, lyrics = extract_vowel_boundaries(
+        words, ["my", "stop"], language="en"
+    )
+
+    # "my": the voiced "m" is pitched, so the whole word is one note with no
+    # leading gap. "stop": the unvoiced "s t" onset stays in the gap.
+    assert word_durs == pytest.approx([0.40, 0.12, 0.33])
+    assert word_vuvs == [1, 0, 1]
+    assert lyrics == ["my", "", "stop"]
 
 
 def test_extract_vowel_boundaries_en_multisyllable_starts_at_vowels():

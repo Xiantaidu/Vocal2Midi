@@ -25,6 +25,13 @@ _SINGABLE_EN_PHONEMES = {
     "aa", "ae", "ah", "ao", "aw", "ax", "ay",
     "eh", "er", "ey", "ih", "iy", "ow", "oy", "uh", "uw",
 }
+# ARPABET consonants that carry voicing (and thus pitch): nasals, liquids,
+# glides and voiced obstruents. A word-initial run of these is sung on the
+# note's pitch, so it belongs inside the note rather than the unvoiced gap.
+_EN_VOICED_CONSONANTS = {
+    "b", "d", "g", "v", "dh", "z", "zh", "jh",
+    "m", "n", "ng", "l", "r", "w", "y", "dx",
+}
 _NON_SINGABLE_WORD_TOKENS = {"SP", "AP", "EP", "br", "sil", "pau"}
 
 
@@ -77,11 +84,15 @@ def _find_word_nucleus_start(word, language: str | None) -> float | None:
 def _english_syllable_chunks(word):
     """Split one aligned English word into per-syllable time chunks.
 
-    Vowel-nucleus semantics, matching the zh/ja path: every chunk starts at
-    its vowel nucleus, so the consonant onset before a nucleus falls into the
-    unvoiced gap the caller emits (vuvs=0) while the syllable's own coda
-    closes its chunk. Returns [(start, end), ...] or None when the word has
-    no singable vowel.
+    Each chunk starts at a vowel nucleus, matching the zh/ja path, with one
+    refinement at the word onset: a leading run of voiced consonants (nasals,
+    liquids, glides, voiced obstruents -- the m of "my", the l of "fly") carries
+    pitch and is sung on the note, so the first chunk backs up to the start of
+    that voiced run. A leading unvoiced consonant (p/t/k/s/f/h...) has no pitch
+    and stays in the unvoiced gap the caller emits (vuvs=0). Internal syllable
+    boundaries keep the vowel-start convention, so an inter-syllable onset stays
+    inside the preceding note span. Returns [(start, end), ...] or None when the
+    word has no singable vowel.
     """
     phones = getattr(word, "phonemes", None) or []
     if not phones:
@@ -91,7 +102,15 @@ def _english_syllable_chunks(word):
     if not vowel_idx:
         return None
 
-    bounds = [float(phones[vowel_idx[0]].start)]
+    # Word onset only: walk back from the first vowel through the voiced
+    # consonants right before it (they are pitched and sung), stopping at the
+    # first unvoiced consonant. There is no previous syllable here, so this run
+    # is pure onset -- it cannot steal a coda.
+    onset = vowel_idx[0]
+    while onset > 0 and _normalize_phone_text(phones[onset - 1].text).lower() in _EN_VOICED_CONSONANTS:
+        onset -= 1
+
+    bounds = [float(phones[onset].start)]
     for k in range(1, len(vowel_idx)):
         bounds.append(float(phones[vowel_idx[k]].start))
     bounds.append(float(word.end))
