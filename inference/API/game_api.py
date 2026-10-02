@@ -25,13 +25,6 @@ _SINGABLE_EN_PHONEMES = {
     "aa", "ae", "ah", "ao", "aw", "ax", "ay",
     "eh", "er", "ey", "ih", "iy", "ow", "oy", "uh", "uw",
 }
-# ARPABET consonants that carry voicing (and thus pitch): nasals, liquids,
-# glides and voiced obstruents. A word-initial run of these is sung on the
-# note's pitch, so it belongs inside the note rather than the unvoiced gap.
-_EN_VOICED_CONSONANTS = {
-    "b", "d", "g", "v", "dh", "z", "zh", "jh",
-    "m", "n", "ng", "l", "r", "w", "y", "dx",
-}
 _NON_SINGABLE_WORD_TOKENS = {"SP", "AP", "EP", "br", "sil", "pau"}
 
 
@@ -84,15 +77,13 @@ def _find_word_nucleus_start(word, language: str | None) -> float | None:
 def _english_syllable_chunks(word):
     """Split one aligned English word into per-syllable time chunks.
 
-    Each chunk starts at a vowel nucleus, matching the zh/ja path, with one
-    refinement at the word onset: a leading run of voiced consonants (nasals,
-    liquids, glides, voiced obstruents -- the m of "my", the l of "fly") carries
-    pitch and is sung on the note, so the first chunk backs up to the start of
-    that voiced run. A leading unvoiced consonant (p/t/k/s/f/h...) has no pitch
-    and stays in the unvoiced gap the caller emits (vuvs=0). Internal syllable
-    boundaries keep the vowel-start convention, so an inter-syllable onset stays
-    inside the preceding note span. Returns [(start, end), ...] or None when the
-    word has no singable vowel.
+    Vowel-nucleus semantics, matching the zh/ja path: every chunk starts at
+    its vowel nucleus while an inter-syllable onset stays inside the preceding
+    chunk. The caller additionally extends the final chunk across the next
+    word's onset (see _extract_vowel_boundaries_english), so word-initial
+    consonants are sung inside the previous note and notes stay contiguous
+    instead of puncturing the phrase with vuvs=0 holes. Returns
+    [(start, end), ...] or None when the word has no singable vowel.
     """
     phones = getattr(word, "phonemes", None) or []
     if not phones:
@@ -102,15 +93,7 @@ def _english_syllable_chunks(word):
     if not vowel_idx:
         return None
 
-    # Word onset only: walk back from the first vowel through the voiced
-    # consonants right before it (they are pitched and sung), stopping at the
-    # first unvoiced consonant. There is no previous syllable here, so this run
-    # is pure onset -- it cannot steal a coda.
-    onset = vowel_idx[0]
-    while onset > 0 and _normalize_phone_text(phones[onset - 1].text).lower() in _EN_VOICED_CONSONANTS:
-        onset -= 1
-
-    bounds = [float(phones[onset].start)]
+    bounds = [float(phones[vowel_idx[0]].start)]
     for k in range(1, len(vowel_idx)):
         bounds.append(float(phones[vowel_idx[k]].start))
     bounds.append(float(word.end))
@@ -132,7 +115,7 @@ def _extract_vowel_boundaries_english(result_word, original_chars: list[str]):
     char_idx = 0
     last_end = 0.0
 
-    for word in result_word:
+    for i, word in enumerate(result_word):
         if word.text in _NON_SINGABLE_WORD_TOKENS:
             if word.end > last_end:
                 word_durs.append(word.end - last_end)
@@ -157,6 +140,19 @@ def _extract_vowel_boundaries_english(result_word, original_chars: list[str]):
                 lyrics.append("")
                 last_end = word.end
             continue
+
+        # zh/ja-style end anchoring: the word's final chunk extends to the
+        # next singable word's vowel nucleus, so that word's onset consonants
+        # are sung inside this note and consecutive notes butt together
+        # instead of puncturing the phrase with a vuvs=0 hole at every word
+        # boundary. After a pause (SP/AP) there is no previous note to absorb
+        # the onset, and the caller's gap entry applies as in zh/ja.
+        note_end = float(word.end)
+        if i + 1 < len(result_word) and result_word[i + 1].text not in _NON_SINGABLE_WORD_TOKENS:
+            next_nucleus = _find_word_nucleus_start(result_word[i + 1], "en")
+            if next_nucleus is not None:
+                note_end = max(note_end, float(next_nucleus))
+        chunks[-1] = (chunks[-1][0], note_end)
 
         if chunks[0][0] > last_end + 0.005:
             word_durs.append(chunks[0][0] - last_end)
