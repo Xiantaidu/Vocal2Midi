@@ -26,7 +26,7 @@ def encode_phrase_key(chars: list[str]) -> int:
 def load_word_dict(path: str | Path) -> dict[str, list[list[str]]]:
     """Load word.txt -> dict[char] = [[pron1], [pron2], ...].
 
-    Original format: 汉字:拼音1,拼音2,...
+    Original format: char:pinyin1,pinyin2,...
     """
     result: dict[str, list[list[str]]] = {}
     with Path(path).open("r", encoding="utf-8") as f:
@@ -49,7 +49,7 @@ def load_word_dict(path: str | Path) -> dict[str, list[list[str]]]:
 def load_phrase_dict(path: str | Path) -> dict[int, list[list[str]]]:
     """Load phrases_dict.txt -> dict[int_key] = [[pron1, pron2, ...], ...].
 
-    Original format: 词组:拼音1,拼音2,拼音3,拼音4
+    Original format: phrase:pinyin1,pinyin2,pinyin3,pinyin4
     """
     result: dict[int, list[list[str]]] = {}
     with Path(path).open("r", encoding="utf-8") as f:
@@ -74,7 +74,7 @@ def load_phrase_dict(path: str | Path) -> dict[int, list[list[str]]]:
 def load_phrase_map(path: str | Path) -> set[str]:
     """Load phrases_map.txt -> set of polyphonic character strings.
 
-    Original format: 汉字:digits
+    Original format: char:digits
     """
     result: set[str] = set()
     with Path(path).open("r", encoding="utf-8") as f:
@@ -91,7 +91,7 @@ def load_phrase_map(path: str | Path) -> set[str]:
 def load_trans_dict(path: str | Path) -> dict[str, str]:
     """Load trans_word.txt -> dict[trad_char] = simp_char.
 
-    Original format: 繁体字:简体字
+    Original format: trad_char:simp_char
     """
     result: dict[str, str] = {}
     with Path(path).open("r", encoding="utf-8") as f:
@@ -108,7 +108,7 @@ def load_trans_dict(path: str | Path) -> dict[str, str]:
 def load_user_dict(path: str | Path) -> dict[int, list[list[str]]]:
     """Load user_dict.txt into the same format as load_phrase_dict.
 
-    Original format: 词组:pron1 pron2 pron3  (space-separated, TONE3)
+    Original format: phrase:pron1 pron2 pron3  (space-separated, TONE3)
     """
     result: dict[int, list[list[str]]] = {}
     p = Path(path)

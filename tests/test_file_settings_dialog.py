@@ -88,7 +88,7 @@ def test_pinyin_engine_locks_lyric_output(parent_widget):
 
 
 def test_unknown_language_value_falls_back_to_zh(parent_widget):
-    dialog = FileSettingsDialog("a.wav", _base_values(language="中文-拼音"), parent_widget)
+    dialog = FileSettingsDialog("a.wav", _base_values(language="invalid_language"), parent_widget)
     assert dialog.lang_combo.currentData() == "zh"
     assert dialog.values()["language"] == "zh"
 

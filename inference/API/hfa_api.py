@@ -147,7 +147,7 @@ def load_hfa_model(model_dir, device=None, use_cache: bool = True):
 def run_hubert_fa(hfa_model, temp_dir, language="zh", cancel_checker=None, use_phoneme_g2p=False):
     logger.info("[Hybrid Pipeline] Running HubertFA forced alignment...")
     if cancel_checker and cancel_checker():
-        raise InterruptedError("HFA 任务已取消")
+        raise InterruptedError("HFA task was cancelled")
     hfa_model.dataset = []
     hfa_model.predictions = []
     
@@ -165,7 +165,7 @@ def run_hubert_fa(hfa_model, temp_dir, language="zh", cancel_checker=None, use_p
     else:
         hfa_model.get_dataset(wav_folder=temp_dir, language=language, g2p="dictionary", dictionary_path=dict_path)
     if cancel_checker and cancel_checker():
-        raise InterruptedError("HFA 任务已取消")
+        raise InterruptedError("HFA task was cancelled")
     if len(hfa_model.dataset) > 0:
         # Detect breaths (AP) for Chinese and English; Japanese relies on its own
         # mora dictionary without non-lexical detection.
@@ -187,14 +187,14 @@ def export_hfa_artifacts(chunks, temp_dir_path, hfa_model, output_key, output_di
     tg_subfolder = None
     if export_textgrid:
         if cancel_checker and cancel_checker():
-            raise InterruptedError("HFA 导出任务已取消")
+            raise InterruptedError("HFA export task was cancelled")
         temp_tg_dir = temp_dir_path / "temp_tg"
         hfa_model.export(temp_tg_dir, output_format=['textgrid'])
         tg_subfolder = temp_tg_dir / "TextGrid"
     
     for chunk_idx, chunk in enumerate(chunks):
         if cancel_checker and cancel_checker():
-            raise InterruptedError("HFA 导出任务已取消")
+            raise InterruptedError("HFA export task was cancelled")
         stem = f"chunk_{chunk_idx}"
         new_stem = f"{output_key}_{chunk_idx:03d}"
         

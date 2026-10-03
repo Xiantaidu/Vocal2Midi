@@ -223,7 +223,7 @@ def _export_chunk_wavs_from_temp(
 
     for chunk_idx in range(chunk_count):
         if cancel_checker and cancel_checker():
-            raise InterruptedError("切片导出任务已取消")
+            raise InterruptedError("Slicing export task was cancelled")
         src = temp_dir_path / f"chunk_{chunk_idx}.wav"
         if not src.is_file():
             logger.warning(f"[Warning] Chunk WAV file not found, skipping: {src}")
@@ -255,7 +255,7 @@ def _run_lyric_alignment(
     """
     def _check_cancel():
         if cancel_checker and cancel_checker():
-            raise InterruptedError("任务已取消")
+            raise InterruptedError("Task was cancelled")
 
     chars_dict = {}
     pred_dict = {}

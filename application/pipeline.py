@@ -22,7 +22,7 @@ def open_asr_session() -> AsrSubprocessSession:
 
 
 def _uses_pinyin_asr(cfg: PipelineConfig) -> bool:
-    if (cfg.language or "").strip().lower() in {"zh-pinyin", "中文-拼音", "中文拼音"}:
+    if (cfg.language or "").strip().lower() == "zh-pinyin":
         return True
     lang = (cfg.language or "").strip().lower()
     return lang in {"zh", "zh-pinyin"} and str(cfg.chinese_asr_engine or "").strip().lower() == "pinyin"
@@ -36,24 +36,24 @@ def _ja_uses_romaji_asr(cfg: PipelineConfig) -> bool:
 
 def _validate_model_paths(cfg: PipelineConfig) -> None:
     """Validate that required model paths exist before starting the pipeline."""
-    required_paths = [("GAME 模型目录", cfg.game_model_dir)]
+    required_paths = [("GAME model dir", cfg.game_model_dir)]
     if cfg.output_lyrics:
         # The forced-alignment engine decides which aligner model is required.
         if str(cfg.alignment_engine or "").strip().lower() == "tifa":
-            required_paths.append(("TiFA 模型目录", cfg.tifa_model_path))
+            required_paths.append(("TiFA model dir", cfg.tifa_model_path))
         else:
-            required_paths.append(("HubertFA 模型目录", cfg.hfa_model_dir))
+            required_paths.append(("HubertFA model dir", cfg.hfa_model_dir))
         if _uses_pinyin_asr(cfg):
             # Chinese + pinyin ASR routes to the pinyin model; Qwen is not used.
             if cfg.pinyin_asr_model_path:
-                required_paths.append(("拼音ASR模型路径", cfg.pinyin_asr_model_path))
+                required_paths.append(("Pinyin ASR model path", cfg.pinyin_asr_model_path))
         else:
-            required_paths.append(("ASR 模型路径", cfg.asr_model_path))
+            required_paths.append(("ASR model path", cfg.asr_model_path))
             # A provided romaji ASR path is used as-is by the ja pipeline;
             # an empty one degrades gracefully, a broken one must fail here.
             # With the Qwen engine selected for Japanese it is bypassed entirely.
             if _ja_uses_romaji_asr(cfg) and cfg.phoneme_asr_model_path:
-                required_paths.append(("音素ASR模型路径", cfg.phoneme_asr_model_path))
+                required_paths.append(("Phoneme ASR model path", cfg.phoneme_asr_model_path))
 
     # Pitch curves require RMVPE; fail fast with a clear path instead of a
     # mid-run error inside RmvpeTranscriber.
@@ -61,15 +61,15 @@ def _validate_model_paths(cfg: PipelineConfig) -> None:
         fmt in (cfg.output_formats or []) for fmt in ("ustx", "vsqx")
     )
     if wants_pitch_curve and cfg.rmvpe_model_path:
-        required_paths.append(("RMVPE 模型路径", cfg.rmvpe_model_path))
+        required_paths.append(("RMVPE model path", cfg.rmvpe_model_path))
 
     errors = []
     for label, path in required_paths:
         if not path or not os.path.exists(path):
-            errors.append(f"{label}不存在或无效: {path}")
+            errors.append(f"{label} does not exist or is invalid: {path}")
     if errors:
         raise ModelNotFoundError(
-            "模型路径验证失败",
+            "Model path validation failed",
             details="; ".join(errors),
         )
 

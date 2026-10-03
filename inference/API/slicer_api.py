@@ -17,52 +17,16 @@ _SLICE_METHOD_ALIASES = {
     "smart": "smart",
     "heuristic": "heuristic",
     "grid": "grid",
-    "默认切片": "default",
-    "智能切片": "smart",
-    "启发式切片": "heuristic",
-    "网格搜索切片": "grid",
 }
-_SLICE_METHOD_KEYWORDS = (
-    ("smart", ("smart", "智能")),
-    ("heuristic", ("heuristic", "启发式")),
-    ("grid", ("grid", "网格")),
-    ("default", ("default", "默认", "auto")),
-)
-
-
-def _repair_text_candidates(text: str) -> list[str]:
-    stripped = text.strip()
-    candidates = [stripped]
-    for source_encoding in ("gb18030", "gbk"):
-        try:
-            repaired = stripped.encode(source_encoding).decode("utf-8", errors="ignore").strip()
-        except UnicodeError:
-            continue
-        if repaired and repaired not in candidates:
-            candidates.append(repaired)
-    return candidates
 
 
 def normalize_slicing_method(method: str | None) -> str:
     if method is None:
         return DEFAULT_SLICE_METHOD
-
-    candidates = []
-    for candidate in _repair_text_candidates(str(method)):
-        lowered = candidate.lower()
-        for value in (candidate, lowered):
-            if value and value not in candidates:
-                candidates.append(value)
-
-    for candidate in candidates:
-        normalized = _SLICE_METHOD_ALIASES.get(candidate)
-        if normalized is not None:
-            return normalized
-
-    for candidate in candidates:
-        for normalized, keywords in _SLICE_METHOD_KEYWORDS:
-            if any(keyword in candidate for keyword in keywords):
-                return normalized
+    lowered = str(method).strip().lower()
+    normalized = _SLICE_METHOD_ALIASES.get(lowered)
+    if normalized is not None:
+        return normalized
 
     supported = ", ".join(SLICE_METHOD_CHOICES)
     raise ValueError(f"Unsupported slicing method: {method!r}. Supported values: {supported}")

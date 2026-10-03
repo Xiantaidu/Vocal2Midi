@@ -105,7 +105,7 @@ def _extract_vowel_boundaries_english(result_word, original_chars: list[str]):
 
     Each chunk becomes one align unit for GAME; chunk 0 carries the whole word
     as its lyric and every later chunk carries "+" (the syllable-position
-    marker). Melisma (转音, pitch-transition) notes inside a chunk fall back to the sustain symbol
+    marker). Melisma (pitch-transition) notes inside a chunk fall back to the sustain symbol
     assigned by the caller.
     """
     word_durs = []
@@ -336,7 +336,7 @@ def extract_pitches_and_align(
     """
     Extract pitches using the GAME ONNX runtime and align them to lyrics.
     """
-    # Melisma (转音, pitch-transition) notes keep '-' for every language; for English the '+' on
+    # Melisma (pitch-transition) notes keep '-' for every language; for English the '+' on
     # syllable positions comes from the per-syllable chunk lyrics instead
     # (see _extract_vowel_boundaries_english).
     sustain_lyric = "-"

@@ -153,14 +153,6 @@ def _direct_moras_to_display_tokens(language, lyric_output_mode, romaji_moras):
 def _normalize_lyric_output_mode(language, lyric_output_mode):
     language = (language or "zh").lower()
     mode = (lyric_output_mode or "").lower()
-    aliases = {
-        "拼音": "pinyin",
-        "汉字": "hanzi",
-        "罗马音": "romaji",
-        "假名": "kana",
-        "单词": "word",
-    }
-    mode = aliases.get(lyric_output_mode, mode)
     valid_modes = {
         "zh": {"pinyin", "hanzi"},
         "zh-pinyin": {"pinyin"},

@@ -135,7 +135,7 @@ def plot_non_lexical_phonemes(mel_spec,  # [C,T]
         N, T_target = non_lexical_target.shape
 
         if T_target != T:
-            print(f"Warning: non_lexical_target 的时间维度 ({T_target}) 与 mel_spec 的时间维度 ({T}) 不匹配")
+            print(f"Warning: non_lexical_target time dimension ({T_target}) does not match mel_spec time dimension ({T})")
             T_min = min(T, T_target)
         else:
             T_min = T

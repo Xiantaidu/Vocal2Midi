@@ -235,10 +235,10 @@ class LyricMatchingPipeline:
     @staticmethod
     def _display_no_match(lab_name: str, asr_phonetic: List[str], reason: str = "") -> None:
         asr_str = " ".join(asr_phonetic)
-        logger.info(f"lab_name:         {lab_name}  -> 未能匹配到任何歌词片段")
+        logger.info(f"lab_name:         {lab_name}  -> Failed to match any lyric segments")
         if reason:
-            logger.error(f"失败原因:         {reason}")
-        logger.info(f"asr_result (全部多余): {asr_str}")
+            logger.error(f"Failure reason:   {reason}")
+        logger.info(f"asr_result (all extraneous): {asr_str}")
         logger.info("-" * 80)
 
     def execute(self) -> None:

@@ -43,7 +43,7 @@ def save_textgrids(
     count = 0
     for stem, (wav_path, wav_length, words) in items:
         if cancel_checker and cancel_checker():
-            raise InterruptedError("任务已取消")
+            raise InterruptedError("Task was cancelled")
         tg = tg_lib.TextGrid(minTime=0, maxTime=wav_length)
         word_tier = tg_lib.IntervalTier(name="words", minTime=0.0, maxTime=wav_length)
         phone_tier = tg_lib.IntervalTier(name="phones", minTime=0.0, maxTime=wav_length)

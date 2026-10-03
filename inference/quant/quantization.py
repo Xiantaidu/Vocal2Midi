@@ -87,7 +87,7 @@ def quantize_notes(
     simplicity: float = 2.5,
 ):
     mode = (mode or "simple").lower()
-    # "不量化" ("no quantization"; step <= 0) disables every mode at the public entrypoint.
+    # step <= 0 ("no quantization") disables every mode at the public entrypoint.
     if quantization_step <= 0:
         return
     if mode == "smart":
@@ -97,6 +97,6 @@ def quantize_notes(
 
 
 def should_apply_quantization(mode: str, quantization_step: int) -> bool:
-    # "不量化" ("no quantization"; step <= 0) must disable every mode.
+    # step <= 0 ("no quantization") must disable every mode.
     del mode
     return quantization_step > 0

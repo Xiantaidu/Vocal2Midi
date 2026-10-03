@@ -513,10 +513,10 @@ def load_model(model_path: str):
         logger.info(f"Restored directory to: {Path.cwd()}")
         return model
     else:
-        logger.error(f'当前路径：{Path.cwd()}')
-        logger.error(f'模型绝对路径：{model_path.as_posix()}')
-        logger.error(f'模型可访问性：{model_path.exists()}')
-        logger.error(f"模型加载失败: {model_path}")
+        logger.error(f'Current working directory: {Path.cwd()}')
+        logger.error(f'Model absolute path: {model_path.as_posix()}')
+        logger.error(f'Model accessible: {model_path.exists()}')
+        logger.error(f"Failed to load model: {model_path}")
         return None
 
 def load_model_with_backend(
@@ -675,7 +675,7 @@ class LlamaContext:
 
         self.ptr = llama_init_from_model(model.ptr, params)
         if not self.ptr:
-            raise RuntimeError("上下文初始化失败")
+            raise RuntimeError("Context initialization failed")
 
     def decode(self, batch):
         struct = batch.struct if hasattr(batch, 'struct') else batch
@@ -746,7 +746,7 @@ class LlamaBatch:
         """
         n_tokens = data.shape[0]
         if n_tokens > self.n_tokens_max:
-            raise ValueError(f"Batch 空间不足: {n_tokens} > {self.n_tokens_max}")
+            raise ValueError(f"Insufficient batch space: {n_tokens} > {self.n_tokens_max}")
         
         # 1. Copy embedding memory.
         if not data.flags['C_CONTIGUOUS']:
@@ -937,7 +937,7 @@ def python_log_callback(level, message, user_data):
             logger.info(f"[llama.cpp] {msg_str}")
     except Exception as e:
         # Prevent callback failures from crashing the process.
-        logger.info(f"日志回调出错: {e}")
+        logger.info(f"Log callback error: {e}")
 
 def configure_logging(quiet=False):
     """Configure the llama.cpp log callback."""
@@ -1078,7 +1078,7 @@ def get_token_embeddings_gguf(model_path, target_tensor="token_embd.weight", qui
     data_offset = offs
     
     if target_shape is None:
-        logger.error(f"无法在 {model_path} 中找到 {target_tensor}")
+        logger.error(f"Failed to find {target_tensor} in {model_path}")
         return None
         
     abs_offset = data_offset + target_rel_offset
@@ -1096,7 +1096,7 @@ def get_token_embeddings_gguf(model_path, target_tensor="token_embd.weight", qui
         elif qtype == GGMLQuantizationType.F16:
             bytes_per_row = n_embd * 2
         else:
-            raise ValueError(f"未知的数据格式支持: {qtype.name}")
+            raise ValueError(f"Unsupported data format: {qtype.name}")
 
     total_bytes = vocab_size * bytes_per_row
     raw_data = mm[abs_offset : abs_offset + total_bytes]
@@ -1111,8 +1111,8 @@ def get_token_embeddings_gguf(model_path, target_tensor="token_embd.weight", qui
         
     total_time = time.time() - t_start
     if not quiet:
-        logger.info(f"--- [QwenASR] 已极速载入 Embedding 视图 ({total_time*1000:.1f}ms) ---")
-        logger.info(f"    - 量化格式: {qtype.name} ({n_embd} dims, {vocab_size} tokens)")
+        logger.info(f"--- [QwenASR] Loaded embedding view ({total_time*1000:.1f}ms) ---")
+        logger.info(f"    - Quant format: {qtype.name} ({n_embd} dims, {vocab_size} tokens)")
     
     return LlamaEmbeddingTable(raw_data, qtype)
 

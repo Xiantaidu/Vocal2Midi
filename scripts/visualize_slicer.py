@@ -27,12 +27,12 @@ def plot_slicing(audio_path, output_image_path):
     f0[~voiced_flag] = np.nan # Set unvoiced to NaN for plotting
     times_f0 = librosa.times_like(f0, sr=sr, hop_length=hop_length)
 
-    print("Running smart slicing (智能切片)...")
+    print("Running smart slicing...")
     # We use the calculated voiced flag to simulate the RMVPE mask override
     chunks = slice_audio(
         y, 
         sr, 
-        method="智能切片",
+        method="smart",
         rmvpe_voiced_mask=voiced_flag,
         rmvpe_time_step_seconds=hop_length/sr
     )

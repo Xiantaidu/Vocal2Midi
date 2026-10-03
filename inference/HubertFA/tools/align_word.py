@@ -44,7 +44,7 @@ class Word:
 
     def add_phoneme(self, phoneme, log_list: list = None):
         if phoneme.start == phoneme.end:
-            warning_msg = f"{phoneme.text} phoneme长度为0，非法"
+            warning_msg = f"{phoneme.text}: phoneme length is 0, invalid"
             if log_list is not None:
                 log_list.append(f"WARNING: {warning_msg}")
             else:
@@ -53,7 +53,7 @@ class Word:
         if phoneme.start >= self.start and phoneme.end <= self.end:
             self.phonemes.append(phoneme)
         else:
-            warning_msg = f"{phoneme.text}: phoneme边界超出word，添加失败"
+            warning_msg = f"{phoneme.text}: phoneme boundary exceeds word, failed to add"
             if log_list is not None:
                 log_list.append(f"WARNING: {warning_msg}")
             else:
@@ -61,7 +61,7 @@ class Word:
 
     def append_phoneme(self, phoneme, log_list: list = None):
         if phoneme.start == phoneme.end:
-            warning_msg = f"{phoneme.text} phoneme长度为0，非法"
+            warning_msg = f"{phoneme.text}: phoneme length is 0, invalid"
             if log_list is not None:
                 log_list.append(f"WARNING: {warning_msg}")
             else:
@@ -72,7 +72,7 @@ class Word:
                 self.phonemes.append(phoneme)
                 self.end = phoneme.end
             else:
-                warning_msg = f"{phoneme.text}: phoneme左边界超出word，添加失败"
+                warning_msg = f"{phoneme.text}: phoneme left boundary exceeds word, failed to add"
                 if log_list is not None:
                     log_list.append(f"WARNING: {warning_msg}")
                 else:
@@ -82,7 +82,7 @@ class Word:
                 self.phonemes.append(phoneme)
                 self.end = phoneme.end
             else:
-                warning_msg = f"{phoneme.text}: phoneme添加失败"
+                warning_msg = f"{phoneme.text}: failed to add phoneme"
                 if log_list is not None:
                     log_list.append(f"WARNING: {warning_msg}")
                 else:
@@ -93,7 +93,7 @@ class Word:
             self.start = new_start
             self.phonemes[0].start = new_start
         else:
-            warning_msg = f"{self.text}: start >= first_phone_end，无法调整word边界"
+            warning_msg = f"{self.text}: start >= first_phone_end, cannot adjust word boundary"
             if log_list is not None:
                 log_list.append(f"WARNING: {warning_msg}")
             else:
@@ -104,7 +104,7 @@ class Word:
             self.end = new_end
             self.phonemes[-1].end = new_end
         else:
-            warning_msg = f"{self.text}: new_end <= first_phone_start，无法调整word边界"
+            warning_msg = f"{self.text}: new_end <= first_phone_start, cannot adjust word boundary"
             if log_list is not None:
                 log_list.append(f"WARNING: {warning_msg}")
             else:
@@ -139,7 +139,7 @@ class WordList(list):
 
     def append(self, word: Word):
         if len(word.phonemes) == 0:
-            warning_msg = f"{word}: phones为空，非法word"
+            warning_msg = f"{word}: phones is empty, invalid word"
             self._add_log(f"WARNING: {warning_msg}")
             return
 
@@ -150,7 +150,7 @@ class WordList(list):
         if not self.overlapping_words(word):
             super().append(word)
         else:
-            warning_msg = f"{word}: 区间重叠，无法添加word"
+            warning_msg = f"{word}: overlapping interval, cannot add word"
             self._add_log(f"WARNING: {warning_msg}")
 
     @staticmethod
@@ -181,7 +181,7 @@ class WordList(list):
     def add_AP(self, new_word: Word, min_dur=0.1):
         try:
             if len(new_word.phonemes) == 0:
-                warning_msg = f"{new_word.text} phonemes为空，非法word"
+                warning_msg = f"{new_word.text} phonemes is empty, invalid word"
                 self._add_log(f"WARNING: {warning_msg}")
                 return
 

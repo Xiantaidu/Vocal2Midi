@@ -26,7 +26,6 @@ from inference.pipeline import lyric_alignment
 # --- language routing helpers ---
 
 def test_normalize_pipeline_language_maps_chinese_pinyin():
-    assert pipeline.normalize_pipeline_language("中文-拼音") == ("zh-pinyin", True)
     assert pipeline.normalize_pipeline_language("zh-pinyin") == ("zh-pinyin", True)
     assert pipeline.normalize_pipeline_language("zh") == ("zh", False)
     assert pipeline.normalize_pipeline_language("ja") == ("ja", False)
@@ -36,7 +35,6 @@ def test_normalize_pipeline_language_maps_chinese_pinyin():
 
 def test_zh_pinyin_output_mode_is_forced_to_pinyin():
     assert _normalize_lyric_output_mode("zh-pinyin", "hanzi") == "pinyin"
-    assert _normalize_lyric_output_mode("zh-pinyin", "拼音") == "pinyin"
     assert _normalize_lyric_output_mode("zh-pinyin", None) == "pinyin"
     # plain zh keeps both modes
     assert _normalize_lyric_output_mode("zh", "hanzi") == "hanzi"
@@ -124,7 +122,7 @@ def test_zh_pinyin_uses_pinyin_asr_and_zh_hfa(monkeypatch, tmp_path):
     monkeypatch.setattr(lyric_alignment, "run_hubert_fa", run_hfa)
 
     kwargs = _base_kwargs(tmp_path)
-    kwargs["language"] = "中文-拼音"
+    kwargs["language"] = "zh-pinyin"
 
     pipeline.auto_lyric_hybrid_pipeline(**kwargs)
 

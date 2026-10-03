@@ -209,7 +209,7 @@ def test_empty_chunks_fail_before_models(monkeypatch, tmp_path):
 
     kwargs = _base_kwargs(tmp_path)
 
-    with pytest.raises(RuntimeError, match="切片阶段"):
+    with pytest.raises(RuntimeError, match="slicing stage"):
         pipeline.auto_lyric_hybrid_pipeline(**kwargs)
 
     load_game.assert_not_called()

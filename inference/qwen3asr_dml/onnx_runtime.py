@@ -100,7 +100,7 @@ def _resolve_variant(model_dir: Path, name: str) -> Path:
         path = model_dir / filename
         if path.is_file():
             return path
-    raise FileNotFoundError(f"未找到 Qwen3-ASR ONNX 文件: {name}")
+    raise FileNotFoundError(f"Qwen3-ASR ONNX file not found: {name}")
 
 
 def _load_embedding(model_dir: Path) -> np.ndarray:

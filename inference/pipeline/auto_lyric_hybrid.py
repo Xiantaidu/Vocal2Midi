@@ -53,29 +53,29 @@ def _resolve_output_key(output_filename: str, audio_path: str) -> str:
     source_name = output_filename or pathlib.Path(audio_path).name
     output_key = pathlib.Path(source_name).stem
     if not output_key:
-        raise ValueError("输出文件名不能为空")
+        raise ValueError("Output filename cannot be empty")
     return output_key
 
 
 def normalize_pipeline_language(language: str | None) -> tuple[str, bool]:
-    """Map user-facing language to the pipeline value and the pinyin-ASR flag.
+    """Map language to the pipeline value and the pinyin-ASR flag.
 
-    '中文-拼音' ("Chinese-Pinyin") / 'zh-pinyin' selects the direct pinyin ASR engine; every other
+    'zh-pinyin' selects the direct pinyin ASR engine; every other
     language keeps its existing engine (ja romaji ASR or Qwen text ASR).
     """
     value = str(language or "").strip().lower()
-    if value in {PINYIN_ASR_LANGUAGE, "中文-拼音", "中文拼音"}:
+    if value == PINYIN_ASR_LANGUAGE:
         return PINYIN_ASR_LANGUAGE, True
     return value or "zh", False
 
 
 def _validate_runtime_options(tempo: float, batch_size: int, asr_batch_size: int) -> None:
     if tempo <= 0:
-        raise ValueError(f"tempo 必须大于 0，当前为 {tempo}")
+        raise ValueError(f"tempo must be greater than 0, got {tempo}")
     if batch_size <= 0:
-        raise ValueError(f"batch_size 必须大于 0，当前为 {batch_size}")
+        raise ValueError(f"batch_size must be greater than 0, got {batch_size}")
     if asr_batch_size <= 0:
-        raise ValueError(f"asr_batch_size 必须大于 0，当前为 {asr_batch_size}")
+        raise ValueError(f"asr_batch_size must be greater than 0, got {asr_batch_size}")
 
 
 def _validate_slice_runtime_options(
@@ -94,14 +94,14 @@ def _export_chunk_wavs(chunks, sr: int, output_key: str, output_dir: pathlib.Pat
 
     for chunk_idx, chunk in enumerate(chunks):
         if cancel_checker and cancel_checker():
-            raise InterruptedError("切片导出任务已取消")
+            raise InterruptedError("Slicing export task was cancelled")
         sf.write(output_dir / f"{output_key}_{chunk_idx:03d}.wav", chunk["waveform"], sr)
 
 
 def _resolve_rmvpe_path(model_path: str) -> str:
     """Resolve the RMVPE model path."""
     if not model_path:
-        raise ValueError("RMVPE 模型路径不能为空")
+        raise ValueError("RMVPE model path cannot be empty")
     return model_path
 
 
@@ -222,9 +222,9 @@ def _slice_chunks(
         rmvpe_time_step_seconds=rmvpe_step,
     )
     if cancel_checker and cancel_checker():
-        raise InterruptedError("任务已取消")
+        raise InterruptedError("Task was cancelled")
     if not chunks:
-        raise RuntimeError("切片阶段未生成任何音频片段，已中断后续处理。")
+        raise RuntimeError("No audio chunks generated in slicing stage, aborted.")
     return chunks
 
 
@@ -257,7 +257,7 @@ def _run_game_stage(
     game_model = load_game_model(game_model_dir, device=ctx.device)
     try:
         if cancel_checker and cancel_checker():
-            raise InterruptedError("任务已取消")
+            raise InterruptedError("Task was cancelled")
         logger.info("--------------------------------------\n")
 
         if outcome is not None and outcome.aligned:
@@ -297,7 +297,7 @@ def _run_game_stage(
                 language=ctx.fa_language,
             )
         if cancel_checker and cancel_checker():
-            raise InterruptedError("任务已取消")
+            raise InterruptedError("Task was cancelled")
     finally:
         # The model stays cached in load_game_model for reuse across runs;
         # tearing the DirectML session down per song access-violates
@@ -395,7 +395,7 @@ def auto_lyric_hybrid_pipeline(
 
     def _check_cancel():
         if cancel_checker and cancel_checker():
-            raise InterruptedError("任务已取消")
+            raise InterruptedError("Task was cancelled")
 
     _check_cancel()
     sr = 44100
@@ -442,7 +442,7 @@ def auto_lyric_hybrid_pipeline(
         )
         chunk_logs = outcome.chunk_logs
     else:
-        logger.warning("\n--- No-Lyrics Mode: 跳过 ASR/HFA，仅执行 GAME 提取音高 ---\n")
+        logger.warning("\n--- No-Lyrics Mode: skipping ASR/HFA, extracting pitch via GAME only ---\n")
 
     all_notes = _run_game_stage(
         chunks, sr, ctx, outcome,

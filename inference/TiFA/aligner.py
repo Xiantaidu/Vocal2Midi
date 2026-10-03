@@ -197,7 +197,7 @@ def run_tifa_fa(
 
     for wav_path in sorted(pathlib.Path(temp_dir).rglob("*.wav"), key=_chunk_order):
         if cancel_checker and cancel_checker():
-            raise InterruptedError("任务已取消")
+            raise InterruptedError("Task was cancelled")
         stem = wav_path.stem
         text_path = wav_path.with_suffix(".txt")
         if not text_path.is_file():

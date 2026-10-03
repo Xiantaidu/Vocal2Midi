@@ -102,7 +102,7 @@ class TestValidateModelPaths:
 
         with pytest.raises(ModelNotFoundError) as exc_info:
             _validate_model_paths(base_cfg)
-        assert "拼音ASR" not in exc_info.value.details
+        assert "Pinyin ASR" not in exc_info.value.details
         assert "ASR" in exc_info.value.details
 
     def test_ja_qwen_engine_bypasses_romaji_path_check(self, base_cfg, tmp_path):
@@ -127,7 +127,7 @@ class TestValidateModelPaths:
 
         with pytest.raises(ModelNotFoundError) as exc_info:
             _validate_model_paths(base_cfg)
-        assert "音素ASR" in exc_info.value.details
+        assert "Phoneme ASR" in exc_info.value.details
 
 
 class TestRunAutoLyricJob:
