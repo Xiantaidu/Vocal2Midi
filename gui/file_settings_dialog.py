@@ -90,6 +90,8 @@ class FileSettingsDialog(MessageBoxBase):
         self.lyrics_edit = LineEdit(self)
         self.lyrics_edit.setPlaceholderText(tr("ref_lyrics_hint"))
         self.lyrics_edit.setText(base_values["original_lyrics"])
+        self.cb_match_lyrics.checkedChanged.connect(self.lyrics_edit.setEnabled)
+        self.lyrics_edit.setEnabled(bool(base_values.get("match_lyrics", False)))
         _add_pair(grid, 2, 2, tr("ref_lyrics"), self.lyrics_edit, self)
 
         self.export_format_combo = ComboBox(self)
@@ -174,7 +176,7 @@ class FileSettingsDialog(MessageBoxBase):
             "lyric_output": self.lyric_output_combo.currentData(),
             "device": self.device_combo.currentText(),
             "match_lyrics": self.cb_match_lyrics.isChecked(),
-            "original_lyrics": self.lyrics_edit.text().strip(),
+            "original_lyrics": self.lyrics_edit.text().strip() if self.cb_match_lyrics.isChecked() else "",
             "export_format": self.export_format_combo.currentData(),
             "output_lyrics": self.cb_output_lyrics.isChecked(),
             "pitch_curve": self.cb_pitch_curve.isChecked(),

@@ -95,6 +95,11 @@ class AutoLyricInterface(ScrollArea):
         self.audio_list.filesAdded.connect(lambda n: self.log_msg(tr("files_added", n=n)))
         self.audio_list.filesChanged.connect(self._update_batch_mode)
         self.audio_list.settingsRequested.connect(self._open_file_settings)
+        if self.global_settings is not None:
+            if hasattr(self.global_settings, "enable_batch_mode"):
+                self.audio_list.set_batch_mode(self.global_settings.enable_batch_mode())
+            if hasattr(self.global_settings, "batchModeChanged"):
+                self.global_settings.batchModeChanged.connect(self._on_batch_mode_setting_changed)
         self._audio_card = audio_card
         self._combo_card = None  # set after cards are built
         self._output_card = None
@@ -188,13 +193,17 @@ class AutoLyricInterface(ScrollArea):
         self.quantize_combo = ComboBox(self)
         fill_combo(self.quantize_combo, QUANT_STEP_CHOICES)
         self._bind_tr(lambda: fill_combo(self.quantize_combo, QUANT_STEP_CHOICES, keep_value=True))
-        self.quantize_combo.setCurrentIndex(0)
+        initial_step = self._initial_quantization_step()
+        self.quantize_combo.setCurrentIndex(max(0, self.quantize_combo.findData(initial_step)))
+        self.quantize_combo.currentIndexChanged.connect(self.on_quantization_step_changed)
         self._add_flow_pair(opts_layout, "quant_step", self.quantize_combo)
         opts_layout.addSpacing(28)
         self.quantize_mode_combo = ComboBox(self)
         fill_combo(self.quantize_mode_combo, QUANT_MODE_CHOICES)
         self._bind_tr(lambda: fill_combo(self.quantize_mode_combo, QUANT_MODE_CHOICES, keep_value=True))
-        self.quantize_mode_combo.setCurrentIndex(0)
+        initial_mode = self._initial_quantization_mode()
+        self.quantize_mode_combo.setCurrentIndex(max(0, self.quantize_mode_combo.findData(initial_mode)))
+        self.quantize_mode_combo.currentIndexChanged.connect(self.on_quantization_mode_changed)
         self._add_flow_pair(opts_layout, "quant_mode", self.quantize_mode_combo)
         opts_layout.addStretch(1)
         output_layout.addLayout(opts_layout)
@@ -330,7 +339,8 @@ class AutoLyricInterface(ScrollArea):
         self.global_settings.apply_batch_defaults(batch=1, asr_batch=2)
 
     def update_lyrics_visibility(self):
-        enabled = self.cb_match_lyrics.isChecked()
+        batch = hasattr(self, "audio_list") and self.audio_list.count() > 1
+        enabled = self.cb_match_lyrics.isChecked() and not batch
         self.lyric_card.setVisible(enabled)
         self.lyric_title.setVisible(enabled)
         self.lyrics_edit.setVisible(enabled)
@@ -395,6 +405,34 @@ class AutoLyricInterface(ScrollArea):
         self.pitch_curve_label.setEnabled(enabled)
         self.cb_pitch_curve.setEnabled(enabled)
 
+    def _initial_quantization_mode(self) -> str:
+        if self.global_settings is None:
+            return "smart"
+        saved = str(self.global_settings.settings.value("quantization_mode", "smart")).strip().lower()
+        return saved if saved in {"smart", "simple"} else "smart"
+
+    def on_quantization_mode_changed(self, *_args):
+        if self.global_settings is not None:
+            mode = self.quantize_mode_combo.currentData() or "smart"
+            self.global_settings.settings.setValue("quantization_mode", mode)
+
+    def _initial_quantization_step(self) -> int:
+        if self.global_settings is None:
+            return 0
+        try:
+            saved = int(self.global_settings.settings.value("quantization_step", 0))
+        except (ValueError, TypeError):
+            saved = 0
+        valid_steps = {choice[0] for choice in QUANT_STEP_CHOICES}
+        return saved if saved in valid_steps else 0
+
+    def on_quantization_step_changed(self, *_args):
+        if self.global_settings is not None:
+            step = self.quantize_combo.currentData()
+            if step is None:
+                step = 0
+            self.global_settings.settings.setValue("quantization_step", int(step))
+
     def update_lyric_output_options(self, *_args):
         language = self._selected_language()
         locked = self._pinyin_output_locked()
@@ -426,12 +464,29 @@ class AutoLyricInterface(ScrollArea):
         if dir_path:
             line_edit.setText(dir_path)
 
+    def _on_batch_mode_setting_changed(self, enabled: bool):
+        if self._is_running:
+            self.audio_list.batch_mode = enabled
+            return
+        self.audio_list.set_batch_mode(enabled)
+
     def add_audio_files(self):
-        files, _ = QFileDialog.getOpenFileNames(
-            self, tr("pick_files_dialog"), "",
-            "Audio Files (*.wav *.m4a *.flac *.mp3 *.ogg *.opus *.wma *.webm *.aif *.aiff)"
-        )
-        self.audio_list.add_paths(files)
+        batch_enabled = True
+        if self.global_settings is not None and hasattr(self.global_settings, "enable_batch_mode"):
+            batch_enabled = self.global_settings.enable_batch_mode()
+
+        filter_str = "Audio Files (*.wav *.m4a *.flac *.mp3 *.ogg *.opus *.wma *.webm *.aif *.aiff)"
+        if batch_enabled:
+            files, _ = QFileDialog.getOpenFileNames(
+                self, tr("pick_files_dialog"), "", filter_str
+            )
+        else:
+            file, _ = QFileDialog.getOpenFileName(
+                self, tr("pick_files_dialog"), "", filter_str
+            )
+            files = [file] if file else []
+        if files:
+            self.audio_list.add_paths(files)
 
     def clear_audio_files(self):
         self.audio_list.clear_all()
@@ -444,6 +499,7 @@ class AutoLyricInterface(ScrollArea):
         batch = file_count > 1
         self._combo_card.setVisible(not batch)
         self._output_card.setVisible(not batch)
+        self.update_lyrics_visibility()
         self.audio_list.setMaximumHeight(16777215 if batch else 40)  # unclamped in batch mode
         self.audio_list.setMinimumHeight(160 if batch else 40)
         if batch:
@@ -457,13 +513,14 @@ class AutoLyricInterface(ScrollArea):
         All entries are backend values; the per-file dialog round-trips them
         without any display-text conversion.
         """
+        batch = hasattr(self, "audio_list") and self.audio_list.count() > 1
         return {
             "slicing_method": self.slicing_combo.currentData(),
             "language": self.lang_combo.currentData() or "zh",
             "lyric_output": self.lyric_output_combo.currentData() or "hanzi",
             "device": self.device_combo.currentText(),
-            "match_lyrics": self.cb_match_lyrics.isChecked(),
-            "original_lyrics": self.lyrics_edit.toPlainText().strip(),
+            "match_lyrics": False if batch else self.cb_match_lyrics.isChecked(),
+            "original_lyrics": "" if batch else self.lyrics_edit.toPlainText().strip(),
             "export_format": self.get_export_format(),
             "output_lyrics": self.cb_output_lyrics.isChecked(),
             "pitch_curve": self.cb_pitch_curve.isChecked(),

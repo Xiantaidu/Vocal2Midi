@@ -345,7 +345,9 @@ def _run_lyric_alignment(
                         cancel_checker=cancel_checker,
                     )
                 finally:
-                    del tifa_model
+                    # Cached in load_tifa_model for reuse across runs; per-song
+                    # DirectML session teardown access-violates onnxruntime on
+                    # the next song.
                     free_memory()
             else:
                 logger.info("\n--- Stage 2/3: Loading HubertFA model ---")
@@ -387,7 +389,9 @@ def _run_lyric_alignment(
                             cancel_checker=cancel_checker,
                         )
                 finally:
-                    del hfa_model
+                    # Cached in load_hfa_model for reuse across runs; per-song
+                    # DirectML session teardown access-violates onnxruntime on
+                    # the next song.
                     free_memory()
             if use_tifa:
                 _check_cancel()

@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import pathlib
 
 import onnxruntime as ort
 
 from inference.TiFA.lib.vocabulary import Vocabulary
 from inference.device_utils import resolve_onnx_providers
+
+logger = logging.getLogger(__name__)
 
 GRAPH_NAMES = ("spectrogram", "prepare", "score", "select", "model")
 
@@ -59,6 +62,26 @@ class TifaModel:
         return dict(zip(names, session.run(None, feed)))
 
 
-def load_tifa_model(model_dir: str | pathlib.Path, device: str | None = None) -> TifaModel:
-    """Load the TiFA ONNX bundle; naming parity with load_hfa_model."""
-    return TifaModel(model_dir, device=device)
+_TIFA_MODEL_CACHE: dict[tuple[str, str], TifaModel] = {}
+
+
+def load_tifa_model(model_dir: str | pathlib.Path, device: str | None = None, use_cache: bool = True) -> TifaModel:
+    """Load the TiFA ONNX bundle; naming parity with load_hfa_model.
+
+    Sessions are cached in-process and reused across pipeline runs. The
+    five DirectML sessions are the largest per-song create/teardown churn in
+    the GUI process, and that churn access-violates onnxruntime on the next
+    song (the ASR subprocess, which reuses its session across songs, never
+    crashes), so the bundle loads once and stays resident.
+    """
+    resolved = str(pathlib.Path(model_dir))
+    key = (resolved, str(device or "").strip().lower() or "auto")
+    if use_cache:
+        cached = _TIFA_MODEL_CACHE.get(key)
+        if cached is not None:
+            logger.info(f"Reusing cached TiFA model from '{resolved}'.")
+            return cached
+    model = TifaModel(model_dir, device=device)
+    if use_cache:
+        _TIFA_MODEL_CACHE[key] = model
+    return model

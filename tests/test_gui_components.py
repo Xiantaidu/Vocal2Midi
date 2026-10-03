@@ -17,6 +17,19 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
+@pytest.fixture(autouse=True)
+def clean_batch_mode_setting():
+    from gui.global_settings_view import GlobalSettingsInterface
+    ui = GlobalSettingsInterface()
+    ui.settings.remove("enable_batch_mode")
+    ui.settings.remove("quantization_mode")
+    ui.settings.remove("quantization_step")
+    yield
+    ui.settings.remove("enable_batch_mode")
+    ui.settings.remove("quantization_mode")
+    ui.settings.remove("quantization_step")
+
+
 def test_log_terminal_accumulates_and_clears(qapp):
     terminal = LogTerminal()
     terminal.log("hello")
@@ -92,3 +105,172 @@ def test_gear_button_hidden_for_single_file_visible_in_batch(qapp):
     assert file_list.count() == 1
     assert list(file_list._gear_buttons) == ["b.wav"]
     assert all(btn.isHidden() for btn in file_list._gear_buttons.values())
+
+
+def test_batch_mode_hides_lyric_matching_and_invalidates_lyrics(qapp):
+    from gui.auto_lyric_view import AutoLyricInterface
+    from gui.global_settings_view import GlobalSettingsInterface
+    from gui.model_config_view import ModelConfigInterface
+
+    settings_ui = GlobalSettingsInterface()
+    model_cfg = ModelConfigInterface(settings_ui.settings, settings_ui.project_root)
+    view = AutoLyricInterface(settings_ui, model_cfg)
+
+    # 1. Single file mode
+    view.audio_list.add_paths(["song1.wav"])
+    assert view.audio_list.count() == 1
+
+    view.cb_match_lyrics.setChecked(True)
+    view.lyrics_edit.setText("test lyrics 123")
+
+    assert not view._combo_card.isHidden()
+    assert not view._output_card.isHidden()
+    assert not view.lyric_card.isHidden()
+
+    base = view._current_base_values()
+    assert base["match_lyrics"] is True
+    assert base["original_lyrics"] == "test lyrics 123"
+
+    # 2. Add second file -> batch mode
+    view.audio_list.add_paths(["song2.wav"])
+    assert view.audio_list.count() == 2
+
+    # Cards must be hidden, including lyric_card
+    assert view._combo_card.isHidden()
+    assert view._output_card.isHidden()
+    assert view.lyric_card.isHidden()
+
+    # Lyrics on main window must be invalidated in batch mode
+    batch_base = view._current_base_values()
+    assert batch_base["match_lyrics"] is False
+    assert batch_base["original_lyrics"] == ""
+
+    # 3. Remove second file -> back to single file mode
+    view.audio_list.remove_item(view.audio_list.item(1))
+    assert view.audio_list.count() == 1
+
+    assert not view._combo_card.isHidden()
+    assert not view._output_card.isHidden()
+    assert not view.lyric_card.isHidden()
+
+    restored_base = view._current_base_values()
+    assert restored_base["match_lyrics"] is True
+    assert restored_base["original_lyrics"] == "test lyrics 123"
+
+
+def test_batch_mode_setting_toggle_and_defaults(qapp):
+    from gui.global_settings_view import GlobalSettingsInterface
+
+    settings_ui = GlobalSettingsInterface()
+    assert settings_ui.enable_batch_mode() is True
+
+    signals = []
+    settings_ui.batchModeChanged.connect(signals.append)
+
+    settings_ui.cb_batch_mode.setChecked(False)
+    assert settings_ui.enable_batch_mode() is False
+    assert signals == [False]
+
+    settings_ui.reset_to_default()
+    assert settings_ui.enable_batch_mode() is True
+    assert signals == [False, True]
+
+
+def test_audio_file_list_batch_mode_off_restricts_to_one(qapp):
+    file_list = AudioFileList()
+    file_list.set_batch_mode(False)
+    assert file_list.batch_mode is False
+
+    # Adding multiple files when batch_mode is False only adds the first file
+    added = file_list.add_paths(["song1.wav", "song2.mp3", "song3.flac"])
+    assert added == 1
+    assert file_list.count() == 1
+    assert file_list.all_paths() == ["song1.wav"]
+
+    # Adding another file replaces the existing file in single-file mode
+    added = file_list.add_paths(["song4.wav"])
+    assert added == 1
+    assert file_list.count() == 1
+    assert file_list.all_paths() == ["song4.wav"]
+
+    # Re-adding the exact same file is a no-op
+    added = file_list.add_paths(["song4.wav"])
+    assert added == 0
+    assert file_list.count() == 1
+    assert file_list.all_paths() == ["song4.wav"]
+
+
+def test_audio_file_list_dynamic_disable_trims_to_first(qapp):
+    file_list = AudioFileList()
+    file_list.add_paths(["a.wav", "b.wav", "c.wav"])
+    assert file_list.count() == 3
+
+    changes = []
+    file_list.filesChanged.connect(lambda: changes.append(True))
+
+    file_list.set_batch_mode(False)
+    assert file_list.count() == 1
+    assert file_list.all_paths() == ["a.wav"]
+    assert len(changes) == 1
+    assert all(btn.isHidden() for btn in file_list._gear_buttons.values())
+
+
+def test_auto_lyric_view_coordinates_with_global_batch_mode(qapp):
+    from gui.auto_lyric_view import AutoLyricInterface
+    from gui.global_settings_view import GlobalSettingsInterface
+    from gui.model_config_view import ModelConfigInterface
+
+    settings_ui = GlobalSettingsInterface()
+    settings_ui.cb_batch_mode.setChecked(True)
+    model_cfg = ModelConfigInterface(settings_ui.settings, settings_ui.project_root)
+    view = AutoLyricInterface(settings_ui, model_cfg)
+
+    # 1. Add 2 files while batch mode is on
+    view.audio_list.add_paths(["song1.wav", "song2.wav"])
+    assert view.audio_list.count() == 2
+    assert view._combo_card.isHidden()
+
+    # 2. Turn off batch mode in global settings
+    settings_ui.cb_batch_mode.setChecked(False)
+    # The audio list must automatically trim down to 1 file and restore panels
+    assert view.audio_list.count() == 1
+    assert view.audio_list.all_paths() == ["song1.wav"]
+    assert not view._combo_card.isHidden()
+    assert not view._output_card.isHidden()
+
+    # 3. In single file mode, attempting to add multiple files adds only 1 (replacing)
+    view.audio_list.add_paths(["song3.wav", "song4.wav"])
+    assert view.audio_list.count() == 1
+    assert view.audio_list.all_paths() == ["song3.wav"]
+
+
+def test_quantization_settings_persisted(qapp):
+    from gui.auto_lyric_view import AutoLyricInterface
+    from gui.global_settings_view import GlobalSettingsInterface
+    from gui.model_config_view import ModelConfigInterface
+
+    settings_ui = GlobalSettingsInterface()
+    model_cfg = ModelConfigInterface(settings_ui.settings, settings_ui.project_root)
+
+    # 1. Defaults should be "smart" and 0 (off)
+    view1 = AutoLyricInterface(settings_ui, model_cfg)
+    assert view1.quantize_mode_combo.currentData() == "smart"
+    assert view1.quantize_combo.currentData() == 0
+
+    # 2. Change mode to "simple" and step to 480 (1/4 note)
+    idx_simple = view1.quantize_mode_combo.findData("simple")
+    assert idx_simple >= 0
+    view1.quantize_mode_combo.setCurrentIndex(idx_simple)
+    assert settings_ui.settings.value("quantization_mode") == "simple"
+
+    idx_480 = view1.quantize_combo.findData(480)
+    assert idx_480 >= 0
+    view1.quantize_combo.setCurrentIndex(idx_480)
+    assert int(settings_ui.settings.value("quantization_step")) == 480
+
+    # 3. New view instance should load "simple" and 480 from settings
+    view2 = AutoLyricInterface(settings_ui, model_cfg)
+    assert view2.quantize_mode_combo.currentData() == "simple"
+    assert view2.quantize_combo.currentData() == 480
+
+

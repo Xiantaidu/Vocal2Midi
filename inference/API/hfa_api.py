@@ -108,10 +108,26 @@ _HFA_DICT_FILES = {
 }
 
 
-def load_hfa_model(model_dir, device=None):
+_HFA_MODEL_CACHE: dict[tuple[str, str], InferenceOnnx] = {}
+
+
+def load_hfa_model(model_dir, device=None, use_cache: bool = True):
     """
     Load the HubertFA ONNX model on DirectML by default, with CPU fallback.
+
+    Cached in-process and reused across pipeline runs: recreating the
+    DirectML session per song corrupts onnxruntime's DML state and
+    access-violates the process on the next song. run_hubert_fa resets the
+    per-run state (dataset/predictions) at entry, so reuse is safe.
     """
+    resolved = str(pathlib.Path(model_dir))
+    key = (resolved, str(device or "").strip().lower() or "auto")
+    if use_cache:
+        cached = _HFA_MODEL_CACHE.get(key)
+        if cached is not None:
+            logger.info(f"Reusing cached HubertFA model from '{resolved}'.")
+            return cached
+
     logger.info("Loading HubertFA ONNX model...")
     model = InferenceOnnx(onnx_path=pathlib.Path(model_dir) / 'model.onnx')
     model.load_config()
@@ -124,6 +140,8 @@ def load_hfa_model(model_dir, device=None):
     options.enable_cpu_mem_arena = False
     model.model = ort.InferenceSession(str(model.model_folder / 'model.onnx'), options, providers=providers)
     logger.info(f"HubertFA ONNX session created with provider={provider_name}: {model.model.get_providers()}")
+    if use_cache:
+        _HFA_MODEL_CACHE[key] = model
     return model
 
 def run_hubert_fa(hfa_model, temp_dir, language="zh", cancel_checker=None, use_phoneme_g2p=False):

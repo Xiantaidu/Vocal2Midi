@@ -129,6 +129,8 @@ _STRINGS: dict[str, dict[str, str]] = {
     # ── global settings page ───────────────────────────────────────
     "settings_title": {"zh": "全局设置", "en": "Global Settings"},
     "reset_defaults": {"zh": "恢复默认", "en": "Restore Defaults"},
+    "general_settings": {"zh": "常规设置", "en": "General Settings"},
+    "enable_batch_mode": {"zh": "批量模式:", "en": "Batch Mode:"},
     "appearance": {"zh": "外观", "en": "Appearance"},
     "theme": {"zh": "界面主题:", "en": "Theme:"},
     "theme_light": {"zh": "浅色", "en": "Light"},

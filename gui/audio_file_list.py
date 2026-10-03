@@ -25,19 +25,54 @@ class AudioFileList(ListWidget):
     def __init__(self, parent=None):
         super().__init__(parent=parent)
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.batch_mode: bool = True
         # per-file settings in batch mode: filename -> dict of overrides
         self.file_settings: dict[str, dict] = {}
         # path -> gear button; visibility is managed batch-wide
         self._gear_buttons: dict[str, TransparentToolButton] = {}
 
+    def set_batch_mode(self, enabled: bool):
+        self.batch_mode = bool(enabled)
+        if not self.batch_mode and self.count() > 1:
+            self.file_settings.clear()
+            while self.count() > 1:
+                item = self.item(self.count() - 1)
+                path = self.item_path(item)
+                self._gear_buttons.pop(path, None)
+                row_widget = self.itemWidget(item)
+                if row_widget is not None:
+                    self.removeItemWidget(item)
+                self.takeItem(self.row(item))
+            self._update_gear_visibility()
+            self.filesChanged.emit()
+
     def add_paths(self, paths) -> int:
         """Add audio files (deduplicated); returns the number added."""
+        valid_paths = [
+            str(p) for p in paths
+            if Path(str(p)).suffix.lower() in self.AUDIO_EXTENSIONS
+        ]
+        if not valid_paths:
+            return 0
+
+        if not self.batch_mode:
+            target = valid_paths[0]
+            if self.count() >= 1:
+                if self.item_path(self.item(0)) == target:
+                    return 0
+                self.file_settings.clear()
+                self._gear_buttons.clear()
+                self.clear()
+            self.addItem(target)
+            self._attach_gear_row(target)
+            self._update_gear_visibility()
+            self.filesAdded.emit(1)
+            self.filesChanged.emit()
+            return 1
+
         existing = {self.item_path(self.item(i)) for i in range(self.count())}
         added = 0
-        for path in paths:
-            path = str(path)
-            if Path(path).suffix.lower() not in self.AUDIO_EXTENSIONS:
-                continue
+        for path in valid_paths:
             if path in existing:
                 continue
             self.addItem(path)

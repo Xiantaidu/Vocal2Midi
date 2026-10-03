@@ -190,3 +190,31 @@ def test_en_singable_phones_reject_consonant_v_names():
     assert _is_singable_phone("ay", "en")
     assert not _is_singable_phone("en/v", "en")
     assert not _is_singable_phone("en/_r", "en")
+
+
+def test_load_game_model_reuses_cached_session(monkeypatch, tmp_path):
+    """The GAME model is cached per (path, device) and reused across runs:
+    per-song DirectML session teardown access-violates onnxruntime on the
+    next song, so the loader must not rebuild the session."""
+    from inference.API import game_api
+
+    constructions = []
+
+    class _FakeGameModel:
+        def __init__(self, path, requested_device=None):
+            constructions.append((str(path), requested_device))
+            self.provider_name = "CPUExecutionProvider"
+
+    monkeypatch.setattr(game_api, "GameOnnxModel", _FakeGameModel)
+    game_api._GAME_MODEL_CACHE.clear()
+    try:
+        first = game_api.load_game_model(str(tmp_path), device="cpu")
+        second = game_api.load_game_model(str(tmp_path), device="cpu")
+        assert first is second
+        assert len(constructions) == 1
+
+        other = game_api.load_game_model(str(tmp_path / "other"), device="dml")
+        assert other is not first
+        assert len(constructions) == 2
+    finally:
+        game_api._GAME_MODEL_CACHE.clear()

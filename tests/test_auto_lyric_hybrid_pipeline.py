@@ -172,12 +172,16 @@ def test_pitch_curve_runs_for_ustx_or_vsqx(monkeypatch, tmp_path):
         )
         pipeline.auto_lyric_hybrid_pipeline(**kwargs)
 
-    assert constructor.call_count == 3
+    # the transcriber is cached per (model, device) and reused across runs:
+    # per-song DirectML session teardown access-violates onnxruntime on the
+    # next song, so only the first run may construct it
+    assert constructor.call_count == 1
     assert transcriber.infer.call_count == 3
     assert save_ustx.call_count == 2
     assert save_vsqx.call_count == 2
     assert all(call.kwargs["rmvpe_result"] is result for call in save_ustx.call_args_list)
     assert all(call.kwargs["rmvpe_result"] is result for call in save_vsqx.call_args_list)
+    pipeline._RMVPE_TRANSCRIBER_CACHE.clear()
 
 
 def test_invalid_batch_sizes_fail_fast(tmp_path):

@@ -34,11 +34,14 @@ LANGUAGE_CHOICES = [("zh", "language_zh"), ("en", "language_en")]
 
 class GlobalSettingsInterface(ScrollArea):
     languageChanged = Signal(str)
+    batchModeChanged = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent=parent)
         self.project_root = pathlib.Path(__file__).resolve().parent.parent
         self.settings = create_app_settings(self.project_root)
+        if self.settings.contains("quantization_mode_ui"):
+            self.settings.remove("quantization_mode_ui")
         self._tr_bindings: list = []
         self.default_values = {
             "seg_thresh": 0.2,
@@ -57,6 +60,9 @@ class GlobalSettingsInterface(ScrollArea):
             "enable_lyrics_match": False,
             "pitch_format": "name",
             "round_pitch": True,
+            "enable_batch_mode": True,
+            "quantization_mode": "smart",
+            "quantization_step": 0,
         }
         initial_slice_min = float(self.settings.value("slice_min_sec", self.default_values["slice_min_sec"]))
         initial_slice_max = float(self.settings.value("slice_max_sec", self.default_values["slice_max_sec"]))
@@ -120,6 +126,27 @@ class GlobalSettingsInterface(ScrollArea):
         appearance_grid.setColumnStretch(4, 1)
         appearance_layout.addLayout(appearance_grid)
         self.vBoxLayout.addWidget(appearance_card)
+
+        # ── general ─────────────────────────────────────────────────
+        general_card = CardWidget(self)
+        general_layout = QVBoxLayout(general_card)
+        general_title = BodyLabel(self)
+        self._bind_tr(lambda: general_title.setText(tr("general_settings")))
+        general_title.setStyleSheet("font-weight: bold; font-size: 14px;")
+        general_layout.addWidget(general_title)
+
+        general_row = QHBoxLayout()
+        batch_label = BodyLabel(self)
+        self._bind_tr(lambda: batch_label.setText(tr("enable_batch_mode")))
+        self.cb_batch_mode = SwitchButton("On", self)
+        self.cb_batch_mode.setOffText("Off")
+        self.cb_batch_mode.setChecked(self.settings.value("enable_batch_mode", self.default_values["enable_batch_mode"], type=bool))
+        self.cb_batch_mode.checkedChanged.connect(self._on_batch_mode_changed)
+        general_row.addWidget(batch_label)
+        general_row.addWidget(self.cb_batch_mode)
+        general_row.addStretch(1)
+        general_layout.addLayout(general_row)
+        self.vBoxLayout.addWidget(general_card)
 
         # ── advanced processing parameters ──────────────────────────
         adv_card = CardWidget(self)
@@ -298,6 +325,10 @@ class GlobalSettingsInterface(ScrollArea):
         self.retranslate_ui()
         self.languageChanged.emit(value)
 
+    def _on_batch_mode_changed(self, enabled: bool):
+        self.settings.setValue("enable_batch_mode", enabled)
+        self.batchModeChanged.emit(enabled)
+
     # ── read-only accessors for other pages ─────────────────────────
     # Other pages read pipeline parameters through these instead of reaching
     # into the widgets directly.
@@ -347,6 +378,9 @@ class GlobalSettingsInterface(ScrollArea):
     def nsteps(self) -> int:
         return int(self.nsteps_spin.value())
 
+    def enable_batch_mode(self) -> bool:
+        return self.cb_batch_mode.isChecked()
+
     # ── existing behaviour ──────────────────────────────────────────
     def reset_to_default(self):
         self.seg_thresh_spin.setValue(self.default_values["seg_thresh"])
@@ -363,6 +397,7 @@ class GlobalSettingsInterface(ScrollArea):
         self.cb_chunks.setChecked(self.default_values["debug_chunks"])
         self.pitch_combo.setCurrentText(self.default_values["pitch_format"])
         self.cb_round.setChecked(self.default_values["round_pitch"])
+        self.cb_batch_mode.setChecked(self.default_values["enable_batch_mode"])
         # Note: enable_lyrics_match / output_lyrics live in AutoLyricInterface;
         # this view deliberately does not reset them (UI would desync).
 

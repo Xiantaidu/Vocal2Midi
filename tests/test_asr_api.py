@@ -129,7 +129,7 @@ def test_load_qwen_model_uses_dml_runtime_cache(monkeypatch):
     assert calls[-1] == "shutdown"
 
 
-def test_load_romaji_model_skips_dml_cache_for_stability(monkeypatch, tmp_path):
+def test_load_romaji_model_reuses_dml_cache(monkeypatch, tmp_path):
     calls = []
     asr_api.clear_romaji_model_cache()
 
@@ -154,9 +154,43 @@ def test_load_romaji_model_skips_dml_cache_for_stability(monkeypatch, tmp_path):
     first = asr_api.load_romaji_asr_model("models/romajiASR", device="dml", use_cache=True)
     second = asr_api.load_romaji_asr_model("models/romajiASR", device="dml", use_cache=True)
 
-    assert first is not second
-    assert len(calls) == 2
-    assert asr_api._ROMAJI_MODEL_CACHE == {}
+    assert first is second
+    assert len(calls) == 1
+    assert ("models/romajiASR", "dml") in [((tmp_path / "romaji").name, d) for d in ("dml",)] or len(asr_api._ROMAJI_MODEL_CACHE) == 1
+
+    asr_api.clear_romaji_model_cache()
+
+
+def test_load_pinyin_model_reuses_dml_cache(monkeypatch, tmp_path):
+    calls = []
+    asr_api.clear_pinyin_model_cache()
+
+    class _DummyPinyinModel:
+        sample_rate = 16000
+        provider = "dml"
+
+    def fake_resolve_model_dir(model_dir):
+        return tmp_path / "pinyin"
+
+    def fake_from_model_path(cls, model_path, device="dml", verbose=False):
+        calls.append((str(model_path), device, verbose))
+        return _DummyPinyinModel()
+
+    monkeypatch.setattr(asr_api, "resolve_pinyin_model_dir", fake_resolve_model_dir)
+    monkeypatch.setattr(
+        asr_api.PinyinASROnnxModel,
+        "from_model_path",
+        classmethod(fake_from_model_path),
+    )
+
+    first = asr_api.load_pinyin_asr_model("models/pinyinASR", device="dml", use_cache=True)
+    second = asr_api.load_pinyin_asr_model("models/pinyinASR", device="dml", use_cache=True)
+
+    assert first is second
+    assert len(calls) == 1
+    assert len(asr_api._PINYIN_MODEL_CACHE) == 1
+
+    asr_api.clear_pinyin_model_cache()
 
 
 def test_load_romaji_model_keeps_cpu_cache(monkeypatch, tmp_path):

@@ -40,6 +40,7 @@ def create_session(model_path: Path, provider: str | None = None) -> ort.Inferen
 
     if provider == "dml":
         sess_options.enable_mem_pattern = False
+        sess_options.enable_cpu_mem_arena = False
         sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         _, providers = resolve_onnx_providers("dml", label="Romaji ASR ONNX")
     elif provider in {"cpu", "metal"}:
