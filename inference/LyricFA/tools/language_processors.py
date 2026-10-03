@@ -78,27 +78,30 @@ class JapaneseProcessor(LanguageProcessor):
     def build_reference_lyric(self, text: str) -> tuple[List[str], List[str]]:
         """Prepare Japanese reference lyrics as kana moras plus romaji moras.
 
-        We explicitly run the reference lyrics through the pyopenjtalk-backed
-        frontend first to stabilize the kana mora sequence, then convert that
-        kana sequence to romaji for matching against mora ASR output.
+        One analysis pass derives both lists so they stay index-aligned 1:1 --
+        the aligner indexes the kana list by phonetic position, and per-mora
+        re-conversion used to re-split digraphs (じょ -> ji+yo), silently
+        desynchronizing every kana/romaji pair after the first digraph. See
+        JaG2p.analyze_lyric_text for the full conventions (digraph merging,
+        orthographic は for standalone kana edges, latin words via the model's
+        alnum table).
         """
         if not text:
             return [], []
-
-        kana_moras = [token for token in self.g2p.split_kana_no_regex(text) if token]
-        if not kana_moras:
-            return [], []
-
-        romaji_moras = [
-            token
-            for token in self.g2p.convert_list(
-                kana_moras,
-                include_tone=False,
-                convert_number=False,
-            ).split()
-            if token
-        ]
+        kana_moras, romaji_moras = self.g2p.analyze_lyric_text(text)
         return kana_moras, romaji_moras
+
+    def split_and_phonetic(self, text: str) -> tuple[List[str], List[str]]:
+        """ASR-side twin of build_reference_lyric: aligned kana + romaji moras.
+
+        Matching compares the ASR phonetics against the reference phonetics,
+        so both sides must follow the same conventions (whole digraphs,
+        orthographic は) or every digraph position pays a spurious alignment
+        penalty.
+        """
+        if not text:
+            return [], []
+        return self.g2p.analyze_lyric_text(text)
 
 
 @dataclass(frozen=True)

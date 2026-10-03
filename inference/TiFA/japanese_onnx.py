@@ -188,21 +188,25 @@ class JapaneseOnnxConverter(Converter):
             pool: dict[tuple[int, int], dict[str, float]] = {}
 
             def _add(path) -> None:
+                prev_surface = None
                 for index in path:
                     edge = local[index]
-                    reading = normalize_edge_reading(edge.surface, edge.reading)
+                    reading = normalize_edge_reading(edge.surface, edge.reading, prev_surface=prev_surface)
                     span_pool = pool.setdefault((edge.start, edge.end), {})
                     span_pool[reading] = max(
                         span_pool.get(reading, -math.inf), float(scores[index]))
+                    prev_surface = edge.surface
 
             _add(best_indices)
             for _path_score, path in beam_paths:
                 _add(path)
 
             entries: list[tuple[str, list[G2PReading]]] = []
+            prev_surface = None
             for index in best_indices:
                 edge = local[index]
-                best_reading = normalize_edge_reading(edge.surface, edge.reading)
+                best_reading = normalize_edge_reading(edge.surface, edge.reading, prev_surface=prev_surface)
+                prev_surface = edge.surface
                 span_pool = pool.get((edge.start, edge.end), {})
                 ranked = sorted(span_pool.items(), key=lambda item: -item[1])
                 ordered = [reading for reading, _score in ranked]

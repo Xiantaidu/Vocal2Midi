@@ -96,6 +96,9 @@ VOWEL_TO_KATA = {
     'a': 'ア', 'i': 'イ', 'u': 'ウ', 'e': 'エ', 'o': 'オ',
 }
 
+_VOWEL_HIRA = {"a": "あ", "i": "い", "u": "う", "e": "え", "o": "お"}
+_SMALL_KANA = set("ゃゅょャュョぁぃぅぇぉァィゥェォ")
+
 class JaG2p:
     number_map = {
         "0": "零", "1": "一", "2": "二", "3": "三", "4": "四",
@@ -217,10 +220,25 @@ class JaG2p:
                 from inference.ja_onnx_g2p import normalize_edge_reading
                 predicted = runtime.predict(normalized_segment)
                 analysis = []
+                prev_surface = None
                 for edge in predicted["edges"]:
-                    reading = normalize_edge_reading(edge["surface"], edge["reading"])
-                    analysis.extend(
-                        self._parse_pron_to_entry(edge["surface"], reading))
+                    surface = edge["surface"]
+                    reading = edge["reading"]
+                    if surface == "ー" or reading == "ー":
+                        # A prolonged mark as its own char-level edge repeats
+                        # the previous mora's vowel (mirroring what
+                        # _kata2mora_pairs does for ー inside a single
+                        # reading); an orphan ー with no vowel before it is
+                        # dropped since it has no pronounceable form.
+                        if analysis and analysis[-1]["moras"]:
+                            last_romaji = analysis[-1]["moras"][-1]
+                            if last_romaji[-1:] in _VOWEL_HIRA:
+                                analysis[-1]["moras"].append(last_romaji[-1])
+                                analysis[-1]["kana_moras"].append(_VOWEL_HIRA[last_romaji[-1]])
+                        continue
+                    reading = normalize_edge_reading(surface, reading, prev_surface=prev_surface)
+                    analysis.extend(self._parse_pron_to_entry(surface, reading))
+                    prev_surface = surface
                 if analysis:
                     return analysis
             except Exception as e:
@@ -347,6 +365,39 @@ class JaG2p:
             romaji_list.extend(item["moras"])
         return " ".join(romaji_list)
 
+    def analyze_lyric_text(self, text, convert_number: bool = False) -> tuple[list[str], list[str]]:
+        """Kana moras + index-aligned romaji moras from one analysis pass.
+
+        Both lists are derived from the same mora pairs, so they stay 1:1 even
+        where one token expands to several moras (ICBM -> a i shi i bi i e mu):
+        the lyric matcher indexes the kana list by phonetic position, and a
+        length mismatch silently desynchronizes every later token. Digraph
+        halves from char-level kana edges are re-merged via the katakana table
+        (し+ょ -> しょ/sho, not shi+yo), prolonged marks repeat the preceding
+        vowel (ラーメン -> ra i me n), particle は/へ keep the orthographic
+        reading for standalone kana edges (the mora ASR emits orthographic ha
+        too, and a char-level は is more often word-internal -- はんせん --
+        than a particle), and latin words resolve through the model's alnum
+        table instead of leaking a raw non-phoneme token into the .lab.
+        """
+        pairs = []
+        for token in self.split_input_string_no_regex(self._normalize_text(text)):
+            entries = None
+            if len(token) > 1 and all(is_letter(ch) or is_special_letter(ch) for ch in token):
+                # Latin runs read through the G2P model's alnum table
+                # (ICBM -> あいしーびーえむ); unknown words fall back to the
+                # legacy passthrough below.
+                entries = self._analyze_japanese_segment(token)
+            if not entries:
+                entries = self._analyze_token(token, convert_number=convert_number)
+            for item in entries:
+                kana = item.get("kana_moras") or []
+                moras = item.get("moras") or []
+                if len(kana) == len(moras):
+                    pairs.extend(zip(kana, moras))
+        merged = _merge_digraph_pairs(pairs)
+        return [kana for kana, _romaji in merged], [romaji for _kana, romaji in merged]
+
     def split_string_no_regex(self, text: str) -> list[str]:
         """
         Splits the text into characters that match the number of converted romaji tokens.
@@ -372,6 +423,34 @@ class JaG2p:
             chars.extend(item.get("kana_moras", []))
 
         return chars
+
+
+def _merge_digraph_pairs(pairs):
+    """Re-merge digraph halves and expand lone ー marks in a flattened
+    (kana, romaji) mora pair sequence.
+
+    Char-level kana edges arrive as separate moras (し+ょ -> shi+yo); the
+    lyric matcher consumes whole moras, so adjacent halves are combined via
+    the katakana table (しょ -> sho) -- concatenating the romaji halves would
+    give the wrong mora ("shiyo"). A ー pair repeats the preceding vowel
+    (ラ + ー -> ら + い / ra + i); an orphan ー with no vowel before it is
+    dropped since it has no pronounceable form.
+    """
+    merged = []
+    for kana, romaji in pairs:
+        if merged and kana in _SMALL_KANA:
+            prev_kana = merged[-1][0]
+            combined = KATA_TO_ROMAJI.get(JaG2p._hiragana_to_katakana(prev_kana + kana))
+            if combined is not None:
+                merged[-1] = (prev_kana + kana, combined)
+                continue
+        if kana == "ー":
+            prev_romaji = merged[-1][1] if merged else ""
+            if prev_romaji[-1:] in _VOWEL_HIRA:
+                merged.append((_VOWEL_HIRA[prev_romaji[-1]], prev_romaji[-1]))
+            continue
+        merged.append((kana, romaji))
+    return merged
 
 if __name__ == "__main__":
     g2p = JaG2p()

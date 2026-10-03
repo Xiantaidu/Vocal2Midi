@@ -81,5 +81,27 @@ def get_ja_onnx_runtime(model_dir: str | Path | None = None):
 _PARTICLE_READINGS = {"は": "わ", "へ": "え"}
 
 
-def normalize_edge_reading(surface: str, reading: str) -> str:
-    return _PARTICLE_READINGS.get(surface, reading) if len(surface) == 1 else reading
+def _is_word_boundary_surface(surface: str) -> bool:
+    # A multi-character edge ends a word; a single kanji is a one-character
+    # word. Pure single kana carries no boundary signal (unspaced kana text is
+    # read char-by-char), so a following は stays orthographic.
+    if surface is None:
+        return False
+    if len(surface) > 1:
+        return True
+    return any(0x4E00 <= ord(ch) <= 0x9FFF for ch in surface)
+
+
+def normalize_edge_reading(surface: str, reading: str, prev_surface: str | None = None) -> str:
+    """Rewrite particle は/へ to わ/え when the edge context allows it.
+
+    Only applies when the previous edge marks a word boundary (multi-char or
+    kanji). For char-by-char kana runs a standalone は is more often
+    word-internal (はんせん) than a particle, and the mora ASR emits
+    orthographic ha anyway, so the orthographic reading is kept there.
+    """
+    if len(surface) != 1 or surface not in _PARTICLE_READINGS:
+        return reading
+    if not _is_word_boundary_surface(prev_surface):
+        return reading
+    return _PARTICLE_READINGS[surface]

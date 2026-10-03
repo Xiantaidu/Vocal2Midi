@@ -49,6 +49,11 @@ class LyricMatcher:
 
     def process_asr_content(self, lab_content: str) -> Tuple[List[str], List[str]]:
         cleaned_content = self.processor.clean_text(lab_content)
+        combined = getattr(self.processor, "split_and_phonetic", None)
+        if callable(combined):
+            # Processors that derive text and phonetics from one analysis pass
+            # (Japanese) keep the two lists index-aligned this way.
+            return combined(cleaned_content)
         text_list = self.processor.split_text(cleaned_content)
         phonetic_list = self.processor.get_phonetic_list(text_list)
         return text_list, phonetic_list

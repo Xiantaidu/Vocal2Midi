@@ -138,6 +138,64 @@ def test_process_asr_to_phonemes_en_matches_reference_lyrics(tmp_path):
     assert (tmp_path / "chunk_0.lab").read_text(encoding="utf-8") == "hello world how are you"
 
 
+class _FakeJaMatcher:
+    """Matcher double whose matched phonetics differ from the ASR's reading."""
+
+    def __init__(self, matched: bool):
+        self.lyric_text_list = ["か", "ん", "た", "ん"]
+        self.lyric_phonetic_list = ["ka", "n", "ta", "n"]
+        self._matched = matched
+
+    def align_lyric_with_asr(self, asr_phonetic, lyric_text, lyric_phonetic):
+        if not self._matched:
+            return "", "", "no matching window found"
+        return (
+            " ".join(self.lyric_text_list),
+            " ".join(self.lyric_phonetic_list),
+            "",
+        )
+
+
+def test_process_asr_to_phonemes_feeds_tifa_the_matched_phonetics(tmp_path):
+    """chunk_N.txt must carry the matched phonetics: TiFA reads .txt (not
+    .lab), so leaving the raw ASR text there meant the reference reading
+    never reached the notes under the TiFA engine."""
+    matcher = _FakeJaMatcher(matched=True)
+
+    chars_dict, chunk_logs = lfa_api.process_asr_to_phonemes(
+        all_results=[{"text": "wa n se n", "phonemes": ["w", "a", "N", "s", "e", "N"]}],
+        chunk_indices=[0],
+        temp_dir_path=tmp_path,
+        language="ja",
+        matcher=matcher,
+        lyric_output_mode="romaji",
+        use_asr_phonemes=True,
+    )
+
+    assert chars_dict == {"chunk_0": ["ka", "n", "ta", "n"]}
+    assert (tmp_path / "chunk_0.lab").read_text(encoding="utf-8") == "ka n ta n"
+    assert (tmp_path / "chunk_0.txt").read_text(encoding="utf-8") == "ka n ta n"
+    assert "Matched original lyrics" in chunk_logs[0]
+
+
+def test_process_asr_to_phonemes_keeps_raw_text_for_tifa_without_match(tmp_path):
+    """Without a match, TiFA keeps the raw ASR text (hanzi polyphone value)."""
+    matcher = _FakeJaMatcher(matched=False)
+
+    _, chunk_logs = lfa_api.process_asr_to_phonemes(
+        all_results=[{"text": "wa n se n", "phonemes": ["w", "a", "N", "s", "e", "N"]}],
+        chunk_indices=[0],
+        temp_dir_path=tmp_path,
+        language="ja",
+        matcher=matcher,
+        lyric_output_mode="romaji",
+        use_asr_phonemes=True,
+    )
+
+    assert (tmp_path / "chunk_0.txt").read_text(encoding="utf-8") == "wa n se n"
+    assert "Matched original lyrics" not in chunk_logs[0]
+
+
 def test_normalize_lyric_output_mode_en_defaults_to_word():
     assert lfa_api._normalize_lyric_output_mode("en", None) == "word"
     assert lfa_api._normalize_lyric_output_mode("en", "romaji") == "word"

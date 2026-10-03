@@ -39,10 +39,60 @@ def test_runtime_reads_digit_strings(runtime):
 def test_particle_edge_reading_is_normalized():
     from inference.ja_onnx_g2p import normalize_edge_reading
 
-    assert normalize_edge_reading("は", "は") == "わ"
-    assert normalize_edge_reading("へ", "へ") == "え"
+    # particle edges after a word boundary read as pronunciation
+    assert normalize_edge_reading("は", "は", prev_surface="私") == "わ"
+    assert normalize_edge_reading("へ", "へ", prev_surface="東京") == "え"
     assert normalize_edge_reading("はな", "はな") == "はな"
     assert normalize_edge_reading("歯", "は") == "は"
+    # char-level kana runs carry no word-boundary signal: a standalone kana
+    # は is more often word-internal (はんせん) than a particle, and the mora
+    # ASR emits orthographic ha anyway
+    assert normalize_edge_reading("は", "は") == "は"
+    assert normalize_edge_reading("は", "は", prev_surface="に") == "は"
+
+
+def test_analyze_lyric_text_keeps_kana_and_romaji_aligned(runtime):
+    from inference.LyricFA.tools.JaG2p import JaG2p
+
+    g2p = JaG2p()
+    kana, romaji = g2p.analyze_lyric_text("感情線を抜けて 反戦国 ICBM ラーメン")
+
+    # the lyric matcher consumes these as parallel arrays and indexes the
+    # kana list by phonetic position: equal length is the core invariant
+    assert len(kana) == len(romaji)
+    joined = " ".join(romaji)
+    # digraph halves re-merged: じょ is one mora "jo", never ji+yo
+    assert "jo" in romaji and "ji yo" not in joined
+    # は in 反戦国 keeps the orthographic reading (per-mora conversion used to
+    # rewrite every standalone は to わ, giving "wa n se n")
+    assert "ha n se n" in joined and "wa n se n" not in joined
+    # latin resolves through the model's alnum table instead of leaking the
+    # raw non-phoneme token into the phonetics
+    assert "icbm" not in romaji and "bi" in romaji
+    # prolonged mark repeats the preceding vowel (ラーメン -> ra a me n)
+    assert "ra a me n" in joined
+
+
+def test_particle_rewrite_applies_only_in_word_context(runtime):
+    from inference.LyricFA.tools.JaG2p import JaG2p
+
+    g2p = JaG2p()
+    # full-text conversion: the kanji word edge before は marks the boundary,
+    # so the particle still reads as わ
+    assert g2p.convert("私は") == "wa ta shi wa"
+    # unspaced kana text is read char-by-char: orthographic は throughout
+    kana, romaji = g2p.analyze_lyric_text("くらぶはんせん")
+    assert "ha n se n" in " ".join(romaji)
+
+
+def test_ja_reference_lyric_lists_stay_aligned():
+    from inference.LyricFA.tools.lyric_matcher import LyricMatcher
+
+    matcher = LyricMatcher("ja")
+    data = matcher.process_lyric_text("感情線を抜けて 反戦国 ICBM")
+    assert len(data.text_list) == len(data.phonetic_list)
+    assert "icbm" not in data.phonetic_list
+    assert "wa n se n" not in " ".join(data.phonetic_list)
 
 
 def test_tifa_converter_claims_kanji_runs():

@@ -302,6 +302,14 @@ def process_asr_to_phonemes(
             continue
 
         match_status = "No original lyrics provided"
+        # TiFA reads chunk_N.txt in preference to the .lab (HubertFA ignores
+        # .txt). Default to the raw ASR text -- for hanzi text TiFA's own G2P
+        # adds polyphone disambiguation -- but when the matcher corrected the
+        # reading, feed TiFA the matched phonetics: otherwise TiFA
+        # re-transcribes the raw ASR text and the reference reading never
+        # reaches the notes (ja lyrics kept the ASR's mishearings while the
+        # corrected moras sat unused in the .lab).
+        tifa_text = raw_text
         if direct_phoneme_tokens:
             if language == "zh-pinyin":
                 # Pinyin ASR emits whole toneless syllables already; no mora joining.
@@ -321,6 +329,7 @@ def process_asr_to_phonemes(
                 matched_lyric_phonetic = matched_direct["matched_phonetic"]
                 match_reason = matched_direct["reason"]
                 match_status = "Direct phoneme ASR -> Matched original lyrics"
+                tifa_text = pinyin_str
             else:
                 if use_asr_phonemes and language in {"ja", "zh-pinyin"}:
                     pinyin_str = " ".join(token for token in romaji_moras if token not in {"AP", "EP", "SP"})
@@ -349,6 +358,7 @@ def process_asr_to_phonemes(
                     matched_lyric_text = matched_text
                     matched_lyric_phonetic = matched_phonetic
                     match_status = "Matched with original lyrics"
+                    tifa_text = pinyin_str
                 else:
                     pinyin_str = _convert_to_lab_text(text)
                     chars = _build_display_tokens(text, language, lyric_output_mode, g2p_model)
@@ -363,10 +373,8 @@ def process_asr_to_phonemes(
             match_status = "Direct ASR (No original lyrics)"
 
         (temp_dir_path / f"{stem}.lab").write_text(pinyin_str, encoding="utf-8")
-        # TiFA reads the raw ASR text (chunk_N.txt takes precedence over .lab);
-        # HubertFA ignores .txt files, so writing both is safe.
-        if raw_text:
-            (temp_dir_path / f"{stem}.txt").write_text(raw_text, encoding="utf-8")
+        if tifa_text:
+            (temp_dir_path / f"{stem}.txt").write_text(tifa_text, encoding="utf-8")
         chars_dict[stem] = chars
 
         assigned_lyrics = _join_display_tokens(language, lyric_output_mode, chars)
