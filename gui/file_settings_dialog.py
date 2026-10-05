@@ -18,6 +18,7 @@ from qfluentwidgets import (
 )
 from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QLabel
 
+from gui.bpm_spinbox import BpmSpinBox
 from gui.i18n import tr
 from gui.option_tables import (
     DEFAULT_LYRIC_OUTPUT,
@@ -122,7 +123,7 @@ class FileSettingsDialog(MessageBoxBase):
         _add_pair(grid, 4, 0, tr("pitch_curve"), self.cb_pitch_curve, self)
 
         # ── output ──────────────────────────────────────────────────
-        self.tempo_spin = DoubleSpinBox(self)
+        self.tempo_spin = BpmSpinBox(self)
         self.tempo_spin.setRange(10, 300)
         self.tempo_spin.setValue(float(base_values["tempo"]))
         _add_pair(grid, 5, 0, tr("tempo_bpm"), self.tempo_spin, self)

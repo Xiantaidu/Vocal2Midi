@@ -25,6 +25,7 @@ from qfluentwidgets import (
 
 from application.config import PipelineConfig, validate_slice_bounds
 from gui.audio_file_list import AudioFileList
+from gui.bpm_spinbox import BpmSpinBox
 from gui.fluent_utils import t0_nstep_to_ts
 from gui.fluent_worker import WorkerThread, HYBRID_AVAILABLE
 from gui.i18n import tr
@@ -185,9 +186,13 @@ class AutoLyricInterface(ScrollArea):
         output_layout.addWidget(output_title)
 
         opts_layout = QHBoxLayout()
-        self.tempo_spin = DoubleSpinBox(self)
+        self.tempo_spin = BpmSpinBox(self)
         self.tempo_spin.setRange(10, 300)
         self.tempo_spin.setValue(120)
+        self._bind_tr(lambda: self.tempo_spin.setToolTip(tr("tempo_bpm_tooltip")))
+        self.tempo_spin.bpmDetectStarted.connect(self._on_bpm_detect_started)
+        self.tempo_spin.bpmDetected.connect(self._on_bpm_detected)
+        self.tempo_spin.bpmDetectFailed.connect(self._on_bpm_detect_failed)
         self._add_flow_pair(opts_layout, "tempo_bpm", self.tempo_spin)
         opts_layout.addSpacing(28)
         self.quantize_combo = ComboBox(self)
@@ -322,6 +327,26 @@ class AutoLyricInterface(ScrollArea):
             title=title, content=content, orient=Qt.Horizontal, isClosable=True,
             position=InfoBarPosition.TOP, duration=5000, parent=self,
         )
+
+    def _on_bpm_detect_started(self, path: str):
+        self.log_msg(tr("bpm_detecting", f=pathlib.Path(path).name))
+
+    def _on_bpm_detected(self, bpm: float, path: str):
+        msg = tr("bpm_detected", f=pathlib.Path(path).name, bpm=f"{bpm:.2f}")
+        self.log_msg(msg)
+        InfoBar.success(
+            title=tr("bpm_detect_title"),
+            content=msg,
+            orient=Qt.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=3500,
+            parent=self,
+        )
+
+    def _on_bpm_detect_failed(self, error: str, path: str):
+        msg = tr("bpm_failed", f=pathlib.Path(path).name, err=error)
+        self._show_error(tr("bpm_detect_title"), msg)
 
     def _set_running_ui(self, running: bool):
         self.btn_run.setEnabled(not running)
