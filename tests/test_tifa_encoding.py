@@ -154,3 +154,16 @@ def test_ja_nonstandard_kana_readings_are_faithful():
     assert phonemes("だょ") == [("d", "a", "y", "o")]
     assert phonemes("づぁ") == [("z", "a")]
     assert phonemes("づぉ") == [("z", "o")]
+
+
+def test_cantonese_text_encodes(pipeline, vocabulary):
+    data, lexicon, texts = _encode(pipeline, vocabulary, "海阔天空", "yue")
+    assert data["paths"].shape[0] > 0
+    assert texts == list("海阔天空")
+    assert data["candidates"].sum() >= 4
+
+
+def test_cantonese_jyutping_tokens_encode(pipeline, vocabulary):
+    data, lexicon, texts = _encode(pipeline, vocabulary, "hoi fut tin hung", "yue")
+    assert data["paths"].shape[0] > 0
+    assert texts == ["hoi", "fut", "tin", "hung"]

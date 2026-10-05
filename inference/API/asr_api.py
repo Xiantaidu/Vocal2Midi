@@ -12,6 +12,7 @@ from inference.device_utils import normalize_runtime_device
 from inference.pinyin_asr.runtime import PinyinASROnnxModel, resolve_model_dir as resolve_pinyin_model_dir
 from inference.qwen3asr_dml.runtime import Qwen3ASRDmlModel
 from inference.romaji_asr.runtime import RomajiASROnnxModel, resolve_model_dir
+from inference.t2s_utils import traditional_to_simplified
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,8 @@ def _normalize_lyric_language(language: str | None) -> str:
         return "zh"
     if value in {"en", "english"}:
         return "en"
+    if value in {"yue", "cantonese"}:
+        return "yue"
     return value
 
 
@@ -56,6 +59,7 @@ QWEN_ASR_LANGUAGE_NAMES = {
     "ja": "Japanese",
     "zh": "Chinese",
     "en": "English",
+    "yue": "Cantonese",
 }
 
 
@@ -68,13 +72,15 @@ def _filter_qwen_asr_text_for_lyric_flow(text: str, language: str | None) -> str
         # Keep only dictionary-friendly English words: drops CJK bleed-over,
         # digits, and punctuation that would break CMU dict lookups.
         return " ".join(_ENGLISH_DICT_WORD_RE.findall(cleaned.replace("’", "'")))
-    if normalized_language not in {"zh", "ja"}:
+    if normalized_language not in {"zh", "ja", "yue"}:
         return cleaned
 
     filtered = _ASCII_WORD_RE.sub(" ", cleaned)
     filtered = _ASCII_PUNCT_RE.sub(" ", filtered)
     filtered = re.sub(r"\s+", " ", filtered).strip()
     filtered = _CJK_KANA_SPACE_RE.sub("", filtered)
+    if normalized_language == "yue":
+        filtered = traditional_to_simplified(filtered)
     return filtered
 
 

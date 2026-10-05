@@ -380,8 +380,10 @@ def auto_lyric_hybrid_pipeline(
     pinyin_asr_model_path: str = "",
     chinese_asr_engine: str = "qwen",
     japanese_asr_engine: str = "romaji",
-    alignment_engine: str = "hfa",
+    alignment_engine: str = "tifa",
     tifa_model_path: str = "",
+    japanese_g2p_engine: str = "kashi-g2p-onnx",
+    kashi_g2p_model_path: str = "",
     asr_session=None,
     cancel_checker=None,
 ):
@@ -423,7 +425,12 @@ def auto_lyric_hybrid_pipeline(
     outcome = None
     chunk_logs = []
     if output_lyrics:
-        matcher = create_lyric_matcher(ctx.language, original_lyrics)
+        matcher = create_lyric_matcher(
+            ctx.language,
+            original_lyrics,
+            engine=japanese_g2p_engine,
+            model_dir=kashi_g2p_model_path,
+        )
         _check_cancel()
         free_memory()
         _check_cancel()
@@ -436,6 +443,8 @@ def auto_lyric_hybrid_pipeline(
             phoneme_asr_model_path=phoneme_asr_model_path,
             pinyin_asr_model_path=pinyin_asr_model_path,
             japanese_asr_engine=japanese_asr_engine,
+            japanese_g2p_engine=japanese_g2p_engine,
+            kashi_g2p_model_path=kashi_g2p_model_path,
             asr_batch_size=asr_batch_size,
             asr_session=asr_session,
             cancel_checker=cancel_checker,

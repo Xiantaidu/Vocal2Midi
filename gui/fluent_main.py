@@ -7,6 +7,7 @@ from PySide6.QtGui import QIcon
 
 from qfluentwidgets import FluentWindow, NavigationItemPosition, setTheme, Theme, FluentIcon
 
+from gui import __version__
 from gui.global_settings_view import GlobalSettingsInterface
 from gui.i18n import tr, set_language
 from gui.model_config_view import ModelConfigInterface
@@ -25,7 +26,7 @@ class MainWindow(FluentWindow):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("Vocal2Midi")
+        self.setWindowTitle(f"Vocal2Midi v{__version__}")
         app_icon = _load_app_icon()
         if not app_icon.isNull():
             self.setWindowIcon(app_icon)

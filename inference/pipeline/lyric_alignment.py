@@ -61,6 +61,8 @@ def run_qwen_asr_and_fa(
     lyric_output_mode=None,
     cancel_checker=None,
     asr_session=None,
+    japanese_g2p_engine="kashi-g2p-onnx",
+    kashi_g2p_model_path="",
 ):
     """
     Runs ASR using the Qwen runtime with batching and prepares .lab files for HubertFA.
@@ -86,6 +88,8 @@ def run_qwen_asr_and_fa(
         language,
         matcher,
         lyric_output_mode=lyric_output_mode,
+        japanese_g2p_engine=japanese_g2p_engine,
+        kashi_g2p_model_path=kashi_g2p_model_path,
     )
 
 
@@ -244,6 +248,8 @@ def _run_lyric_alignment(
     phoneme_asr_model_path,
     pinyin_asr_model_path,
     japanese_asr_engine,
+    japanese_g2p_engine="kashi-g2p-onnx",
+    kashi_g2p_model_path="",
     asr_batch_size,
     asr_session,
     cancel_checker,
@@ -303,6 +309,8 @@ def _run_lyric_alignment(
                     logger.info("\n--- Stage 1/3: Running text ASR (Qwen) + Japanese G2P ---")
             elif ctx.use_pinyin_asr:
                 logger.warning("\n--- Stage 1/3: Pinyin ASR unavailable; fallback to text ASR + Chinese G2P ---")
+            elif ctx.language == "yue":
+                logger.info("\n--- Stage 1/3: Running text ASR (Qwen) for Cantonese ---")
             else:
                 logger.info("\n--- Stage 1/3: Running ASR in subprocess isolation mode ---")
             chars_dict, chunk_logs = run_qwen_asr_and_fa(
@@ -317,6 +325,8 @@ def _run_lyric_alignment(
                 lyric_output_mode=ctx.lyric_output_mode,
                 cancel_checker=cancel_checker,
                 asr_session=asr_session,
+                japanese_g2p_engine=japanese_g2p_engine,
+                kashi_g2p_model_path=kashi_g2p_model_path,
             )
         _check_cancel()
 
@@ -330,7 +340,7 @@ def _run_lyric_alignment(
         free_memory()
 
         if aligned:
-            use_tifa = str(alignment_engine or "").strip().lower() == "tifa"
+            use_tifa = str(alignment_engine or "").strip().lower() == "tifa" or ctx.language == "yue"
             if use_tifa:
                 logger.info("\n--- Stage 2/3: Loading TiFA model ---")
                 tifa_model = load_tifa_model(tifa_model_path, device=ctx.device)
@@ -343,6 +353,8 @@ def _run_lyric_alignment(
                         temp_dir_path,
                         language=ctx.language,
                         cancel_checker=cancel_checker,
+                        japanese_g2p_engine=japanese_g2p_engine,
+                        kashi_g2p_model_dir=kashi_g2p_model_path,
                     )
                 finally:
                     # Cached in load_tifa_model for reuse across runs; per-song

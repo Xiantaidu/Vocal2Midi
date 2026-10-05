@@ -76,3 +76,19 @@ def test_english_words_convert(pipeline):
 def test_mixed_language_text_converts(pipeline):
     words = pipeline.convert("こんにちは hello", languages=["zh", "ja", "en"])
     assert len(words) >= 2
+
+
+def test_cantonese_text_converts(pipeline):
+    words = pipeline.convert("海阔天空", languages=["yue"])
+    assert len(words) == 4
+    phonemes = _word_phonemes(words)
+    assert phonemes
+    assert "h" in phonemes and "oi" in phonemes
+
+
+def test_cantonese_jyutping_tokens_convert(pipeline):
+    words = pipeline.convert("hoi fut tin hung", languages=["yue"])
+    assert len(words) == 4
+    phonemes = _word_phonemes(words)
+    assert phonemes
+    assert "h" in phonemes and "oi" in phonemes

@@ -50,7 +50,7 @@ pip-wheel-metadata/
 TEST.wav
 
 /settings/*.ini
-
+/.pytest_tmp/
 /inference/phonemeASR/database/
 /inference/phonemeASR/data/
 /inference/phonemeASR/checkpoints/

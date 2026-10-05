@@ -19,7 +19,11 @@ from inference.TiFA.g2p.registry import get_converter, get_preprocessor
 logger = logging.getLogger(__name__)
 
 
-def build_g2p_pipeline(model_dir: str | Path) -> G2PPipeline:
+def build_g2p_pipeline(
+    model_dir: str | Path,
+    japanese_g2p_engine: str = "kashi-g2p-onnx",
+    kashi_g2p_model_dir: str | Path | None = None,
+) -> G2PPipeline:
     """Construct the converter chain rooted at the TiFA model directory."""
     root = Path(model_dir)
     dictionaries = root / "dictionaries"
@@ -27,15 +31,32 @@ def build_g2p_pipeline(model_dir: str | Path) -> G2PPipeline:
     converters = [
         get_converter("chinese-pinyin")(dict_path=str(dictionaries / "ds-zh-pinyin-lite.txt")),
     ]
-    if (JA_G2P_MODEL_DIR / "g2p_onnx_runtime.py").is_file():
-        # Kanji-bearing runs go through the ja_g2p_onnx model first: its
+    jyutping_dict_path = dictionaries / "jyutping_dict.txt"
+    if jyutping_dict_path.is_file():
+        converters.append(get_converter("yue-jyutping")(dict_path=str(jyutping_dict_path)))
+
+    ja_engine = str(japanese_g2p_engine or "kashi-g2p-onnx").strip().lower()
+    kashi_path = Path(kashi_g2p_model_dir) if kashi_g2p_model_dir else JA_G2P_MODEL_DIR
+
+    if ja_engine in {"kashi-g2p-onnx", "ja_g2p", "ja_g2p_onnx"} and (kashi_path / "model.onnx").is_file():
+        # Kanji-bearing runs go through the kashi-g2p-onnx model first: its
         # transformer disambiguates polyphones in sentence context and its
         # readings convert through the same DiffSinger Japanese dictionary.
         import inference.TiFA.japanese_onnx  # noqa: F401 - populates the registry
 
         converters.append(get_converter("japanese-onnx")(
             dict_path=str(dictionaries / "japanese_dict_full.txt"),
+            model_dir=str(kashi_path),
         ))
+    elif ja_engine == "pyopenjtalk":
+        try:
+            import inference.TiFA.japanese_pyopenjtalk  # noqa: F401 - populates the registry
+
+            converters.append(get_converter("japanese-pyopenjtalk")(
+                dict_path=str(dictionaries / "japanese_dict_full.txt"),
+            ))
+        except Exception as e:
+            logger.warning(f"Japanese pyopenjtalk converter unavailable: {e}")
     lexicon_path = root / "dictionaries" / "ja_lexicon.txz"
     if lexicon_path.is_file():
         # Kanji-bearing spans claim their readings from the ja_g2p lexicon
@@ -78,7 +99,12 @@ def build_g2p_pipeline(model_dir: str | Path) -> G2PPipeline:
     zh_dictionary.language = ("zh",)
     ja_dictionary = get_converter("dictionary")(dict_path=str(dictionaries / "japanese_dict_full.txt"))
     ja_dictionary.language = ("ja",)
-    converters.extend([zh_dictionary, ja_dictionary, get_converter("passthrough")()])
+    converters.extend([zh_dictionary, ja_dictionary])
+    if jyutping_dict_path.is_file():
+        yue_dictionary = get_converter("dictionary")(dict_path=str(jyutping_dict_path))
+        yue_dictionary.language = ("yue",)
+        converters.append(yue_dictionary)
+    converters.append(get_converter("passthrough")())
 
     return G2PPipeline(
         preprocessors=[

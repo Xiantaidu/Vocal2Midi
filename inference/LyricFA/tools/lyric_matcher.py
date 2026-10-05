@@ -22,9 +22,9 @@ class ProcessResult:
 
 
 class LyricMatcher:
-    def __init__(self, language: str) -> None:
+    def __init__(self, language: str, **kwargs) -> None:
         self.language = language.lower()
-        self.processor = ProcessorFactory.create_processor(language)
+        self.processor = ProcessorFactory.create_processor(language, **kwargs)
         self.aligner = SequenceAligner()  # Unified aligner used by the matcher pipeline.
         self.highlighter = SmartHighlighter(self.aligner)  # Reuse the same aligner instance.
 

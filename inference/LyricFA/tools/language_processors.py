@@ -1,7 +1,7 @@
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List, Dict, Type
+from typing import List, Dict, Type, Optional
 
 from .ZhG2p import ZhG2p, split_string as zh_split_string
 from .JaG2p import JaG2p
@@ -53,11 +53,11 @@ class EnglishProcessor(LanguageProcessor):
 
 
 class JapaneseProcessor(LanguageProcessor):
-    def __init__(self) -> None:
+    def __init__(self, engine: str = "kashi-g2p-onnx", model_dir: Optional[str] = None) -> None:
         # Japanese text often contains kana/kanji/full-width symbols. We avoid
         # aggressive regex filtering here and rely on JaG2p frontend analysis.
         super().__init__('ja', r'.')
-        self.g2p: JaG2p = JaG2p()
+        self.g2p: JaG2p = JaG2p(engine=engine, model_dir=model_dir)
 
     def clean_text(self, text: str) -> str:
         # Keep original Japanese content and only normalize whitespace.
@@ -111,18 +111,35 @@ class LyricData:
     raw_text: str
 
 
+class CantoneseProcessor(LanguageProcessor):
+    _CHINESE_CHAR_RANGE: str = r'[\u4e00-\u9fa5]'
+
+    def __init__(self) -> None:
+        super().__init__('yue', self._CHINESE_CHAR_RANGE)
+        self.g2p: ZhG2p = ZhG2p('cantonese')
+
+    def split_text(self, text: str) -> List[str]:
+        return zh_split_string(text)
+
+    def get_phonetic_list(self, text_list: List[str]) -> List[str]:
+        return self.g2p.convert_list(text_list, include_tone=False).split(' ')
+
+
 class ProcessorFactory:
     _PROCESSOR_MAP: Dict[str, Type[LanguageProcessor]] = {
         'zh': ChineseProcessor,
         'en': EnglishProcessor,
         'ja': JapaneseProcessor,
+        'yue': CantoneseProcessor,
     }
 
     @classmethod
-    def create_processor(cls, language_code: str) -> LanguageProcessor:
+    def create_processor(cls, language_code: str, **kwargs) -> LanguageProcessor:
         code: str = language_code.lower()
         if code not in cls._PROCESSOR_MAP:
             raise ValueError(f"Unsupported language: {language_code}")
+        if code == 'ja':
+            return cls._PROCESSOR_MAP[code](**kwargs)
         return cls._PROCESSOR_MAP[code]()
 
     @classmethod

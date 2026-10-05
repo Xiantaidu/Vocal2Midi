@@ -77,9 +77,12 @@ class PipelineConfig:
     # "romaji"|"qwen" for Japanese.
     chinese_asr_engine: str = "qwen"
     japanese_asr_engine: str = "romaji"
-    # Forced-alignment engine: "hfa" (default) or "tifa".
-    alignment_engine: str = "hfa"
+    # Forced-alignment engine: "tifa" (default) or "hfa".
+    alignment_engine: str = "tifa"
     tifa_model_path: str = ""
+    # Japanese G2P engine: "kashi-g2p-onnx" (default) or "pyopenjtalk"
+    japanese_g2p_engine: str = "kashi-g2p-onnx"
+    kashi_g2p_model_path: str = ""
     output_pitch_curve: bool = False
     # Runtime handles (like cancel_checker): an optional shared ASR
     # subprocess session so a batch of jobs reuses one spawned worker
@@ -124,6 +127,8 @@ class PipelineConfig:
             "japanese_asr_engine": self.japanese_asr_engine,
             "alignment_engine": self.alignment_engine,
             "tifa_model_path": self.tifa_model_path,
+            "japanese_g2p_engine": self.japanese_g2p_engine,
+            "kashi_g2p_model_path": self.kashi_g2p_model_path,
             "asr_session": self.asr_session,
             "output_pitch_curve": self.output_pitch_curve,
             "cancel_checker": self.cancel_checker,

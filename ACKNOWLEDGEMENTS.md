@@ -13,7 +13,10 @@ Third-party components, vendored code, bundled data, dictionaries, and other emb
 | Project | Role in Vocal2Midi | Upstream repository |
 | --- | --- | --- |
 | GAME | note and pitch extraction | https://github.com/openvpi/GAME |
+| TIFA | default forced alignment engine for Chinese, Japanese, English, and Cantonese | https://github.com/openvpi/TIFA |
 | RomajiASR | Japanese mora / romaji singing ASR used by the Japanese lyric path | https://github.com/Xiantaidu/RomajiASR |
+| PinyinASR | lightweight Chinese pinyin singing ASR used by the Chinese lyric path | https://github.com/Xiantaidu/PinyinASR |
+| kashi-g2p | Japanese G2P runtime and lattice beam search for forced alignment | https://github.com/Xiantaidu/kashi-g2p |
 | HubertFA | phoneme-level forced alignment | https://github.com/wolfgitpr/HubertFA |
 | LyricFA | lyric matching and G2P-based lyric alignment helpers | https://github.com/wolfgitpr/LyricFA |
 | FunASR | broader ASR foundation referenced by the Qwen3-ASR integration path | https://github.com/modelscope/FunASR |
@@ -25,7 +28,10 @@ Third-party components, vendored code, bundled data, dictionaries, and other emb
 
 The repository currently includes local copies or adapted subsets of some upstream projects:
 
+- `inference/TiFA/`
 - `inference/romaji_asr/`
+- `inference/pinyin_asr/`
+- `inference/kashi_g2p_ja/`
 - `inference/HubertFA/`
 - `inference/LyricFA/`
 - `inference/qwen3asr_dml/gguf/`

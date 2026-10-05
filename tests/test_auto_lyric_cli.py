@@ -32,7 +32,7 @@ def test_argparser_defaults(defaults):
     assert args.lyric_format is None  # resolved from settings per language in main
     assert args.chinese_asr == "qwen"
     assert args.japanese_asr == "romaji"
-    assert args.aligner == "hfa"
+    assert args.aligner == "tifa"
     assert args.slicing == "smart"
     assert args.quant_step == 0
     assert args.quant_mode == "smart"
@@ -87,6 +87,13 @@ def test_validate_args_missing_lyrics_file(defaults):
     parser = auto_lyric_cli.build_argparser(defaults)
     args = parser.parse_args(["a.wav", "--lyrics-file", "missing.txt"])
     with pytest.raises(FileNotFoundError):
+        auto_lyric_cli.validate_args(args)
+
+
+def test_validate_args_rejects_cantonese_with_hfa(defaults):
+    parser = auto_lyric_cli.build_argparser(defaults)
+    args = parser.parse_args(["a.wav", "--language", "yue", "--aligner", "hfa"])
+    with pytest.raises(ValueError, match="Cantonese.*not supported by HubertFA"):
         auto_lyric_cli.validate_args(args)
 
 

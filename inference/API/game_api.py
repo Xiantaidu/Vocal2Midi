@@ -71,6 +71,12 @@ def _find_word_nucleus_start(word, language: str | None) -> float | None:
     for phoneme in phonemes:
         if _is_singable_phone(getattr(phoneme, "text", ""), language):
             return float(phoneme.start)
+    if (language or "").lower() == "yue":
+        # Syllabic nasals in Cantonese (m, ng) act as nucleus when no other vowel is present
+        for phoneme in phonemes:
+            p_text = _normalize_phone_text(getattr(phoneme, "text", "")).lower()
+            if p_text in {"m", "ng"}:
+                return float(phoneme.start)
     return None
 
 
@@ -218,7 +224,12 @@ def extract_vowel_boundaries(result_word, original_chars: list[str], language: s
     last_end = 0.0
 
     ignore_tokens = _NON_SINGABLE_WORD_TOKENS
-    is_romaji = len(original_chars) > 0 and all(c.isascii() or c == "" for c in original_chars)
+    is_romaji = (
+        (language or "").lower() == "ja"
+        and len(original_chars) > 0
+        and all(c.isascii() or c == "" for c in original_chars)
+        and all(w.text.isascii() for w in result_word if w.text and w.text not in ignore_tokens)
+    )
 
     for i, word in enumerate(result_word):
         if word.text in ignore_tokens:
@@ -427,7 +438,7 @@ def extract_pitches_and_align(
                 note_seq,
                 note_dur,
                 apply_word_uv=True,
-                assign_by_onset=(language or "").lower() == "en",
+                assign_by_onset=False,
             )
 
             lyric_idx = 0

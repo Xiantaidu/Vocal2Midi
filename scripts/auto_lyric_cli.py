@@ -22,15 +22,16 @@ if str(ROOT_DIR) not in sys.path:
 logger = logging.getLogger(__name__)
 
 INPUT_AUDIO_EXTENSIONS = {".wav", ".m4a", ".flac", ".mp3", ".ogg", ".opus", ".wma", ".webm", ".aif", ".aiff"}
-LANGUAGE_CHOICES = ("zh", "ja", "en")
+LANGUAGE_CHOICES = ("zh", "ja", "en", "yue")
 # backend value -> valid lyric output modes per language (mirrors the GUI tables)
 LYRIC_FORMATS_BY_LANGUAGE = {
     "zh": ("pinyin", "hanzi"),
     "ja": ("romaji", "kana"),
     "en": ("word",),
+    "yue": ("jyutping", "hanzi"),
 }
-DEFAULT_LYRIC_FORMAT = {"zh": "hanzi", "ja": "romaji", "en": "word"}
-LYRIC_FORMAT_CHOICES = ("pinyin", "hanzi", "romaji", "kana", "word")
+DEFAULT_LYRIC_FORMAT = {"zh": "hanzi", "ja": "romaji", "en": "word", "yue": "hanzi"}
+LYRIC_FORMAT_CHOICES = ("pinyin", "hanzi", "romaji", "kana", "word", "jyutping")
 EXPORT_FORMAT_CHOICES = ("mid", "txt", "csv", "ustx", "vsqx", "chunks", "asr_match_log")
 QUANT_STEP_CHOICES = (0, 480, 240, 120, 60, 30)
 QUANT_MODE_CHOICES = ("smart", "simple")
@@ -40,13 +41,16 @@ QUANT_MODE_CHOICES = ("smart", "simple")
 FALLBACK_DEFAULTS = {
     "game_model": "models/GAME-1.0.3-medium-onnx",
     "hfa_model": "models/1218_hfa_model_new_dict",
+    "tifa_model": "models/tifa-1.0-onnx",
     "asr_model": "models/Qwen3-ASR-1.7B-dml",
     "phoneme_asr_model": "models/romajiASR",
     "pinyin_asr_model": "models/pinyinASR",
     "rmvpe_model": "models/RMVPE",
+    "kashi_g2p_model": "models/kashi-g2p-onnx",
     "chinese_asr_engine": "qwen",
     "japanese_asr_engine": "romaji",
-    "alignment_engine": "hfa",
+    "alignment_engine": "tifa",
+    "japanese_g2p_engine": "kashi-g2p-onnx",
     "batch_size": 1,
     "asr_batch_size": 2,
     "slice_min_sec": 5.0,
@@ -63,6 +67,7 @@ FALLBACK_DEFAULTS = {
     "lyric_output_mode_zh": "hanzi",
     "lyric_output_mode_ja": "romaji",
     "lyric_output_mode_en": "word",
+    "lyric_output_mode_yue": "hanzi",
 }
 
 
@@ -100,6 +105,7 @@ def _load_settings_defaults() -> dict:
         for key in (
             "game_model",
             "hfa_model",
+            "tifa_model",
             "asr_model",
             "phoneme_asr_model",
             "pinyin_asr_model",
@@ -122,7 +128,8 @@ def _load_settings_defaults() -> dict:
         )
         for language in LANGUAGE_CHOICES:
             key = f"lyric_output_mode_{language}"
-            defaults[key] = str(settings.value(key, defaults[key]) or defaults[key])
+            fallback_val = defaults.get(key, DEFAULT_LYRIC_FORMAT.get(language, "hanzi"))
+            defaults[key] = str(settings.value(key, fallback_val) or fallback_val)
         saved_dir = str(settings.value("save_dir", "") or "").strip()
         if saved_dir:
             defaults["output_dir"] = saved_dir
@@ -152,8 +159,11 @@ def build_argparser(defaults: dict) -> argparse.ArgumentParser:
                         help="Chinese ASR engine (default: the GUI setting)")
     parser.add_argument("--japanese-asr", choices=("romaji", "qwen"), default=defaults["japanese_asr_engine"],
                         help="Japanese ASR engine (default: the GUI setting)")
+    parser.add_argument("--japanese-g2p", choices=("kashi-g2p-onnx", "pyopenjtalk"),
+                        default=defaults.get("japanese_g2p_engine", "kashi-g2p-onnx"),
+                        help="Japanese G2P engine (default: the GUI setting, kashi-g2p-onnx)")
     parser.add_argument("--aligner", choices=("tifa", "hfa"), default=defaults["alignment_engine"],
-                        help="Forced-alignment engine (default: the GUI setting, hfa)")
+                        help="Forced-alignment engine (default: the GUI setting, tifa)")
     parser.add_argument("--lyrics", default="", help="Reference lyrics text for alignment")
     parser.add_argument("--lyrics-file", type=Path, default=None,
                         help="Read reference lyrics from a UTF-8 text file (overrides --lyrics)")
@@ -190,7 +200,8 @@ def build_argparser(defaults: dict) -> argparse.ArgumentParser:
     parser.add_argument("--est-threshold", type=float, default=defaults["est_threshold"], help="Note existence threshold")
     parser.add_argument("--game-model", default=defaults["game_model"], help="GAME ONNX model directory")
     parser.add_argument("--hfa-model", default=defaults["hfa_model"], help="HubertFA ONNX model directory")
-    parser.add_argument("--tifa-model", default="models/tifa-1.0-onnx", help="TiFA ONNX model directory")
+    parser.add_argument("--tifa-model", default=defaults["tifa_model"], help="TiFA ONNX model directory")
+    parser.add_argument("--kashi-g2p-model", default=defaults["kashi_g2p_model"], help="kashi-g2p ONNX model directory")
     parser.add_argument("--asr-model", default=defaults["asr_model"], help="Qwen3-ASR model directory")
     parser.add_argument("--phoneme-asr-model", default=defaults["phoneme_asr_model"], help="Romaji ASR model directory")
     parser.add_argument("--pinyin-asr-model", default=defaults["pinyin_asr_model"], help="Pinyin ASR model directory")
@@ -215,6 +226,8 @@ def validate_args(args) -> None:
     # PinyinASR can only emit pinyin; the backend coerces hanzi to pinyin.
     if args.language == "zh" and args.chinese_asr == "pinyin" and args.lyric_format == "hanzi":
         logger.warning("PinyinASR only outputs pinyin; the lyric format will fall back to pinyin.")
+    if args.language == "yue" and args.aligner == "hfa":
+        raise ValueError("Cantonese ('yue') is not supported by HubertFA (HFA); use --aligner tifa instead.")
 
 
 def collect_inputs(inputs, output_dir: Path | None = None, recursive: bool = True) -> list[Path]:
@@ -298,6 +311,8 @@ def build_config(args, audio_path: Path, ts_list: list, asr_session=None):
         japanese_asr_engine=args.japanese_asr,
         alignment_engine=args.aligner,
         tifa_model_path=args.tifa_model,
+        japanese_g2p_engine=args.japanese_g2p,
+        kashi_g2p_model_path=args.kashi_g2p_model,
         asr_session=asr_session,
     )
 

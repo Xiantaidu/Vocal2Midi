@@ -39,7 +39,8 @@ def _validate_model_paths(cfg: PipelineConfig) -> None:
     required_paths = [("GAME model dir", cfg.game_model_dir)]
     if cfg.output_lyrics:
         # The forced-alignment engine decides which aligner model is required.
-        if str(cfg.alignment_engine or "").strip().lower() == "tifa":
+        lang = str(cfg.language or "").strip().lower()
+        if str(cfg.alignment_engine or "").strip().lower() == "tifa" or lang == "yue":
             required_paths.append(("TiFA model dir", cfg.tifa_model_path))
         else:
             required_paths.append(("HubertFA model dir", cfg.hfa_model_dir))
@@ -54,6 +55,8 @@ def _validate_model_paths(cfg: PipelineConfig) -> None:
             # With the Qwen engine selected for Japanese it is bypassed entirely.
             if _ja_uses_romaji_asr(cfg) and cfg.phoneme_asr_model_path:
                 required_paths.append(("Phoneme ASR model path", cfg.phoneme_asr_model_path))
+        if lang == "ja" and str(cfg.japanese_g2p_engine or "").strip().lower() == "kashi-g2p-onnx" and cfg.kashi_g2p_model_path:
+            required_paths.append(("kashi-g2p model path", cfg.kashi_g2p_model_path))
 
     # Pitch curves require RMVPE; fail fast with a clear path instead of a
     # mid-run error inside RmvpeTranscriber.

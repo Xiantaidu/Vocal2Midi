@@ -73,7 +73,7 @@ Valid lyric formats per language:
 |---|---|
 | `--chinese-asr {pinyin,qwen}` | `pinyin` runs the direct PinyinASR phoneme model (output is locked to pinyin — choosing `hanzi` emits a warning and the pipeline falls back to pinyin); `qwen` runs text ASR + G2P. |
 | `--japanese-asr {romaji,qwen}` | `romaji` runs the direct RomajiASR mora model; `qwen` runs text ASR + Japanese G2P. |
-| `--aligner {tifa,hfa}` | Forced-alignment engine: `tifa` runs the TiFA aligner (audio + raw ASR text, built-in G2P with polyphone disambiguation); `hfa` runs HubertFA on the phoneme sequence. Default: the GUI setting, `hfa`. |
+| `--aligner {tifa,hfa}` | Forced-alignment engine: `tifa` runs the TiFA aligner (audio + raw ASR text, built-in G2P with polyphone disambiguation); `hfa` runs HubertFA on the phoneme sequence. Default: the GUI setting, `tifa`. |
 
 Both default to the model config page's engine selection. The engine not in
 use is not loaded and its model path is not required.

@@ -56,6 +56,8 @@ LANGUAGE_ALIASES = {
     "japanese": "Japanese",
     "en": "English",
     "english": "English",
+    "yue": "Cantonese",
+    "cantonese": "Cantonese",
 }
 
 

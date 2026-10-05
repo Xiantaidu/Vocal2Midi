@@ -24,6 +24,7 @@ from qfluentwidgets import (
     setTheme,
     Theme,
 )
+from gui import __version__
 from gui.i18n import tr, set_language
 from gui.option_tables import fill_combo
 from gui.settings_utils import create_app_settings
@@ -272,6 +273,19 @@ class GlobalSettingsInterface(ScrollArea):
 
         debug_layout.addLayout(debug_grid)
         self.vBoxLayout.addWidget(debug_card)
+
+        # ── about ───────────────────────────────────────────────────
+        about_card = CardWidget(self)
+        about_layout = QVBoxLayout(about_card)
+        about_title = BodyLabel(self)
+        self._bind_tr(lambda: about_title.setText(tr("about")))
+        about_title.setStyleSheet("font-weight: bold; font-size: 14px;")
+        about_layout.addWidget(about_title)
+
+        version_label = BodyLabel(self)
+        self._bind_tr(lambda: version_label.setText(tr("version_info", version=__version__)))
+        about_layout.addWidget(version_label)
+        self.vBoxLayout.addWidget(about_card)
 
         self.vBoxLayout.addStretch(1)
         self.setWidget(self.view)

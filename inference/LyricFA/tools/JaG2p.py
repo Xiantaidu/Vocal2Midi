@@ -4,13 +4,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def _get_onnx_runtime():
-    """ja_g2p_onnx runtime when the model folder ships with the app, else None."""
+def _get_onnx_runtime(model_dir=None):
+    """kashi-g2p-onnx runtime when the model folder ships with the app, else None."""
     try:
         from inference.ja_onnx_g2p import get_ja_onnx_runtime
     except ImportError:
         return None
-    return get_ja_onnx_runtime()
+    return get_ja_onnx_runtime(model_dir)
 
 
 def is_letter(character):
@@ -108,8 +108,9 @@ class JaG2p:
         "〇": "零",
     }
 
-    def __init__(self):
-        pass
+    def __init__(self, engine: str = "kashi-g2p-onnx", model_dir=None):
+        self.engine = str(engine or "kashi-g2p-onnx").strip().lower()
+        self.model_dir = model_dir
 
     @staticmethod
     def _katakana_to_hiragana(text):
@@ -212,37 +213,38 @@ class JaG2p:
         if not normalized_segment:
             return []
 
-        # ja_g2p_onnx (LAKE-G2P v5) first: transformer-disambiguated kana
+        # kashi-g2p-onnx (LAKE-G2P v5) first when selected: transformer-disambiguated kana
         # readings per word edge, no 775MB UniDic needed.
-        runtime = _get_onnx_runtime()
-        if runtime is not None:
-            try:
-                from inference.ja_onnx_g2p import normalize_edge_reading
-                predicted = runtime.predict(normalized_segment)
-                analysis = []
-                prev_surface = None
-                for edge in predicted["edges"]:
-                    surface = edge["surface"]
-                    reading = edge["reading"]
-                    if surface == "ー" or reading == "ー":
-                        # A prolonged mark as its own char-level edge repeats
-                        # the previous mora's vowel (mirroring what
-                        # _kata2mora_pairs does for ー inside a single
-                        # reading); an orphan ー with no vowel before it is
-                        # dropped since it has no pronounceable form.
-                        if analysis and analysis[-1]["moras"]:
-                            last_romaji = analysis[-1]["moras"][-1]
-                            if last_romaji[-1:] in _VOWEL_HIRA:
-                                analysis[-1]["moras"].append(last_romaji[-1])
-                                analysis[-1]["kana_moras"].append(_VOWEL_HIRA[last_romaji[-1]])
-                        continue
-                    reading = normalize_edge_reading(surface, reading, prev_surface=prev_surface)
-                    analysis.extend(self._parse_pron_to_entry(surface, reading))
-                    prev_surface = surface
-                if analysis:
-                    return analysis
-            except Exception as e:
-                logger.warning(f"JaG2p ONNX backend failed ({e}); falling back to pyopenjtalk")
+        if self.engine not in {"pyopenjtalk"}:
+            runtime = _get_onnx_runtime(self.model_dir)
+            if runtime is not None:
+                try:
+                    from inference.ja_onnx_g2p import normalize_edge_reading
+                    predicted = runtime.predict(normalized_segment)
+                    analysis = []
+                    prev_surface = None
+                    for edge in predicted["edges"]:
+                        surface = edge["surface"]
+                        reading = edge["reading"]
+                        if surface == "ー" or reading == "ー":
+                            # A prolonged mark as its own char-level edge repeats
+                            # the previous mora's vowel (mirroring what
+                            # _kata2mora_pairs does for ー inside a single
+                            # reading); an orphan ー with no vowel before it is
+                            # dropped since it has no pronounceable form.
+                            if analysis and analysis[-1]["moras"]:
+                                last_romaji = analysis[-1]["moras"][-1]
+                                if last_romaji[-1:] in _VOWEL_HIRA:
+                                    analysis[-1]["moras"].append(last_romaji[-1])
+                                    analysis[-1]["kana_moras"].append(_VOWEL_HIRA[last_romaji[-1]])
+                            continue
+                        reading = normalize_edge_reading(surface, reading, prev_surface=prev_surface)
+                        analysis.extend(self._parse_pron_to_entry(surface, reading))
+                        prev_surface = surface
+                    if analysis:
+                        return analysis
+                except Exception as e:
+                    logger.warning(f"JaG2p ONNX backend failed ({e}); falling back to pyopenjtalk")
 
         try:
             import pyopenjtalk
@@ -287,7 +289,7 @@ class JaG2p:
 
         if all(ch in self.number_map for ch in normalized_token):
             if convert_number:
-                if _get_onnx_runtime() is not None:
+                if self.engine not in {"pyopenjtalk"} and _get_onnx_runtime(self.model_dir) is not None:
                     # The model's number rules read digit strings natively
                     # (12年 -> じゅうにねん); keep digits unconverted.
                     return self._analyze_japanese_segment(normalized_token)

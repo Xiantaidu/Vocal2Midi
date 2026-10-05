@@ -17,3 +17,4 @@ soundfile
 textgrid
 tqdm
 pyopenjtalk
+opencc-python-reimplemented

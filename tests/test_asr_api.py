@@ -403,3 +403,11 @@ def test_sessionless_call_uses_one_shot_worker(monkeypatch, tmp_path):
     assert results == [{"text": "你好"}]
     # one-shot lifecycle: graceful shutdown already happened inside the call
     assert task_queue.items[-1] == {"type": "stop"}
+
+
+def test_cantonese_asr_text_simplifies_traditional_characters():
+    raw = "冷風偏偏吹雪，你凍嗎？這顆卑微的心它不再跳。"
+    res = asr_api._filter_qwen_asr_text_for_lyric_flow(raw, "yue")
+    assert res == "冷风偏偏吹雪，你冻吗？这颗卑微的心它不再跳。"
+
+

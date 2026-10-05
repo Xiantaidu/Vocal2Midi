@@ -35,3 +35,19 @@ def test_ustx_export_skips_invalid_notes_and_clamps_tone(tmp_path):
     assert data["tracks"][0]["track_expressions"] == []
     assert data["voice_parts"][0]["comment"] == ""
     assert data["wave_parts"] == []
+
+
+def test_ustx_export_writes_ustx_lyric_symbols(tmp_path):
+    path = tmp_path / "symbols.ustx"
+    notes = [
+        NoteInfo(0.0, 0.5, 60.0, "possible"),
+        NoteInfo(0.5, 0.8, 60.0, "+"),
+        NoteInfo(0.8, 1.1, 62.0, "-"),
+        NoteInfo(1.1, 1.4, 62.0, ""),
+    ]
+
+    save_ustx(notes, path, tempo=120.0)
+
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    lyrics = [note["lyric"] for note in data["voice_parts"][0]["notes"]]
+    assert lyrics == ["possible", "+", "+~", "a"]

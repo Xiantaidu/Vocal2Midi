@@ -212,3 +212,62 @@ def test_kata_to_romaji_covers_dakuten_digraphs():
         ("テュ", "tyu"), ("デュ", "dyu"), ("ァ", "a"), ("ョ", "yo"),
     ):
         assert KATA_TO_ROMAJI.get(kata) == romaji, kata
+
+
+def test_normalize_lyric_output_mode_yue():
+    assert lfa_api._normalize_lyric_output_mode("yue", None) == "hanzi"
+    assert lfa_api._normalize_lyric_output_mode("yue", "jyutping") == "jyutping"
+    assert lfa_api._normalize_lyric_output_mode("yue", "hanzi") == "hanzi"
+    assert lfa_api._normalize_lyric_output_mode("yue", "invalid") == "hanzi"
+
+
+def test_cantonese_lyric_matcher():
+    matcher = lfa_api.create_lyric_matcher("yue", "海阔天空")
+    assert matcher is not None
+    assert matcher.lyric_text_list == ["海", "阔", "天", "空"]
+    assert len(matcher.lyric_phonetic_list) == 4
+    assert matcher.lyric_phonetic_list[0] == "hoi"
+
+
+def test_process_asr_to_phonemes_cantonese(tmp_path):
+    chars_dict, chunk_logs = lfa_api.process_asr_to_phonemes(
+        all_results=[{"text": "海阔天空"}],
+        chunk_indices=[0],
+        temp_dir_path=tmp_path,
+        language="yue",
+        matcher=None,
+        lyric_output_mode="hanzi",
+    )
+    assert chars_dict == {"chunk_0": ["海", "阔", "天", "空"]}
+    assert (tmp_path / "chunk_0.txt").read_text(encoding="utf-8") == "海阔天空"
+    lab_text = (tmp_path / "chunk_0.lab").read_text(encoding="utf-8")
+    assert "hoi" in lab_text and "tin" in lab_text
+
+
+def test_cantonese_g2p_phrase_handling(tmp_path):
+    chars_dict, _ = lfa_api.process_asr_to_phonemes(
+        all_results=[{"text": "斗转星移 唔该"}],
+        chunk_indices=[0],
+        temp_dir_path=tmp_path,
+        language="yue",
+        matcher=None,
+        lyric_output_mode="jyutping",
+    )
+    assert chars_dict["chunk_0"] == ["dau", "zyun", "sing", "ji", "m", "goi"]
+    lab_text = (tmp_path / "chunk_0.lab").read_text(encoding="utf-8")
+    assert lab_text == "dau zyun sing ji m goi"
+
+
+def test_cantonese_process_asr_to_phonemes_simplifies_traditional_text(tmp_path):
+    chars_dict, _ = lfa_api.process_asr_to_phonemes(
+        all_results=[{"text": "冷風偏偏吹雪"}],
+        chunk_indices=[0],
+        temp_dir_path=tmp_path,
+        language="yue",
+        matcher=None,
+        lyric_output_mode="hanzi",
+    )
+    assert chars_dict["chunk_0"] == ["冷", "风", "偏", "偏", "吹", "雪"]
+    assert (tmp_path / "chunk_0.txt").read_text(encoding="utf-8") == "冷风偏偏吹雪"
+
+

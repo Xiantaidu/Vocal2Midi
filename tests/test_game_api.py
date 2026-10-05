@@ -218,3 +218,23 @@ def test_load_game_model_reuses_cached_session(monkeypatch, tmp_path):
         assert len(constructions) == 2
     finally:
         game_api._GAME_MODEL_CACHE.clear()
+
+
+def test_extract_vowel_boundaries_cantonese_jyutping_not_overridden_by_hanzi():
+    words = [
+        _make_word(0.0, 0.3, "冷", [(0.0, 0.1, "l"), (0.1, 0.3, "aang")]),
+        _make_word(0.3, 0.6, "风", [(0.3, 0.4, "f"), (0.4, 0.6, "ung")]),
+    ]
+    _, _, lyrics = extract_vowel_boundaries(words, ["laang", "fung"], language="yue")
+    assert lyrics == ["", "laang", "fung"]
+
+
+def test_extract_vowel_boundaries_mandarin_pinyin_not_overridden_by_hanzi():
+    words = [
+        _make_word(0.0, 0.3, "冷", [(0.0, 0.1, "l"), (0.1, 0.3, "eng")]),
+        _make_word(0.3, 0.6, "风", [(0.3, 0.4, "f"), (0.4, 0.6, "eng")]),
+    ]
+    _, _, lyrics = extract_vowel_boundaries(words, ["leng", "feng"], language="zh")
+    assert lyrics == ["", "leng", "feng"]
+
+

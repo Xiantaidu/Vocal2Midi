@@ -9,12 +9,14 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MODEL_DIR = PROJECT_ROOT / "models" / "ja_g2p_onnx"
+MODEL_DIR = PROJECT_ROOT / "models" / "kashi-g2p-onnx"
+if not (MODEL_DIR / "model.onnx").is_file():
+    MODEL_DIR = PROJECT_ROOT / "models" / "ja_g2p_onnx"
 TIFA_MODEL_DIR = PROJECT_ROOT / "models" / "tifa-1.0-onnx"
 
 pytestmark = pytest.mark.skipif(
-    not (MODEL_DIR / "g2p_onnx_runtime.py").is_file(),
-    reason="ja_g2p_onnx model bundle not present",
+    not (MODEL_DIR / "model.onnx").is_file(),
+    reason="kashi-g2p-onnx model bundle not present",
 )
 
 
@@ -209,9 +211,34 @@ def test_jag2p_falls_back_to_pyopenjtalk_without_onnx(monkeypatch):
 
     import inference.LyricFA.tools.JaG2p as jag2p_module
 
-    monkeypatch.setattr(jag2p_module, "_get_onnx_runtime", lambda: None)
+    monkeypatch.setattr(jag2p_module, "_get_onnx_runtime", lambda _dir=None: None)
     g2p = jag2p_module.JaG2p()
     moras = g2p.convert("今日はいい天気ですね").split()
     assert moras, "pyopenjtalk fallback must still produce moras"
     if importlib.util.find_spec("pyopenjtalk") is not None:
         assert moras[:1] == ["kyo"]
+
+
+def test_jag2p_explicit_pyopenjtalk_engine():
+    import importlib.util
+
+    from inference.LyricFA.tools.JaG2p import JaG2p
+
+    if importlib.util.find_spec("pyopenjtalk") is None:
+        pytest.skip("pyopenjtalk is not installed")
+    g2p = JaG2p(engine="pyopenjtalk")
+    moras = g2p.convert("今日はいい天気ですね").split()
+    assert moras[:1] == ["kyo"]
+
+
+def test_tifa_g2p_pipeline_with_pyopenjtalk():
+    import importlib.util
+    from inference.TiFA.g2p_pipeline import build_g2p_pipeline
+
+    if importlib.util.find_spec("pyopenjtalk") is None:
+        pytest.skip("pyopenjtalk is not installed")
+    pipeline = build_g2p_pipeline(TIFA_MODEL_DIR, japanese_g2p_engine="pyopenjtalk")
+    words = pipeline.convert("普通の世界", languages=["ja"])
+    texts = [w.text for w in words]
+    assert "普通" in texts or any("普通" in t for t in texts)
+

@@ -81,34 +81,48 @@ class ZhG2p:
 
         if language == "mandarin":
             dict_directory = os.path.join(base_dir, "Dicts/mandarin")
+            self.load_dict(dict_directory, "phrases_map.txt", self.phrases_map)
+            self.load_dict_list(dict_directory, "phrases_dict.txt", self.phrases_dict)
+            self.load_dict_list(dict_directory, "user_dict.txt", self.phrases_dict, " ")
+            self.load_dict_list(dict_directory, "word.txt", self.word_dict)
+            self.load_dict(dict_directory, "trans_word.txt", self.trans_dict)
         else:
             dict_directory = os.path.join(base_dir, "Dicts/cantonese")
-
-        self.load_dict(dict_directory, "phrases_map.txt", self.phrases_map)
-        self.load_dict_list(dict_directory, "phrases_dict.txt", self.phrases_dict)
-        self.load_dict_list(dict_directory, "user_dict.txt", self.phrases_dict, " ")
-        self.load_dict_list(dict_directory, "word.txt", self.word_dict)
-        self.load_dict(dict_directory, "trans_word.txt", self.trans_dict)
+            self.load_dict(dict_directory, "phrases_map.txt", self.phrases_map)
+            self.load_dict_list(dict_directory, "phrases_dict.txt", self.phrases_dict, separator=None)
+            self.load_dict_list(dict_directory, "user_dict.txt", self.phrases_dict, separator=None)
+            self.load_dict_list(dict_directory, "word.txt", self.word_dict, separator=None)
+            self.load_dict(dict_directory, "trans_word.txt", self.trans_dict)
 
     @staticmethod
     def load_dict(directory, file_name, result_map):
-        dict_path = directory + "/" + file_name
+        dict_path = os.path.join(directory, file_name)
+        if not os.path.exists(dict_path):
+            return
         with open(dict_path, 'r', encoding='utf-8') as file:
             for line in file:
                 line = line.strip()
                 if line:
-                    key, value = line.split(':')
-                    result_map[key] = value
+                    parts = line.split(':', 1)
+                    if len(parts) == 2:
+                        result_map[parts[0]] = parts[1]
 
     @staticmethod
     def load_dict_list(directory, file_name, result_map, separator=','):
-        dict_path = directory + "/" + file_name
+        dict_path = os.path.join(directory, file_name)
+        if not os.path.exists(dict_path):
+            return
         with open(dict_path, 'r', encoding='utf-8') as file:
             for line in file:
                 line = line.strip()
                 if line:
-                    key, value = line.split(':', 1)
-                    result_map[key] = value.split(separator)
+                    parts = line.split(':', 1)
+                    if len(parts) == 2:
+                        key, value = parts
+                        if separator is None:
+                            result_map[key] = value.split()
+                        else:
+                            result_map[key] = value.split(separator)
 
     number_map = {
         "0": "零", "1": "一", "2": "二", "3": "三", "4": "四",
@@ -119,7 +133,8 @@ class ZhG2p:
     def reset_zh(input_list, result, positions):
         final_result = input_list.copy()
         for index, position in enumerate(positions):
-            final_result[position] = result[index]
+            if index < len(result) and position < len(final_result):
+                final_result[position] = result[index]
         return " ".join(final_result)
 
     @staticmethod
@@ -221,19 +236,23 @@ class ZhG2p:
                     cursor += 1
 
         if not include_tone:
-            result = [x[:-1] if x[-1].isdigit() else x for x in result]
+            result = [x[:-1] if (x and x[-1].isdigit()) else (x or "") for x in result]
 
-        result = [tone_to_normal(x) for x in result]
+        result = [tone_to_normal(x) if x else "" for x in result]
         return self.reset_zh(input_list, result, input_positions)
 
     def is_polyphonic(self, text):
         return text in self.phrases_map
 
     def traditional_to_simplified(self, text):
-        return self.trans_dict[text] if text in self.trans_dict else text
+        return self.trans_dict.get(text, text)
 
     def get_default_pinyin(self, text):
-        return self.word_dict[self.traditional_to_simplified(text)][0] if text in self.word_dict else None
+        simplified = self.traditional_to_simplified(text)
+        if simplified in self.word_dict and self.word_dict[simplified]:
+            return self.word_dict[simplified][0]
+        return text
 
     def get_all_pinyin(self, text):
-        return self.word_dict[self.traditional_to_simplified(text)] if text in self.word_dict else None
+        simplified = self.traditional_to_simplified(text)
+        return self.word_dict.get(simplified, [text])

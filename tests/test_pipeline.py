@@ -29,6 +29,7 @@ class TestValidateModelPaths:
             game_model_dir="/does/not/exist/game",
             hfa_model_dir="/does/not/exist/hfa",
             asr_model_path="/does/not/exist/asr",
+            alignment_engine="hfa",
             device="cpu",
             language="zh",
             ts=[0.0],
@@ -110,13 +111,25 @@ class TestValidateModelPaths:
         existing = str(tmp_path)
         base_cfg.game_model_dir = existing
         base_cfg.hfa_model_dir = existing
-        base_cfg.asr_model_path = existing  # the selected engine
+        base_cfg.asr_model_path = existing
         base_cfg.language = "ja"
         base_cfg.japanese_asr_engine = "qwen"
-        base_cfg.phoneme_asr_model_path = "/does/not/exist/romaji"  # unused
+        base_cfg.phoneme_asr_model_path = "/does/not/exist/romaji"
 
-        # Should not raise
         _validate_model_paths(base_cfg)
+
+    def test_cantonese_requires_tifa_model_path(self, base_cfg, tmp_path):
+        """Cantonese always requires TiFA aligner model."""
+        existing = str(tmp_path)
+        base_cfg.game_model_dir = existing
+        base_cfg.asr_model_path = existing
+        base_cfg.language = "yue"
+        base_cfg.tifa_model_path = ""
+        base_cfg.hfa_model_dir = existing
+
+        with pytest.raises(ModelNotFoundError) as exc_info:
+            _validate_model_paths(base_cfg)
+        assert "TiFA" in exc_info.value.details
 
     def test_ja_romaji_engine_requires_existing_romaji_path(self, base_cfg, tmp_path):
         existing = str(tmp_path)
@@ -142,6 +155,7 @@ class TestRunAutoLyricJob:
             output_dir=tmp_path,
             game_model_dir=str(tmp_path),
             hfa_model_dir=str(tmp_path),
+            tifa_model_path=str(tmp_path),
             asr_model_path=str(tmp_path),
             device="cpu",
             language="zh",

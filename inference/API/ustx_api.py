@@ -19,6 +19,11 @@ UCurveInterval = 5
 USTX_RESOLUTION = 480
 USTX_VERSION = "0.7"
 
+# The melisma sustain symbol differs between MIDI and USTX: MIDI keeps "-" in
+# the lyric, while USTX (OpenUtau) writes "+~" to continue the previous
+# syllable; the same-word syllable marker "+" is the same in both.
+_USTX_LYRIC_ALIASES = {"-": "+~"}
+
 
 @dataclass
 class _PitchPoint:
@@ -385,12 +390,13 @@ def save_ustx(notes: list[Any], filepath: Path, tempo: float, rmvpe_result: Rmvp
         dur = max(10, end - pos)
         tone = int(np.clip(round(note.pitch), 0, 127))
         max_end_tick = max(max_end_tick, pos + dur)
+        lyric = _USTX_LYRIC_ALIASES.get(note.lyric, note.lyric) or "a"
         ustx_notes.append(
             {
                 "position": pos,
                 "duration": dur,
                 "tone": tone,
-                "lyric": note.lyric or "a",
+                "lyric": lyric,
                 "pitch": {
                     "data": [
                         {"x": -40.0, "y": 0.0, "shape": "io"},

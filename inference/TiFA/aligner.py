@@ -173,6 +173,8 @@ def run_tifa_fa(
     language: str = "zh",
     cancel_checker=None,
     g2p_pipeline=None,
+    japanese_g2p_engine: str = "kashi-g2p-onnx",
+    kashi_g2p_model_dir=None,
 ) -> tuple[dict, dict[str, list[tuple[str, str]]]]:
     """Align every chunk_N.wav/.txt pair in temp_dir.
 
@@ -183,7 +185,11 @@ def run_tifa_fa(
     treats missing predictions as pitch-only fallbacks.
     """
     language = (language or "zh").strip().lower()
-    g2p = g2p_pipeline or build_g2p_pipeline(model.model_dir)
+    g2p = g2p_pipeline or build_g2p_pipeline(
+        model.model_dir,
+        japanese_g2p_engine=japanese_g2p_engine,
+        kashi_g2p_model_dir=kashi_g2p_model_dir,
+    )
     pred_dict: dict = {}
     display: dict[str, list[tuple[str, str]]] = {}
     timestep = model.timestep

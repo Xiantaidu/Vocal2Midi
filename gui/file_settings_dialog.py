@@ -62,6 +62,9 @@ class FileSettingsDialog(MessageBoxBase):
         # the lyric output for zh is locked to pinyin here as well.
         self._pinyin_locked = str(base_values.get("chinese_asr_engine", "qwen")).strip().lower() == "pinyin"
 
+        self._alignment_engine = str(base_values.get("alignment_engine", "hfa")).strip().lower()
+        is_hfa = self._alignment_engine == "hfa"
+
         self.slicing_combo = ComboBox(self)
         fill_combo(self.slicing_combo, SLICE_METHOD_CHOICES)
         self.slicing_combo.setCurrentIndex(max(0, self.slicing_combo.findData(base_values["slicing_method"])))
@@ -69,11 +72,20 @@ class FileSettingsDialog(MessageBoxBase):
 
         self.lang_combo = ComboBox(self)
         fill_combo(self.lang_combo, TARGET_LANGUAGE_CHOICES)
-        self.lang_combo.setCurrentIndex(max(0, self.lang_combo.findData(base_values["language"])))
+        yue_idx = self.lang_combo.findData("yue")
+        if yue_idx >= 0:
+            self.lang_combo.setItemEnabled(yue_idx, not is_hfa)
+            if is_hfa:
+                self.lang_combo.setItemText(yue_idx, tr("lang_name_yue_disabled"))
+
+        lang_val = base_values["language"]
+        if is_hfa and lang_val == "yue":
+            lang_val = "zh"
+        self.lang_combo.setCurrentIndex(max(0, self.lang_combo.findData(lang_val)))
         _add_pair(grid, 0, 2, tr("target_lang"), self.lang_combo, self)
 
         self.lyric_output_combo = ComboBox(self)
-        self._fill_lyric_output_options(base_values["language"], base_values["lyric_output"])
+        self._fill_lyric_output_options(lang_val, base_values["lyric_output"])
         self.lang_combo.currentIndexChanged.connect(self._on_language_changed)
         _add_pair(grid, 1, 0, tr("lyric_output_format"), self.lyric_output_combo, self)
 
@@ -166,7 +178,13 @@ class FileSettingsDialog(MessageBoxBase):
         self.lyric_output_combo.setToolTip(tr("lyric_output_locked_hint") if locked else "")
 
     def _on_language_changed(self):
-        self._fill_lyric_output_options(self.lang_combo.currentData(), self.lyric_output_combo.currentData())
+        lang = self.lang_combo.currentData() or "zh"
+        if lang == "yue" and getattr(self, "_alignment_engine", "hfa") == "hfa":
+            zh_idx = self.lang_combo.findData("zh")
+            if zh_idx >= 0 and self.lang_combo.currentIndex() != zh_idx:
+                self.lang_combo.setCurrentIndex(zh_idx)
+                return
+        self._fill_lyric_output_options(lang, self.lyric_output_combo.currentData())
 
     def values(self) -> dict:
         """Return the edited values as a plain dict keyed by config field names."""

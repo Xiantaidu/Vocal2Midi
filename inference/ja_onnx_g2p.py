@@ -18,7 +18,8 @@ from types import ModuleType
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_MODEL_DIR = PROJECT_ROOT / "models" / "ja_g2p_onnx"
+DEFAULT_MODEL_DIR = PROJECT_ROOT / "models" / "kashi-g2p-onnx"
+LEGACY_MODEL_DIR = PROJECT_ROOT / "models" / "ja_g2p_onnx"
 
 _lock = threading.Lock()
 _runtime = None
@@ -26,14 +27,20 @@ _runtime_module: ModuleType | None = None
 _runtime_dir: Path | None = None
 
 
-def _load_runtime_module(model_dir: Path) -> ModuleType:
-    script = model_dir / "g2p_onnx_runtime.py"
-    spec = importlib.util.spec_from_file_location("ja_g2p_onnx_runtime", script)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot load runtime from {script}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def _load_runtime_module(model_dir: Path | None = None) -> ModuleType:
+    try:
+        import inference.kashi_g2p_ja.g2p_onnx_runtime as module
+        return module
+    except ImportError:
+        if model_dir:
+            script = model_dir / "g2p_onnx_runtime.py"
+            if script.is_file():
+                spec = importlib.util.spec_from_file_location("ja_g2p_onnx_runtime", script)
+                if spec is not None and spec.loader is not None:
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    return module
+        raise ImportError("Cannot load g2p_onnx_runtime from inference.kashi_g2p_ja")
 
 
 def get_ja_onnx_runtime_module(model_dir: str | Path | None = None) -> ModuleType | None:
@@ -55,19 +62,26 @@ def get_ja_onnx_runtime(model_dir: str | Path | None = None):
     are logged once and the caller falls back to its legacy G2P path.
     """
     global _runtime, _runtime_module, _runtime_dir
-    resolved = Path(model_dir) if model_dir else DEFAULT_MODEL_DIR
+    if model_dir:
+        resolved = Path(model_dir)
+    elif DEFAULT_MODEL_DIR.exists():
+        resolved = DEFAULT_MODEL_DIR
+    elif LEGACY_MODEL_DIR.exists():
+        resolved = LEGACY_MODEL_DIR
+    else:
+        resolved = DEFAULT_MODEL_DIR
     if _runtime is not None and _runtime_dir == resolved:
         return _runtime
     with _lock:
         if _runtime is not None and _runtime_dir == resolved:
             return _runtime
-        if not (resolved / "g2p_onnx_runtime.py").is_file():
+        if not (resolved / "model.onnx").is_file():
             return None
         try:
             module = _load_runtime_module(resolved)
-            runtime = module.G2POnnxRuntime(prefer_dml=True)
+            runtime = module.G2POnnxRuntime(model_dir=resolved, prefer_dml=True)
         except Exception as e:
-            logger.warning(f"ja_g2p_onnx runtime unavailable ({e}); using legacy Japanese G2P")
+            logger.warning(f"kashi-g2p-onnx runtime unavailable ({e}); using legacy Japanese G2P")
             return None
         logger.info(f"[JaG2P-ONNX] loaded from {resolved} ({runtime.provider_name})")
         _runtime = runtime

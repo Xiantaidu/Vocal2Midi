@@ -25,6 +25,7 @@ def _base_kwargs(tmp_path: Path) -> dict:
         "output_filename": "Song.WAV",
         "game_model_dir": "game",
         "device": "cpu",
+        "alignment_engine": "hfa",
         "hfa_model_dir": "hfa",
         "asr_model_path": "asr",
         "ts": [0.0],
@@ -451,8 +452,38 @@ def test_tifa_chunks_switch_exports_wav_and_textgrid(monkeypatch, tmp_path):
     assert (tmp_path / "out" / "Song_000.wav").is_file()
 
 
-def test_default_alignment_engine_uses_hfa(monkeypatch, tmp_path):
-    """The default alignment_engine must keep the HubertFA path intact."""
+def test_default_alignment_engine_uses_tifa(monkeypatch, tmp_path):
+    """The default alignment_engine must use the TiFA path."""
+    _patch_common(monkeypatch)
+    monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
+    monkeypatch.setattr(lyric_alignment, "run_qwen_asr_and_fa", lambda *a, **k: ({"chunk_0": ["a"]}, ["log"]))
+    run_tifa = MagicMock(return_value=({"chunk_0": (None, 1.0, [MagicMock()])}, {}))
+    monkeypatch.setattr(lyric_alignment, "run_tifa_fa", run_tifa)
+    load_tifa = MagicMock(return_value=MagicMock())
+    monkeypatch.setattr(lyric_alignment, "load_tifa_model", load_tifa)
+    load_hfa = MagicMock()
+    monkeypatch.setattr(lyric_alignment, "load_hfa_model", load_hfa)
+    monkeypatch.setattr(
+        pipeline,
+        "extract_pitches_and_align",
+        lambda *args, **kwargs: ([NoteInfo(0.0, 0.5, 60.0, "a")], {0}),
+    )
+
+    kwargs = _base_kwargs(tmp_path)
+    kwargs.pop("alignment_engine", None)
+    kwargs["language"] = "zh"
+    kwargs["lyric_output_mode"] = "hanzi"
+    kwargs["tifa_model_path"] = "models/tifa-1.0-onnx"
+
+    pipeline.auto_lyric_hybrid_pipeline(**kwargs)
+
+    load_hfa.assert_not_called()
+    load_tifa.assert_called_once()
+    run_tifa.assert_called_once()
+
+
+def test_explicit_alignment_engine_hfa_uses_hfa(monkeypatch, tmp_path):
+    """Explicit alignment_engine='hfa' must keep the HubertFA path intact."""
     _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
     monkeypatch.setattr(lyric_alignment, "run_qwen_asr_and_fa", lambda *a, **k: ({"chunk_0": ["a"]}, ["log"]))
@@ -471,8 +502,42 @@ def test_default_alignment_engine_uses_hfa(monkeypatch, tmp_path):
     kwargs = _base_kwargs(tmp_path)
     kwargs["language"] = "zh"
     kwargs["lyric_output_mode"] = "hanzi"
+    kwargs["alignment_engine"] = "hfa"
 
     pipeline.auto_lyric_hybrid_pipeline(**kwargs)
 
     run_tifa.assert_not_called()
     load_hfa.assert_called_once()
+
+
+def test_cantonese_automatically_routes_to_tifa(monkeypatch, tmp_path):
+    """Cantonese language='yue' must route to TiFA even when alignment_engine is 'hfa'."""
+    _patch_common(monkeypatch)
+    monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
+    run_qwen = MagicMock(return_value=({"chunk_0": ["海"]}, ["log"]))
+    monkeypatch.setattr(lyric_alignment, "run_qwen_asr_and_fa", run_qwen)
+    run_tifa = MagicMock(return_value=({"chunk_0": (None, 1.0, [MagicMock()])}, {}))
+    monkeypatch.setattr(lyric_alignment, "run_tifa_fa", run_tifa)
+    load_tifa = MagicMock(return_value=MagicMock())
+    monkeypatch.setattr(lyric_alignment, "load_tifa_model", load_tifa)
+    load_hfa = MagicMock()
+    monkeypatch.setattr(lyric_alignment, "load_hfa_model", load_hfa)
+    monkeypatch.setattr(
+        pipeline,
+        "extract_pitches_and_align",
+        lambda *args, **kwargs: ([NoteInfo(0.0, 0.5, 60.0, "海")], {0}),
+    )
+
+    kwargs = _base_kwargs(tmp_path)
+    kwargs["language"] = "yue"
+    kwargs["lyric_output_mode"] = "hanzi"
+    kwargs["alignment_engine"] = "hfa"
+    kwargs["tifa_model_path"] = "models/tifa-1.0-onnx"
+
+    pipeline.auto_lyric_hybrid_pipeline(**kwargs)
+
+    load_hfa.assert_not_called()
+    load_tifa.assert_called_once()
+    run_tifa.assert_called_once()
+    assert run_tifa.call_args.kwargs["language"] == "yue"
+    assert run_qwen.call_args.kwargs["language"] == "yue"

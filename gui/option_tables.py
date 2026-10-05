@@ -15,6 +15,7 @@ TARGET_LANGUAGE_CHOICES = [
     ("zh", "lang_name_zh"),
     ("ja", "lang_name_ja"),
     ("en", "lang_name_en"),
+    ("yue", "lang_name_yue"),
 ]
 SLICE_METHOD_CHOICES = [
     # Canonical slicer_api values (its normalize_slicing_method also accepts
@@ -45,8 +46,9 @@ LYRIC_OUTPUT_BY_LANGUAGE = {
     "zh": [("pinyin", "opt_pinyin"), ("hanzi", "opt_hanzi")],
     "ja": [("romaji", "opt_romaji"), ("kana", "opt_kana")],
     "en": [("word", "opt_word")],
+    "yue": [("jyutping", "opt_jyutping"), ("hanzi", "opt_hanzi")],
 }
-DEFAULT_LYRIC_OUTPUT = {"zh": "hanzi", "ja": "romaji", "en": "word"}
+DEFAULT_LYRIC_OUTPUT = {"zh": "hanzi", "ja": "romaji", "en": "word", "yue": "hanzi"}
 
 
 def fill_combo(combo: ComboBox, choices: list[tuple], keep_value: bool = False) -> None:

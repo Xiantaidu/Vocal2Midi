@@ -24,10 +24,12 @@ def clean_batch_mode_setting():
     ui.settings.remove("enable_batch_mode")
     ui.settings.remove("quantization_mode")
     ui.settings.remove("quantization_step")
+    ui.settings.remove("alignment_engine")
     yield
     ui.settings.remove("enable_batch_mode")
     ui.settings.remove("quantization_mode")
     ui.settings.remove("quantization_step")
+    ui.settings.remove("alignment_engine")
 
 
 def test_log_terminal_accumulates_and_clears(qapp):
@@ -272,5 +274,95 @@ def test_quantization_settings_persisted(qapp):
     view2 = AutoLyricInterface(settings_ui, model_cfg)
     assert view2.quantize_mode_combo.currentData() == "simple"
     assert view2.quantize_combo.currentData() == 480
+
+
+def test_gui_version(qapp):
+    from gui import __version__
+    from gui.fluent_main import MainWindow
+
+    assert __version__ == "2.0.0"
+    window = MainWindow()
+    assert "2.0.0" in window.windowTitle()
+    assert window.windowTitle() == f"Vocal2Midi v{__version__}"
+
+
+def test_model_config_engine_choices_and_kashi_g2p(qapp):
+    from gui.global_settings_view import GlobalSettingsInterface
+    from gui.model_config_view import ModelConfigInterface
+
+    settings_ui = GlobalSettingsInterface()
+    cfg = ModelConfigInterface(settings_ui.settings, settings_ui.project_root)
+
+    # Verify all 4 engines exist
+    assert hasattr(cfg, "chinese_asr_engine_combo")
+    assert hasattr(cfg, "japanese_asr_engine_combo")
+    assert hasattr(cfg, "alignment_engine_combo")
+    assert hasattr(cfg, "japanese_g2p_engine_combo")
+    assert hasattr(cfg, "kashi_g2p_model_edit")
+
+    # Default value for japanese_g2p_engine
+    assert cfg.japanese_g2p_engine() in ("kashi-g2p-onnx", "pyopenjtalk")
+    assert cfg.model_path("kashi_g2p_model") == "models/kashi-g2p-onnx"
+
+    # Switching Japanese G2P engine
+    idx_py = cfg.japanese_g2p_engine_combo.findData("pyopenjtalk")
+    assert idx_py >= 0
+    cfg.japanese_g2p_engine_combo.setCurrentIndex(idx_py)
+    assert cfg.japanese_g2p_engine() == "pyopenjtalk"
+    assert settings_ui.settings.value("japanese_g2p_engine") == "pyopenjtalk"
+
+
+def test_hfa_disables_cantonese_in_gui(qapp):
+    from gui.auto_lyric_view import AutoLyricInterface
+    from gui.file_settings_dialog import FileSettingsDialog
+    from gui.global_settings_view import GlobalSettingsInterface
+    from gui.model_config_view import ModelConfigInterface
+
+    settings_ui = GlobalSettingsInterface()
+    cfg = ModelConfigInterface(settings_ui.settings, settings_ui.project_root)
+
+    # 1. Default alignment engine is tifa: Cantonese ('yue') is enabled by default
+    assert cfg.alignment_engine() == "tifa"
+
+    view = AutoLyricInterface(settings_ui, cfg)
+    yue_idx = view.lang_combo.findData("yue")
+    assert yue_idx >= 0
+    assert view.lang_combo.items[yue_idx].isEnabled
+    assert view.lang_combo.itemText(yue_idx) == "yue"
+
+    # 2. Switch aligner to hfa: Cantonese ('yue') becomes disabled
+    idx_hfa = cfg.alignment_engine_combo.findData("hfa")
+    assert idx_hfa >= 0
+    cfg.alignment_engine_combo.setCurrentIndex(idx_hfa)
+    assert cfg.alignment_engine() == "hfa"
+    assert not view.lang_combo.items[yue_idx].isEnabled
+    assert "(需 TiFA)" in view.lang_combo.itemText(yue_idx) or "(requires TiFA)" in view.lang_combo.itemText(yue_idx)
+
+    # If yue is somehow attempted to be selected when hfa is active, it snaps back to zh
+    view.lang_combo.setCurrentIndex(yue_idx)
+    assert view.lang_combo.currentData() == "zh"
+
+    # 3. Switch back to tifa: Cantonese ('yue') becomes enabled again
+    idx_tifa = cfg.alignment_engine_combo.findData("tifa")
+    assert idx_tifa >= 0
+    cfg.alignment_engine_combo.setCurrentIndex(idx_tifa)
+    assert cfg.alignment_engine() == "tifa"
+    assert view.lang_combo.items[yue_idx].isEnabled
+    assert view.lang_combo.itemText(yue_idx) == "yue"
+
+    # Can now select yue
+    view.lang_combo.setCurrentIndex(yue_idx)
+    assert view.lang_combo.currentData() == "yue"
+
+    # 4. In FileSettingsDialog, hfa base value disables yue
+    base_hfa = dict(view._current_base_values())
+    base_hfa["alignment_engine"] = "hfa"
+    base_hfa["language"] = "yue"
+    dlg_hfa = FileSettingsDialog("test.wav", base_hfa, parent=view)
+    dlg_yue_idx = dlg_hfa.lang_combo.findData("yue")
+    assert not dlg_hfa.lang_combo.items[dlg_yue_idx].isEnabled
+    assert dlg_hfa.lang_combo.currentData() == "zh"
+
+
 
 

@@ -1,6 +1,7 @@
 from inference.LyricFA.tools.ZhG2p import ZhG2p
 from inference.LyricFA.tools.JaG2p import JaG2p, KATA_TO_ROMAJI
 from inference.LyricFA.tools.lyric_matcher import LyricMatcher
+from inference.t2s_utils import traditional_to_simplified
 
 import re
 import logging
@@ -158,8 +159,9 @@ def _normalize_lyric_output_mode(language, lyric_output_mode):
         "zh-pinyin": {"pinyin"},
         "ja": {"romaji", "kana"},
         "en": {"word"},
+        "yue": {"jyutping", "hanzi"},
     }
-    defaults = {"zh": "hanzi", "zh-pinyin": "pinyin", "ja": "romaji", "en": "word"}
+    defaults = {"zh": "hanzi", "zh-pinyin": "pinyin", "ja": "romaji", "en": "word", "yue": "hanzi"}
     return mode if mode in valid_modes.get(language, set()) else defaults.get(language, "hanzi")
 
 
@@ -171,6 +173,10 @@ def _build_display_tokens(text, language, lyric_output_mode, g2p_model):
         if mode == "kana" and hasattr(g2p_model, "split_kana_no_regex"):
             return g2p_model.split_kana_no_regex(text)
         return g2p_model.convert(text, include_tone=False, convert_number=True).split()
+    if language == "yue":
+        if mode == "jyutping":
+            return g2p_model.convert(text, include_tone=False, convert_number=True).split()
+        return g2p_model.split_string_no_regex(text)
 
     if mode == "pinyin":
         return g2p_model.convert(text, include_tone=False, convert_number=True).split()
@@ -183,6 +189,7 @@ def _select_matched_display_tokens(language, lyric_output_mode, matched_text, ma
         (language == "zh" and mode == "pinyin")
         or (language == "zh-pinyin")
         or (language == "ja" and mode == "romaji")
+        or (language == "yue" and mode == "jyutping")
         or language == "en"
     )
     source = matched_phonetic if phonetic_mode else matched_text
@@ -191,7 +198,13 @@ def _select_matched_display_tokens(language, lyric_output_mode, matched_text, ma
 
 def _join_display_tokens(language, lyric_output_mode, tokens):
     mode = _normalize_lyric_output_mode(language, lyric_output_mode)
-    if (language == "zh" and mode == "pinyin") or language == "zh-pinyin" or (language == "ja" and mode == "romaji") or language == "en":
+    if (
+        (language == "zh" and mode == "pinyin")
+        or language == "zh-pinyin"
+        or (language == "ja" and mode == "romaji")
+        or (language == "yue" and mode == "jyutping")
+        or language == "en"
+    ):
         return " ".join(tokens)
     return "".join(tokens)
 
@@ -201,20 +214,33 @@ def get_zh_g2p():
         _zh_g2p = ZhG2p("mandarin")
     return _zh_g2p
 
-def get_ja_g2p():
+_yue_g2p = None
+
+def get_yue_g2p():
+    global _yue_g2p
+    if _yue_g2p is None:
+        _yue_g2p = ZhG2p("cantonese")
+    return _yue_g2p
+
+def get_ja_g2p(engine: str = "kashi-g2p-onnx", model_dir=None):
     global _ja_g2p
-    if _ja_g2p is None:
-        _ja_g2p = JaG2p()
+    norm_engine = str(engine or "kashi-g2p-onnx").strip().lower()
+    if (
+        _ja_g2p is None
+        or getattr(_ja_g2p, "engine", None) != norm_engine
+        or getattr(_ja_g2p, "model_dir", None) != model_dir
+    ):
+        _ja_g2p = JaG2p(engine=norm_engine, model_dir=model_dir)
     return _ja_g2p
 
-def create_lyric_matcher(language, original_lyrics):
+def create_lyric_matcher(language, original_lyrics, **kwargs):
     """
     Creates and initializes a LyricMatcher if original_lyrics is provided.
     """
     matcher = None
     if original_lyrics and original_lyrics.strip():
-        matcher_lang = language if language in ["zh", "en", "ja"] else "zh"
-        matcher = LyricMatcher(matcher_lang)
+        matcher_lang = language if language in ["zh", "en", "ja", "yue"] else "zh"
+        matcher = LyricMatcher(matcher_lang, **kwargs)
         lyric_data = matcher.process_lyric_text(original_lyrics)
         matcher.lyric_text_list = lyric_data.text_list
         matcher.lyric_phonetic_list = lyric_data.phonetic_list
@@ -229,6 +255,8 @@ def process_asr_to_phonemes(
     lyric_output_mode=None,
     use_asr_phonemes=False,
     write_asr_phoneme_lab=False,
+    japanese_g2p_engine="kashi-g2p-onnx",
+    kashi_g2p_model_path="",
 ):
     """
     Processes batched ASR text, aligns with original lyrics if available, 
@@ -238,7 +266,9 @@ def process_asr_to_phonemes(
     # unnecessary here; the .lab content is the lowercased word sequence itself.
     g2p_model = None
     if language == "ja":
-        g2p_model = get_ja_g2p()
+        g2p_model = get_ja_g2p(engine=japanese_g2p_engine, model_dir=kashi_g2p_model_path)
+    elif language == "yue":
+        g2p_model = get_yue_g2p()
     elif language != "en":
         g2p_model = get_zh_g2p()
 
@@ -272,6 +302,8 @@ def process_asr_to_phonemes(
         match_reason = ""
         
         raw_text = _extract_text(res)
+        if language == "yue":
+            raw_text = traditional_to_simplified(raw_text)
         text = raw_text
         direct_phoneme_tokens = []
         if use_asr_phonemes and isinstance(res, dict):

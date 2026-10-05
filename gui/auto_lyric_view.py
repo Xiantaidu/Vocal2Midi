@@ -129,9 +129,9 @@ class AutoLyricInterface(ScrollArea):
         self._add_flow_pair(combo_row1, "slicing_method", self.slicing_combo)
         combo_row1.addSpacing(28)
         self.lang_combo = ComboBox(self)
-        fill_combo(self.lang_combo, TARGET_LANGUAGE_CHOICES)
-        self._bind_tr(lambda: fill_combo(self.lang_combo, TARGET_LANGUAGE_CHOICES, keep_value=True))
-        self.lang_combo.currentIndexChanged.connect(self.update_lyric_output_options)
+        self._refresh_lang_combo(keep_value=False)
+        self._bind_tr(lambda: self._refresh_lang_combo(keep_value=True))
+        self.lang_combo.currentIndexChanged.connect(self._on_language_changed)
         self._add_flow_pair(combo_row1, "target_lang", self.lang_combo)
         combo_row1.addSpacing(28)
         self.lyric_output_label = BodyLabel(self)
@@ -264,6 +264,10 @@ class AutoLyricInterface(ScrollArea):
         self.model_config.chinese_asr_engine_changed.connect(
             lambda _value: self.update_lyric_output_options()
         )
+        # Switching the alignment engine enables/disables Cantonese ('yue') which HFA does not support.
+        self.model_config.alignment_engine_changed.connect(
+            lambda _value: self.update_language_availability()
+        )
         self._last_device = self.device_combo.currentText()  # baseline; don't wipe saved batches on startup
         self.on_export_format_changed()
         self._update_batch_mode()  # all widgets exist now
@@ -356,6 +360,42 @@ class AutoLyricInterface(ScrollArea):
 
     def _japanese_asr_engine(self) -> str:
         return self.model_config.japanese_asr_engine()
+
+    def _japanese_g2p_engine(self) -> str:
+        return self.model_config.japanese_g2p_engine()
+
+    def _alignment_engine(self) -> str:
+        return self.model_config.alignment_engine()
+
+    def _refresh_lang_combo(self, keep_value: bool = False):
+        fill_combo(self.lang_combo, TARGET_LANGUAGE_CHOICES, keep_value=keep_value)
+        self.update_language_availability()
+
+    def update_language_availability(self):
+        """Update language combo options based on alignment engine compatibility.
+
+        HubertFA (HFA) does not support Cantonese ('yue'). When HFA is active,
+        'yue' is disabled in the dropdown. If 'yue' was currently selected,
+        it automatically falls back to 'zh'.
+        """
+        is_hfa = self._alignment_engine() == "hfa"
+        yue_idx = self.lang_combo.findData("yue")
+        if yue_idx >= 0:
+            self.lang_combo.setItemEnabled(yue_idx, not is_hfa)
+            label = tr("lang_name_yue_disabled") if is_hfa else tr("lang_name_yue")
+            self.lang_combo.setItemText(yue_idx, label)
+        if is_hfa and self._selected_language() == "yue":
+            zh_idx = self.lang_combo.findData("zh")
+            self.lang_combo.setCurrentIndex(max(0, zh_idx))
+            self.update_lyric_output_options()
+
+    def _on_language_changed(self, *_args):
+        if self._selected_language() == "yue" and self._alignment_engine() == "hfa":
+            zh_idx = self.lang_combo.findData("zh")
+            if zh_idx >= 0 and self.lang_combo.currentIndex() != zh_idx:
+                self.lang_combo.setCurrentIndex(zh_idx)
+                return
+        self.update_lyric_output_options()
 
     def _pinyin_output_locked(self) -> bool:
         """PinyinASR can only emit pinyin, so hanzi output is unavailable."""
@@ -533,6 +573,7 @@ class AutoLyricInterface(ScrollArea):
             "chinese_asr_engine": self._chinese_asr_engine(),
             "japanese_asr_engine": self._japanese_asr_engine(),
             "alignment_engine": self.model_config.alignment_engine(),
+            "japanese_g2p_engine": self._japanese_g2p_engine(),
             "devices": VISIBLE_RUNTIME_DEVICE_CHOICES,
             "slice_min_sec": self.global_settings.slice_min_sec(),
             "slice_max_sec": self.global_settings.slice_max_sec(),
@@ -609,6 +650,8 @@ class AutoLyricInterface(ScrollArea):
             chinese_asr_engine=values.get("chinese_asr_engine", "qwen"),
             japanese_asr_engine=values.get("japanese_asr_engine", "romaji"),
             alignment_engine=values.get("alignment_engine", "hfa"),
+            japanese_g2p_engine=values.get("japanese_g2p_engine", "kashi-g2p-onnx"),
+            kashi_g2p_model_path=self.model_config.model_path("kashi_g2p_model"),
             tifa_model_path=self.model_config.model_path("tifa_model"),
         )
 
