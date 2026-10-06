@@ -348,10 +348,13 @@ def _run_lyric_alignment(
                     _check_cancel()
                     logger.info("------------------------------------------\n")
 
+                    # fa_language, not language: the G2P chain filters its
+                    # converters by this tag, and 'zh-pinyin' matches none of
+                    # the zh converters (every chunk would fall to passthrough).
                     pred_dict, tifa_display = run_tifa_fa(
                         tifa_model,
                         temp_dir_path,
-                        language=ctx.language,
+                        language=ctx.fa_language,
                         cancel_checker=cancel_checker,
                         japanese_g2p_engine=japanese_g2p_engine,
                         kashi_g2p_model_dir=kashi_g2p_model_path,

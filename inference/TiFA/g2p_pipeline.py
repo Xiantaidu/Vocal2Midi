@@ -97,9 +97,12 @@ def build_g2p_pipeline(
 
     zh_dictionary = get_converter("dictionary")(dict_path=str(dictionaries / "ds-zh-pinyin-lite.txt"))
     zh_dictionary.language = ("zh",)
+    # Direct pinyin ASR mishearings ("yiang" for yang) are not valid
+    # dictionary keys; the lax fallback folds them to standard syllables.
+    lax_pinyin = get_converter("pinyin-lax")(dict_path=str(dictionaries / "ds-zh-pinyin-lite.txt"))
     ja_dictionary = get_converter("dictionary")(dict_path=str(dictionaries / "japanese_dict_full.txt"))
     ja_dictionary.language = ("ja",)
-    converters.extend([zh_dictionary, ja_dictionary])
+    converters.extend([zh_dictionary, lax_pinyin, ja_dictionary])
     if jyutping_dict_path.is_file():
         yue_dictionary = get_converter("dictionary")(dict_path=str(jyutping_dict_path))
         yue_dictionary.language = ("yue",)

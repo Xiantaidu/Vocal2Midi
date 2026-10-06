@@ -418,6 +418,35 @@ def test_tifa_engine_routes_to_tifa_fa(monkeypatch, tmp_path):
     export_tg.assert_not_called()
 
 
+def test_pinyin_asr_mode_passes_base_language_to_tifa(monkeypatch, tmp_path):
+    """Pinyin ASR runs under language 'zh-pinyin'; the G2P chain only knows
+    the base languages, so TiFA must receive 'zh' (otherwise every zh
+    converter is filtered out and each chunk falls to pitch-only)."""
+    _patch_common(monkeypatch)
+    monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        lyric_alignment, "run_pinyin_asr", lambda *a, **k: ({"chunk_0": ["a"]}, ["log"]))
+    run_tifa = MagicMock(return_value=({"chunk_0": (None, 1.0, [MagicMock()])}, {}))
+    monkeypatch.setattr(lyric_alignment, "run_tifa_fa", run_tifa)
+    monkeypatch.setattr(lyric_alignment, "load_tifa_model", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(
+        pipeline,
+        "extract_pitches_and_align",
+        lambda *args, **kwargs: ([NoteInfo(0.0, 0.5, 60.0, "a")], {0}),
+    )
+
+    kwargs = _base_kwargs(tmp_path)
+    kwargs["language"] = "zh-pinyin"
+    kwargs["lyric_output_mode"] = "pinyin"
+    kwargs["alignment_engine"] = "tifa"
+    kwargs["tifa_model_path"] = "models/tifa-1.0-onnx"
+
+    pipeline.auto_lyric_hybrid_pipeline(**kwargs)
+
+    run_tifa.assert_called_once()
+    assert run_tifa.call_args.kwargs["language"] == "zh"
+
+
 def test_tifa_chunks_switch_exports_wav_and_textgrid(monkeypatch, tmp_path):
     """The chunks switch must yield per-chunk WAV + TextGrid pairs on the
     TiFA path, mirroring export_hfa_artifacts' contract."""

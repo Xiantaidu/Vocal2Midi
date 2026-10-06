@@ -57,6 +57,42 @@ def test_pinyin_tokens_encode(pipeline, vocabulary):
     assert texts == ["ni", "hao"]
 
 
+def test_pinyin_asr_mishearings_encode(pipeline, vocabulary):
+    """Direct pinyin ASR emits toneless mishearings; non-standard glide
+    spellings must fold to standard syllables instead of failing the chunk."""
+    data, lexicon, texts = _encode(
+        pipeline, vocabulary, "xiang si wo yiang yiu", "zh")
+    assert data["paths"].any()
+    assert texts == ["xiang", "si", "wo", "yiang", "yiu"]
+
+
+def test_pinyin_lax_folds_explicit_glides():
+    from inference.TiFA.g2p.converters.chinese import _fold_explicit_glide
+
+    assert _fold_explicit_glide("yiang") == "yang"
+    assert _fold_explicit_glide("yiu") == "you"
+    assert _fold_explicit_glide("wuang") == "wang"
+    assert _fold_explicit_glide("wuo") == "wo"
+    assert _fold_explicit_glide("yang") == "yang"
+    assert _fold_explicit_glide("ying") == "ying"
+    assert _fold_explicit_glide("wu") == "wu"
+    assert _fold_explicit_glide("xiang") == "xiang"
+    assert _fold_explicit_glide("hello") == "hello"
+
+
+def test_pinyin_lax_converter_claims_only_pronounceable_tokens():
+    from inference.TiFA.g2p.converters.chinese import PinyinLaxConverter
+
+    converter = PinyinLaxConverter(
+        dict_path=str(MODEL_DIR / "dictionaries" / "ds-zh-pinyin-lite.txt"))
+    assert converter.find("yiu") == (0, 3)
+    assert converter.find("xiang3") == (0, 6)
+    assert converter.find("xyz") is None
+    words = converter.convert("yiang3")
+    assert words[0].text == "yiang3"
+    assert words[0].readings[0].paths[0][0].phonemes == ["y", "iang"]
+
+
 def test_romaji_mora_tokens_encode(pipeline, vocabulary):
     data, lexicon, texts = _encode(pipeline, vocabulary, "a i shi te ru", "ja")
     assert data["paths"].any(), "romaji mora tokens must encode into the ja vocabulary"

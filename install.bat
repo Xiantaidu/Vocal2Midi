@@ -54,6 +54,27 @@ if not exist "%PYTHON_DIR%\python.exe" (
     echo [INFO] Portable Python already exists, skipping download.
 )
 
+rem The embeddable runtime ships no include/libs, so building C extensions (pyopenjtalk) needs them from the full distribution.
+if not exist "%PYTHON_DIR%\include\Python.h" (
+    echo [INFO] Adding Python dev headers for building C extensions...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+      "try { Invoke-WebRequest -UseBasicParsing -Uri 'https://registry.npmmirror.com/-/binary/python/%PYTHON_VERSION%/python-%PYTHON_VERSION%-amd64.zip' -OutFile '%TEMP%\v2m-python-full.zip' } catch { exit 1 }"
+    if errorlevel 1 (
+        echo [WARN] Mirror download failed, retrying from python.org...
+        powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+          "Invoke-WebRequest -UseBasicParsing -Uri 'https://www.python.org/ftp/python/%PYTHON_VERSION%/python-%PYTHON_VERSION%-amd64.zip' -OutFile '%TEMP%\v2m-python-full.zip'"
+        if errorlevel 1 (
+            echo [WARN] Failed to download full Python zip, C extensions may not be buildable.
+        )
+    )
+    if exist "%TEMP%\v2m-python-full.zip" (
+        powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+          "Expand-Archive -Path '%TEMP%\v2m-python-full.zip' -DestinationPath '%TEMP%\v2m-python-full' -Force; Copy-Item -Path '%TEMP%\v2m-python-full\include' -Destination '%PYTHON_DIR%' -Recurse -Force; Copy-Item -Path '%TEMP%\v2m-python-full\libs' -Destination '%PYTHON_DIR%' -Recurse -Force"
+        del /f /q "%TEMP%\v2m-python-full.zip" >nul 2>nul
+        rmdir /s /q "%TEMP%\v2m-python-full" >nul 2>nul
+    )
+)
+
 if exist "%PYTHON_PTH%" (
     echo [INFO] Enabling site-packages support...
     powershell -NoProfile -ExecutionPolicy Bypass -Command ^
@@ -117,6 +138,13 @@ if errorlevel 1 (
 del /f /q "%CORE_REQUIREMENTS%" >nul 2>nul
 
 echo [INFO] Installing optional Japanese G2P dependency: pyopenjtalk...
+set "PATH=%PYTHON_DIR%\Scripts;%PATH%"
+set "CMAKE_POLICY_VERSION_MINIMUM=3.5"
+"%PYTHON_DIR%\python.exe" -m pip install cmake cython --index-url %PIP_INDEX%
+if errorlevel 1 (
+    echo [WARN] Failed to install build tools cmake/cython, pyopenjtalk will be skipped.
+    echo [WARN] The GUI can still run, but Japanese G2P features may be unavailable.
+)
 "%PYTHON_DIR%\python.exe" -m pip install pyopenjtalk --no-build-isolation --index-url %PIP_INDEX%
 if errorlevel 1 (
     echo [WARN] pyopenjtalk installation failed.
