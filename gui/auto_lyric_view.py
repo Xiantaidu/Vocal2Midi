@@ -760,7 +760,9 @@ class AutoLyricInterface(ScrollArea):
         try:
             save_dir_path = self.save_dir_edit.text()
             if os.path.exists(save_dir_path):
-                os.startfile(save_dir_path)
+                from PySide6.QtGui import QDesktopServices
+                from PySide6.QtCore import QUrl
+                QDesktopServices.openUrl(QUrl.fromLocalFile(save_dir_path))
         except Exception as e:
             self.log_msg(f"Cannot open output folder: {e}")
 
