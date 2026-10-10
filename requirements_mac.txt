@@ -1,0 +1,29 @@
+# macOS runtime dependencies for Vocal2Midi.
+#
+# Differences from requirements.txt:
+#   - PySide6 is pinned to 6.8.3, the version validated on macOS.
+#     PySide6-Essentials and PySide6-Addons must match it exactly.
+#   - ONNX Runtime uses the plain CPU build; onnxruntime-directml is
+#     Windows-only (DirectML does not exist on macOS).
+#
+# Runtime note:
+#   - llama.cpp runs on CPU or Metal depending on how it was built.
+#   - The ONNX stages use the CPU execution provider on macOS.
+
+click
+librosa
+mido
+numpy<2.0.0
+PySide6==6.8.3
+PySide6-Addons==6.8.3
+PySide6-Essentials==6.8.3
+PySide6-Fluent-Widgets
+PyYAML
+scipy>=1.10.0
+onnxruntime
+tokenizers
+soundfile
+textgrid
+tqdm
+pyopenjtalk
+opencc-python-reimplemented

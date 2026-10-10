@@ -6,7 +6,7 @@
   <a href="https://github.com/Xiantaidu/Vocal2Midi"><img src="https://img.shields.io/badge/version-v2.0.0-blue.svg?style=flat-square" alt="Version"></a> <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-3776AB.svg?style=flat-square&logo=python&logoColor=white" alt="Python"></a> <a href="#runtime-device-rules"><img src="https://img.shields.io/badge/platform-Windows-0078D6.svg?style=flat-square" alt="Platform"></a> <a href="#runtime-device-rules"><img src="https://img.shields.io/badge/acceleration-dml%20%7C%20cpu-success.svg?style=flat-square" alt="Acceleration"></a> <a href="#gui-workflow"><img src="https://img.shields.io/badge/UI-PySide6%20%7C%20Fluent%20Design-005FB8.svg?style=flat-square&logo=qt&logoColor=white" alt="UI"></a> <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-yellow.svg?style=flat-square" alt="License"></a>
 </p>
 
-Vocal2Midi is a desktop tool and inference pipeline for turning vocal audio into lyric-aligned MIDI, USTX, VSQX, and editing artifacts. Windows uses the Fluent shell; macOS uses a native Qt shell with the same workflow.
+Vocal2Midi is a desktop tool and inference pipeline for turning vocal audio into lyric-aligned MIDI, USTX, VSQX, and editing artifacts, driven by a Fluent GUI shell on Windows.
 
 The current runtime is **ONNX-first**:
 
@@ -26,15 +26,6 @@ The current runtime is **ONNX-first**:
 - Headless batch CLI [`auto_lyric_cli.py`](scripts/auto_lyric_cli.py) and folder slicing CLI [`slice_asr_cli.py`](scripts/slice_asr_cli.py)
 - Portable-folder packaging flow for Windows distribution
 - ONNX-based inference stack for ASR, alignment, note extraction, and RMVPE
-
-### macOS application
-
-macOS uses a native Qt window shell while reusing the same model settings,
-batch workflow, and export pipeline. The repository does not include models,
-Python virtual environments, or a signed application bundle. Developers can
-launch the source with `run_mac.command`, or build a local `.app` shell with
-`scripts/build_macos_app.py`; model paths are configured in the model settings
-page.
 
 ## What Vocal2Midi Does
 
@@ -136,27 +127,12 @@ For a normal developer environment:
 python app_fluent.py
 ```
 
-On macOS, use Python 3.10–3.12 and launch the native Qt window with:
+### macOS
 
-```bash
-/opt/homebrew/bin/python3.12 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-open run_mac.command
-```
-
-To create a native application shell from the checkout:
-
-```bash
-.venv/bin/python scripts/build_macos_app.py --output dist/Vocal2Midi.app
-# add --install to copy it to /Applications
-```
-
-The macOS build uses the same workflow and pages as the Windows Fluent GUI,
-hosted in a native macOS window. It exposes CPU and Metal decoder choices;
-ONNX stages use the CPU provider on macOS, while llama.cpp can use Metal when
-the matching local backend library is present. The Windows-only `ffmpeg.exe`
-is not used on macOS; audio decoding uses `ffmpeg` from PATH (Homebrew's
-`brew install ffmpeg` is recommended).
+macOS deployment is **not** the same as Windows: the repository ships no
+macOS binaries, so the `llama.cpp` runtime and `ffmpeg` have to be built or
+installed locally, and the dependencies come from a separate requirements
+file. See [readme_macos.md](readme_macos.md) for the complete macOS guide.
 
 ## GUI Workflow
 
@@ -223,7 +199,6 @@ integration, providing lattice beam-search candidates for TiFA alignment.
 - HubertFA aligns through the DiffSinger CMU dict ds_cmudict-07b.txt shipped
   inside the HubertFA model folder; words missing from the dictionary are warned
   and skipped.
-- Breath detection for AP is enabled for English, mirroring the Chinese path.
 
 ### Cantonese
 
@@ -380,6 +355,7 @@ For architecture details, see [docs/architecture.md](docs/architecture.md).
 ## Related Files
 
 - Main GUI entrypoint: [`app_fluent.py`](app_fluent.py)
+- macOS guide: [readme_macos.md](readme_macos.md)
 - Architecture notes: [docs/architecture.md](docs/architecture.md)
 - Third-party credits: [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md)
 - License: [LICENSE](LICENSE)
