@@ -49,7 +49,14 @@ class RmvpeTranscriber:
 
         self.provider_name, providers = self._resolve_providers(self.requested_device)
         self.session = self._create_session(providers)
-        self.input_name = self.session.get_inputs()[0].name
+        input_names = {item.name for item in self.session.get_inputs()}
+        # OpenUtau ships a newer compact RMVPE graph that accepts the raw
+        # waveform and threshold directly and returns f0/uv.  The historical
+        # Vocal2Midi graph accepts a precomputed mel tensor and returns
+        # salience.  Keep both contracts supported so the bundled OpenUtau
+        # dependency can be reused on macOS.
+        self._direct_f0 = {"waveform", "threshold"}.issubset(input_names)
+        self.input_name = next(iter(input_names - {"threshold"})) if self._direct_f0 else self.session.get_inputs()[0].name
         self.fixed_batch_size = self._get_fixed_batch_size()
 
         self.window = get_window("hann", WINDOW_LENGTH, fftbins=True).astype(np.float32)
@@ -110,6 +117,9 @@ class RmvpeTranscriber:
             waveform = librosa.resample(waveform, orig_sr=sample_rate, target_sr=SAMPLE_RATE)
         waveform = np.clip(np.asarray(waveform, dtype=np.float32), -1.0, 1.0)
 
+        if self._direct_f0:
+            return self._infer_direct_f0(waveform)
+
         salience = self._inference_salience(waveform, cancel_checker=cancel_checker)
         f0_hz = self._salience_to_f0(salience, self.threshold)
         voiced_mask = f0_hz > 0
@@ -118,6 +128,28 @@ class RmvpeTranscriber:
             time_step_seconds=HOP_LENGTH / SAMPLE_RATE,
             midi_pitch=midi_pitch,
             voiced_mask=voiced_mask,
+        )
+
+    def _infer_direct_f0(self, audio: np.ndarray) -> RmvpeResult:
+        """Run the waveform-in/f0-out RMVPE graph used by OpenUtau."""
+        outputs = self.session.run(
+            None,
+            {
+                self.input_name: audio[np.newaxis, :].astype(np.float32, copy=False),
+                "threshold": np.asarray(self.threshold, dtype=np.float32),
+            },
+        )
+        if len(outputs) < 2:
+            raise RuntimeError("RMVPE direct graph must return f0 and uv outputs")
+        f0 = np.asarray(outputs[0], dtype=np.float32).reshape(-1)
+        uv = np.asarray(outputs[1], dtype=bool).reshape(-1)
+        if f0.size != uv.size:
+            raise RuntimeError(f"RMVPE direct graph returned mismatched f0/uv lengths: {f0.size}/{uv.size}")
+        f0 = np.where(uv, 0.0, f0).astype(np.float32, copy=False)
+        return RmvpeResult(
+            time_step_seconds=HOP_LENGTH / SAMPLE_RATE,
+            midi_pitch=self._f0_to_interpolated_midi(f0),
+            voiced_mask=~uv,
         )
 
     def _inference_salience(self, audio: np.ndarray, cancel_checker=None) -> np.ndarray:

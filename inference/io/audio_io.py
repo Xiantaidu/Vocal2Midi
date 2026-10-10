@@ -16,12 +16,14 @@ import os
 import pathlib
 import shutil
 import subprocess
+import sys
 import threading
 import time
 
 import numpy as np
 
-_FFMPEG_PATH = pathlib.Path(__file__).resolve().parents[2] / "ffmpeg.exe"
+_PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
+_FFMPEG_PATH = _PROJECT_ROOT / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
 _DECODE_TIMEOUT_SEC = 600
 _STDOUT_BLOCK = 1 << 20
 
@@ -33,13 +35,28 @@ class AudioLoadError(RuntimeError):
 def _find_ffmpeg() -> str:
     if _FFMPEG_PATH.is_file():
         return str(_FFMPEG_PATH)
+    configured = os.environ.get("V2M_FFMPEG", "").strip()
+    if configured and pathlib.Path(configured).is_file():
+        return configured
     found = shutil.which("ffmpeg")
-    if found is None:
-        raise AudioLoadError(
-            f"ffmpeg not found: expected the bundled copy at '{_FFFMPEG_PATH}' "
-            "or an 'ffmpeg' on PATH."
-        )
-    return found
+    if found:
+        return found
+
+    # Finder-launched apps receive a deliberately small PATH.  Homebrew is
+    # the normal ffmpeg installation on Apple Silicon, but its bin directory
+    # is not searched unless the shell startup files were loaded first.
+    candidates = []
+    if sys.platform == "darwin":
+        candidates.extend(("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/opt/local/bin/ffmpeg"))
+    candidates.extend(("/usr/bin/ffmpeg", "/bin/ffmpeg"))
+    for candidate in candidates:
+        if pathlib.Path(candidate).is_file():
+            return candidate
+
+    raise AudioLoadError(
+        f"ffmpeg not found: expected the bundled copy at '{_FFMPEG_PATH}', "
+        "V2M_FFMPEG, a standard macOS installation, or an 'ffmpeg' on PATH."
+    )
 
 
 def load_audio(path: str | pathlib.Path, sr: int, mono: bool = True):

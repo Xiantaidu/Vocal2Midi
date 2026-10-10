@@ -22,7 +22,7 @@ def _load_app_icon() -> QIcon:
     return QIcon(str(icon_path))
 
 
-class MainWindow(FluentWindow):
+class _FluentMainWindow(FluentWindow):
     def __init__(self):
         super().__init__()
 
@@ -156,3 +156,14 @@ def run_app():
     w = MainWindow()
     w.show()
     sys.exit(app.exec())
+
+
+# qfluentwidgets' frameless window is intended for the Windows desktop.  On
+# macOS use the native Qt shell while keeping this module's public MainWindow
+# import stable for callers and tests.
+if sys.platform == "darwin":
+    from gui.macos_main import MacMainWindow
+
+    MainWindow = MacMainWindow
+else:
+    MainWindow = _FluentMainWindow

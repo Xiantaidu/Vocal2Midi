@@ -816,7 +816,10 @@ def local_edges(text: str, edges: list[Edge], start: int, end: int) -> list[Edge
 # ---------------------------------------------------------------- resources
 
 BUNDLE_NAME = "lexicon.txz"
-_BUNDLE_MAGIC = "##ja_g2p v1"
+# The released kashi-g2p model bundle identifies itself as
+# ``##kashi-g2p v1``.  Older bundles used ``##ja_g2p v1``; both formats have
+# the same section layout and are safe to deserialize here.
+_BUNDLE_MAGICS = {"##ja_g2p v1", "##kashi-g2p v1"}
 _BUNDLE_SECTION = "##section "
 
 
@@ -835,7 +838,7 @@ def _deserialize_bundle(raw: bytes):
     last_surface = None
     for line in raw.decode("utf-8").splitlines():
         if line.startswith("##"):
-            if line == _BUNDLE_MAGIC or line == "##end":
+            if line in _BUNDLE_MAGICS or line == "##end":
                 continue
             if line.startswith(_BUNDLE_SECTION):
                 section = line[len(_BUNDLE_SECTION):]
