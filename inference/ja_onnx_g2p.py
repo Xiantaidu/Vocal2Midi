@@ -1,11 +1,6 @@
-"""Shared access to the ja_g2p_onnx Japanese G2P model (LAKE-G2P v5).
-
-The model folder (``models/ja_g2p_onnx``) ships a self-contained runtime
-(``g2p_onnx_runtime.py``) that resolves its resources relative to its own
-file, so it is loaded in place via importlib instead of being vendored.
-Both alignment engines consume its output: kanji text -> kana reading
-(contextually disambiguated polyphones) -> romaji -> phonemes via the
-DiffSinger Japanese dictionary.
+"""Japanese G2P via ja_g2p_onnx (LAKE-G2P v5): kanji -> kana -> romaji ->
+DiffSinger phonemes. The model folder's runtime resolves resources relative to
+its own file, so it is loaded in place via importlib, not vendored.
 """
 from __future__ import annotations
 
@@ -46,9 +41,8 @@ def _load_runtime_module(model_dir: Path | None = None) -> ModuleType:
 def get_ja_onnx_runtime_module(model_dir: str | Path | None = None) -> ModuleType | None:
     """Return the loaded ``g2p_onnx_runtime`` module, or None if absent.
 
-    Exposes the base runtime's building blocks (build_edges, safe_windows,
-    local_edges, decode_viterbi, ...) so adapters reuse its exact candidate
-    graph and scoring instead of reimplementing them.
+    Adapters reuse its candidate-graph building blocks (build_edges,
+    decode_viterbi, ...) instead of reimplementing them.
     """
     if get_ja_onnx_runtime(model_dir) is None:
         return None
@@ -58,8 +52,8 @@ def get_ja_onnx_runtime_module(model_dir: str | Path | None = None) -> ModuleTyp
 def get_ja_onnx_runtime(model_dir: str | Path | None = None):
     """Return the cached ``G2POnnxRuntime`` for *model_dir*, or None if absent.
 
-    Loading the bundle takes a few seconds (one-time per process); failures
-    are logged once and the caller falls back to its legacy G2P path.
+    Loading is a one-time per-process cost; on failure the caller falls back
+    to its legacy G2P path.
     """
     global _runtime, _runtime_module, _runtime_dir
     if model_dir:
@@ -96,9 +90,8 @@ _PARTICLE_READINGS = {"は": "わ", "へ": "え"}
 
 
 def _is_word_boundary_surface(surface: str) -> bool:
-    # A multi-character edge ends a word; a single kanji is a one-character
-    # word. Pure single kana carries no boundary signal (unspaced kana text is
-    # read char-by-char), so a following は stays orthographic.
+    # Multi-char edges and single kanji end a word; a lone kana carries no
+    # boundary signal (unspaced kana text is read char-by-char).
     if surface is None:
         return False
     if len(surface) > 1:
@@ -109,10 +102,8 @@ def _is_word_boundary_surface(surface: str) -> bool:
 def normalize_edge_reading(surface: str, reading: str, prev_surface: str | None = None) -> str:
     """Rewrite particle は/へ to わ/え when the edge context allows it.
 
-    Only applies when the previous edge marks a word boundary (multi-char or
-    kanji). For char-by-char kana runs a standalone は is more often
-    word-internal (はんせん) than a particle, and the mora ASR emits
-    orthographic ha anyway, so the orthographic reading is kept there.
+    Only when the previous edge marks a word boundary; in char-by-char kana
+    runs a standalone は is more often word-internal (はんせん) than a particle.
     """
     if len(surface) != 1 or surface not in _PARTICLE_READINGS:
         return reading

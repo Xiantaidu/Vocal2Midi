@@ -1,9 +1,10 @@
 """Tests for the quantization dispatch: simple mode + the smart rhythmic
 alignment engine, strictly per the reference smart_quantize.py.
 
-The smart engine runs on its own fixed 128th-note correction grid (15 ticks
-at PPQ 480) with no bar/measure awareness: ``quantization_step`` only
-toggles quantization on/off, and a failed chain (infeasible overlaps) leaves
+The smart engine aligns to the correction grid the caller selects
+(``quantization_step``: 480 = 1/4, 240 = 1/8, 120 = 1/16, 60 = 1/32,
+30 = 1/64) with no bar/measure awareness: the importance ladder is
+relative to the beat, and a failed chain (infeasible overlaps) leaves
 the notes untouched — the reference semantics, intentionally not "fixed".
 
 All fixtures are synthetic NoteInfo lists at BPM 120, where one tick is
@@ -124,10 +125,10 @@ def test_smart_mode_lands_every_boundary_on_the_correction_grid():
     quantize_notes(notes, TEMPO, STEP, mode="smart", simplicity=2.5)
 
     spans = _spans(notes)
-    assert spans == [(90, 120), (120, 240), (240, 360)]
+    assert spans == [(120, 240), (240, 360), (360, 480)]
     for start, end in spans:
-        assert start % 15 == 0
-        assert end % 15 == 0
+        assert start % STEP == 0
+        assert end % STEP == 0
         assert end > start
     for (_, prev_end), (start, _) in zip(spans, spans[1:]):
         assert start >= prev_end
@@ -135,29 +136,26 @@ def test_smart_mode_lands_every_boundary_on_the_correction_grid():
 
 def test_smart_mode_straightens_a_dragged_line():
     # A line dragging progressively (up to 40 ticks late): every boundary
-    # lands on the engine's correction grid while the performed rhythm
-    # survives; the final boundary is chosen freely by the DP.
+    # lands on the 1/16 grid while the performed rhythm survives.
     raw = [int(1380 + k * STEP + 40 * k / 7) for k in range(8)]
     notes = _notes_from_ticks([(t, t + STEP) for t in raw])
     quantize_notes(notes, TEMPO, STEP, mode="smart", simplicity=2.5)
 
     spans = _spans(notes)
-    assert spans == [
-        (1380, 1440), (1560, 1620), (1680, 1740), (1800, 1860),
-        (1920, 1980), (2040, 2100), (2160, 2220), (2280, 2340),
-    ]
+    assert len(spans) == len(raw)
     for start, end in spans:
-        assert start % 15 == 0 and end % 15 == 0
+        assert start % STEP == 0 and end % STEP == 0
+        assert end > start
     for (_, prev_end), (start, _) in zip(spans, spans[1:]):
         assert start >= prev_end
 
 
-def test_smart_mode_inflates_micro_rests_to_grid_rests():
-    # Reference behavior: every rest becomes at least one correction-grid
-    # column, so 15-tick gaps turn into full rests. Not "fixed" on purpose.
+def test_smart_mode_absorbs_rests_shorter_than_half_a_grid_cell():
+    # A 15-tick rest is well below the 1/16 grid, so it rounds to zero: the
+    # notes become contiguous instead of each gap inflating to a full cell.
     notes = _notes_from_ticks([(0, 225), (240, 465), (480, 705)])
     quantize_notes(notes, TEMPO, STEP, mode="smart", simplicity=2.5)
-    assert _spans(notes) == [(0, 120), (240, 360), (480, 600)]
+    assert _spans(notes) == [(0, 240), (240, 480), (480, 720)]
 
 
 def test_smart_mode_preserves_authentic_rests():
@@ -170,14 +168,30 @@ def test_smart_mode_preserves_authentic_rests():
         assert start > prev_end  # the rests survive
 
 
-def test_smart_mode_ignores_the_grid_step_choice():
-    # The engine's grid is its own fixed correction grid; the user's step
-    # value only toggles quantization on/off.
-    a = _notes_from_ticks([(37, 880), (1415, 2010)])
-    quantize_notes(a, TEMPO, 480, mode="smart", simplicity=2.5)
-    b = _notes_from_ticks([(37, 880), (1415, 2010)])
-    quantize_notes(b, TEMPO, 60, mode="smart", simplicity=2.5)
-    assert _spans(a) == _spans(b) == [(30, 960), (1440, 1920)]
+def test_smart_mode_honors_the_grid_step_choice():
+    # The step is the correction grid the engine aligns to: a finer step
+    # resolves rhythmic detail a coarser one rounds away.
+    raw = [(0, 240), (240, 480), (495, 510), (510, 720), (720, 960)]
+
+    fine = _notes_from_ticks(raw)
+    quantize_notes(fine, TEMPO, 30, mode="smart", simplicity=0.0)
+    coarse = _notes_from_ticks(raw)
+    quantize_notes(coarse, TEMPO, 60, mode="smart", simplicity=0.0)
+
+    assert _spans(fine) != _spans(coarse)
+    for start, end in _spans(fine):
+        assert start % 30 == 0 and end % 30 == 0
+    for start, end in _spans(coarse):
+        assert start % 60 == 0 and end % 60 == 0
+
+
+def test_smart_mode_one_sixty_fourth_keeps_sixty_fourth_detail():
+    # Regression: a 1/64 grid must place boundaries on 30-tick columns
+    # instead of collapsing them onto the coarser 1/16 positions.
+    notes = _notes_from_ticks([(0, 240), (240, 480), (720, 960)])
+    quantize_notes(notes, TEMPO, 30, mode="smart", simplicity=0.0)
+    for start, end in _spans(notes):
+        assert start % 30 == 0 and end % 30 == 0
 
 
 def test_smart_mode_simplicity_controls_aggressiveness():
@@ -206,10 +220,10 @@ def test_smart_mode_simplicity_controls_aggressiveness():
 
 
 def test_smart_mode_absorbs_small_stacked_overlaps():
-    # Reference behavior: the ±16-column band lets the engine squeeze small
-    # overlaps onto the grid instead of failing.
+    # The ±band window lets the engine squeeze small overlaps onto the grid
+    # instead of failing when the grid is fine enough for them.
     notes = _notes_from_ticks([(0, 240), (0, 240), (0, 240)])
-    quantize_notes(notes, TEMPO, STEP, mode="smart", simplicity=2.5)
+    quantize_notes(notes, TEMPO, 60, mode="smart", simplicity=2.5)
     assert _spans(notes) == [(0, 120), (120, 180), (180, 240)]
 
 
@@ -227,8 +241,8 @@ def test_smart_mode_leaves_notes_unchanged_when_chain_is_infeasible(caplog):
 
 
 def test_smart_mode_quantizes_single_sub_grid_note():
-    # A single note shorter than one correction-grid column still forms a
-    # one-column chain and snaps onto the grid.
+    # A single note shorter than one grid column still forms a one-column
+    # chain and snaps onto the grid.
     notes = _notes_from_ticks([(62401, 62413)])
-    quantize_notes(notes, TEMPO, STEP, mode="smart", simplicity=2.5)
-    assert _spans(notes) == [(62400, 62415)]
+    quantize_notes(notes, TEMPO, 30, mode="smart", simplicity=2.5)
+    assert _spans(notes) == [(62400, 62430)]

@@ -1,9 +1,3 @@
-"""Pipeline configuration dataclass for Vocal2Midi.
-
-Replaces the 30+ parameter dict/kwargs pattern used between
-GUI -> application -> inference layers.
-"""
-
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
@@ -34,11 +28,9 @@ def validate_slice_bounds(slice_min_sec: float, slice_max_sec: float) -> None:
 class PipelineConfig:
     """Configuration for the auto-lyric hybrid pipeline.
 
-    Required fields have no default value.
-    Optional fields have sensible defaults matching the GUI.
+    Required fields have no default; optional fields default to the GUI values.
     """
 
-    # ── Required ──────────────────────────────────────────────
     audio_path: str
     output_filename: str
     output_dir: Path
@@ -49,7 +41,6 @@ class PipelineConfig:
     language: str
     ts: list[float]
 
-    # ── Optional with defaults ────────────────────────────────
     lyric_output_mode: str = "auto"
     original_lyrics: str = ""
     output_formats: list = field(default_factory=lambda: ["mid"])
@@ -84,9 +75,8 @@ class PipelineConfig:
     japanese_g2p_engine: str = "kashi-g2p-onnx"
     kashi_g2p_model_path: str = ""
     output_pitch_curve: bool = False
-    # Runtime handles (like cancel_checker): an optional shared ASR
-    # subprocess session so a batch of jobs reuses one spawned worker
-    # instead of reloading the model per file.
+    # Optional shared ASR subprocess session: a batch of jobs reuses one
+    # spawned worker instead of reloading the model per file.
     asr_session: Optional[object] = None
     cancel_checker: Optional[Callable[[], bool]] = None
 

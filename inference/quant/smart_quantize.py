@@ -12,13 +12,13 @@ of the chain, so after quantization the whole phrase is contiguous and
 every boundary lands on the correction grid.
 
 The time scale is fully arbitrary: the algorithm only relies on ratios.
-A quarter note (the beat) is QUARTER ticks and the correction grid is
-GRID = QUARTER/32 (a 128th note); all distances are normalized by the
-quarter length. The default constants use a high-resolution integer
-scale (QUARTER = 705,600,000) purely to keep integer arithmetic exact;
-``smart_quantize_musical`` converts from the caller's PPQ automatically.
-There is no bar/measure awareness: the importance ladder is relative to
-the beat.
+A quarter note (the beat) is QUARTER ticks and the correction grid is a
+subdivision of it supplied by the caller (GRID, a 128th note, by default);
+all distances are normalized by the quarter length. The default constants
+use a high-resolution integer scale (QUARTER = 705,600,000) purely to keep
+integer arithmetic exact; ``smart_quantize_musical`` converts from the
+caller's PPQ automatically. There is no bar/measure awareness: the
+importance ladder is relative to the beat.
 
 simplicity (0~5) is the rhythmic simplification strength:
 0 = conservative (barely move anything), 5 = aggressive (snap to strong
@@ -31,15 +31,15 @@ Algorithm outline
    head-to-tail chain. Overlapping notes are NOT clipped -- they make the
    chain infeasible and the quantization is reported as failed.
 2. Anchor: the start of the first record is rounded to the nearest grid
-   column (column = GRID step) and serves as the origin of the chain;
-   the last column of the chain is forced to round(total span / GRID).
+   column (column = grid step) and serves as the origin of the chain;
+   the last column of the chain is forced to round(total span / grid).
 3. The only degree of freedom of each record is its "occupied column
    count j":
-       max(1, dcols - 16) <= j <= dcols + 16,  dcols = floor(orig duration / GRID)
+       max(1, dcols - band) <= j <= dcols + band,  dcols = floor(orig duration / grid)
    The start column of record r = end column of record r-1 + 1.
 4. Score (maximized):
        start:  M(pos_start)               - 0.5 * ((pos_start - orig_start)/QUARTER)^2
-       dur:    - ((j*GRID - orig_dur)/QUARTER)^2
+       dur:    - ((j*grid - orig_dur)/QUARTER)^2
        end:    M(pos_end)                 - 0.5 * ((pos_end - orig_end)/QUARTER)^2
    M(p) is the rhythmic-importance ladder (p = absolute position mod QUARTER):
        on the beat            0
@@ -67,8 +67,9 @@ from typing import List, Optional, Sequence, Tuple
 # Time constants (any uniform scale works; fixed integers keep math exact)
 # --------------------------------------------------------------------------
 QUARTER = 705_600_000             # one quarter note (the beat)
-GRID = 22_050_000                 # QUARTER // 32, the correction grid (a 128th note)
-BAND = 16                         # search band for durations / windows (±16 columns)
+GRID = 22_050_000                 # QUARTER // 32, the default correction grid (a 128th note)
+BAND = 16                         # default search band for durations / windows (±16 columns)
+BAND_SPAN = BAND * GRID           # the default band expressed in time
 NEG_INF = -1.0e10                 # DP initial value
 FAIL_THRESHOLD = -1.0e9           # best score below this → failure
 TICKS_PER_QUARTER = QUARTER
@@ -122,15 +123,22 @@ class Result:
 def smart_quantize(
     notes: Sequence[Tuple[int, int]],
     simplicity: float = 0.0,
+    grid: int = GRID,
+    band: Optional[int] = None,
 ) -> Result:
     """
     Core algorithm. notes: [(start, end), ...] in any uniform tick scale,
-    given in the same scale as the QUARTER/GRID constants (the MIDI path
-    converts automatically).
+    given in the same scale as the QUARTER constant (the MIDI path
+    converts automatically). grid is the correction grid in that scale;
+    band defaults to BAND_SPAN // grid, i.e. the same musical window.
     """
     lam = lam_from_simplicity(simplicity)
     if not notes:
         return Result(ok=False, message="empty selection")
+    if grid <= 0:
+        return Result(ok=False, message="invalid grid")
+    if band is None:
+        band = max(1, BAND_SPAN // grid)
 
     # ---- 1. Record chain (sort + gap records) ----
     order = sorted(range(len(notes)), key=lambda i: notes[i][0])
@@ -138,7 +146,7 @@ def smart_quantize(
     for i in order:
         s, e = notes[i]
         e = max(s, e)                       # clamp end to >= start
-        if records and s > records[-1][1]:
+        if records and s - records[-1][1] >= grid / 2:
             records.append((records[-1][1], s, None))   # gap record
         records.append((s, e, i))
     R = len(records)
@@ -146,23 +154,23 @@ def smart_quantize(
     # ---- 2. Anchor and total column count ----
     first = records[0][0]
     if first >= 0:
-        anchor = (first + GRID // 2) // GRID * GRID
+        anchor = (first + grid // 2) // grid * grid
     else:
-        anchor = -(((-first) + GRID // 2) // GRID * GRID)
+        anchor = -(((-first) + grid // 2) // grid * grid)
     rel = [(s - anchor, e - anchor) for s, e, _ in records]
     span = rel[-1][1]
     if span > 0:
-        col_count = (span + GRID // 2) // GRID              # round-half-up
+        col_count = max(1, (span + grid // 2) // grid)      # round-half-up
     elif span < 0:
-        col_count = -((-span + GRID // 2) // GRID)
+        col_count = -((-span + grid // 2) // grid)
     else:
         col_count = 0
     if col_count <= 0:
         return Result(ok=False, message="degenerate span")
 
-    # ---- Legal column windows (±16-column band, clipped to [0, colCount)) ----
-    lo = [max(0, r0 // GRID - BAND) for r0, _ in rel]           # python // = floor
-    hi = [min(col_count, r1 // GRID + BAND) for _, r1 in rel]
+    # ---- Legal column windows (±band columns, clipped to [0, colCount)) ----
+    lo = [max(0, r0 // grid - band) for r0, _ in rel]           # python // = floor
+    hi = [min(col_count, r1 // grid + band) for _, r1 in rel]
     hi = [max(l, h) for l, h in zip(lo, hi)]
 
     # ---- 3/4/5. DP ----
@@ -174,9 +182,9 @@ def smart_quantize(
 
     for r in range(R):
         wlo, whi = lo[r], hi[r]
-        dcols = dur_ticks[r] // GRID
-        j_lo = max(1, dcols - BAND)
-        j_hi = dcols + BAND                                     # exclusive
+        dcols = dur_ticks[r] // grid
+        j_lo = max(1, dcols - band)
+        j_hi = max(j_lo + 1, dcols + band)                      # exclusive
         for c in range(wlo, whi):
             # ---- s0[r][c] ----
             if r == 0:
@@ -187,8 +195,8 @@ def smart_quantize(
                     s0 = NEG_INF
             else:
                 prev = S1[r - 1].get(c - 1, NEG_INF)
-                pos = anchor + GRID * c
-                d = abs(GRID * c - rel[r][0])
+                pos = anchor + grid * c
+                d = abs(grid * c - rel[r][0])
                 s0 = prev + metric_bonus(pos, lam) - 0.5 * (d / QUARTER) ** 2
             S0[r][c] = s0 if s0 > NEG_INF else NEG_INF
 
@@ -201,12 +209,12 @@ def smart_quantize(
                 cand = S0[r].get(scol, NEG_INF)
                 if cand <= NEG_INF:
                     continue
-                dd = abs(GRID * j - dur_ticks[r])
+                dd = abs(grid * j - dur_ticks[r])
                 cand -= (dd / QUARTER) ** 2                         # duration distortion cost
                 if cand > best:
                     best, best_start = cand, scol
-            end_pos = anchor + GRID * (c + 1)                   # exclusive end
-            d_end = abs(GRID * (c + 1) - rel[r][1])
+            end_pos = anchor + grid * (c + 1)                   # exclusive end
+            d_end = abs(grid * (c + 1) - rel[r][1])
             s1 = best - 0.5 * (d_end / QUARTER) ** 2 + metric_bonus(end_pos, lam)
             S1[r][c] = s1 if s1 > NEG_INF else NEG_INF
             BP[r][c] = best_start
@@ -232,11 +240,11 @@ def smart_quantize(
     # ---- 7. Write-back (head-to-tail; last end = chosen by the DP) ----
     new_pairs = []
     for r in range(R):
-        start = anchor + GRID * start_cols[r]
+        start = anchor + grid * start_cols[r]
         if r < R - 1:
-            end = anchor + GRID * start_cols[r + 1]
+            end = anchor + grid * start_cols[r + 1]
         else:
-            end = anchor + GRID * (last_col + 1)
+            end = anchor + grid * (last_col + 1)
         new_pairs.append((start, end))
 
     out: List[Tuple[int, int]] = [(0, 0)] * len(notes)
@@ -270,15 +278,17 @@ def smart_quantize_musical(
     notes: Sequence[Tuple[int, int]],
     simplicity: float = 0.0,
     ticks_per_quarter: int = 480,
+    grid_ticks: Optional[int] = None,
 ) -> Result:
     """
     Any PPQ scale → internal scale → quantize → convert back.
-    Quantized boundaries sit on the 32nd grid, so as long as PPQ is a
-    multiple of 8 the round-trip is exact.
+    grid_ticks is the correction grid in the caller's tick scale (a 1/64
+    note at PPQ 480 is 30); None keeps the engine default (a 128th note).
     """
     scale = Fraction(TICKS_PER_QUARTER, ticks_per_quarter)
+    grid = GRID if grid_ticks is None else max(1, int(round(grid_ticks * scale)))
     eng = [(int(Fraction(s) * scale), int(Fraction(e) * scale)) for s, e in notes]
-    res = smart_quantize(eng, simplicity=simplicity)
+    res = smart_quantize(eng, simplicity=simplicity, grid=grid)
     if res.ok:
         inv = Fraction(ticks_per_quarter, TICKS_PER_QUARTER)
         res.notes = [(int(Fraction(s) * inv), int(Fraction(e) * inv)) for s, e in res.notes]

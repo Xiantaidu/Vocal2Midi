@@ -1,16 +1,8 @@
-"""Custom exception hierarchy for Vocal2Midi.
-
-Provides structured error types that the GUI and application layers
-can catch and handle consistently.
-"""
-
-
 class Vocal2MidiError(Exception):
     """Base exception for all Vocal2Midi-specific errors."""
 
     def __init__(self, message: str = "", *, details: str = ""):
-        # Fold details into the rendered message so tracebacks shown to the
-        # user (GUI error dialog / worker error_signal) carry the specifics.
+        # Fold details into the message so user-facing tracebacks/dialogs carry them.
         super().__init__(f"{message}: {details}" if details else message)
         self.details = details
 

@@ -55,20 +55,23 @@ def _quantize_notes_simple(notes: list[Any], tempo: float, quantization_step: in
 def _quantize_notes_smart(notes: list[Any], tempo: float, quantization_step: int, simplicity: float):
     """Smart rhythmic alignment, strictly per the reference smart_quantize.py.
 
-    The notes live in PPQ-480 ticks (one quarter note = tempo*8 seconds-ticks),
-    so the engine's own ``smart_quantize_musical`` wrapper applies unchanged:
-    the correction grid is the engine's fixed 128th note (15 ticks, no
-    bar/measure awareness — the importance ladder is relative to the beat),
-    ``quantization_step`` only toggles quantization on/off, and overlapping
-    notes that make the rhythmic chain infeasible report failure — the notes
-    are then left unchanged, exactly like the reference's MIDI path.
+    The notes live in PPQ-480 ticks (one quarter note = tempo*8 seconds-ticks).
+    ``quantization_step`` (1/4 = 480, 1/8 = 240, ..., 1/64 = 30) is the
+    correction grid the engine aligns to; overlapping notes that make the
+    rhythmic chain infeasible report failure — the notes are then left
+    unchanged, exactly like the reference's MIDI path.
     """
     if quantization_step <= 0 or not notes:
         return
 
     notes.sort(key=lambda n: n.onset)
     tick_pairs = [(_ticks_from_sec(n.onset, tempo), _ticks_from_sec(n.offset, tempo)) for n in notes]
-    result = smart_quantize_musical(tick_pairs, simplicity=simplicity, ticks_per_quarter=480)
+    result = smart_quantize_musical(
+        tick_pairs,
+        simplicity=simplicity,
+        ticks_per_quarter=480,
+        grid_ticks=quantization_step,
+    )
     if not result.ok:
         logger.warning("smart quantize left notes unchanged: %s", result.message)
         return

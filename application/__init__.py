@@ -1,8 +1,6 @@
-"""Application layer.
+"""Orchestration boundary between the GUI and inference/services.
 
-This package is the orchestration boundary between GUI and inference/services.
-GUI code should call use-case functions from here instead of importing
-inference modules directly.
+GUI code calls use-case functions here instead of importing inference modules.
 """
 
 __version__ = "2.0.0"

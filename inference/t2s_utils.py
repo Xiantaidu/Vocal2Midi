@@ -20,10 +20,9 @@ def get_opencc():
 
 
 def traditional_to_simplified(text: str) -> str:
-    """Convert Traditional Chinese text to Simplified Chinese using OpenCC (t2s).
+    """Convert Traditional Chinese to Simplified (OpenCC t2s).
 
-    Non-Chinese text, punctuation, and already-simplified characters are preserved.
-    Safe on empty/None inputs.
+    Never raises: unconvertible input is returned unchanged.
     """
     if not text:
         return ""

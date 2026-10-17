@@ -13,10 +13,8 @@ from application.exceptions import (
 def open_asr_session() -> AsrSubprocessSession:
     """Open a reusable Qwen ASR subprocess session for a batch of jobs.
 
-    The worker process (and the multi-GB model inside it) is spawned lazily
-    on first use and shared by every job that receives the session via
-    ``PipelineConfig.asr_session``; ``close()`` releases it. Jobs that never
-    reach the Qwen text-ASR stage never spawn a worker.
+    The worker (and its multi-GB model) spawns lazily on first use and is
+    shared by every job given the session via ``PipelineConfig.asr_session``.
     """
     return AsrSubprocessSession()
 
@@ -38,28 +36,26 @@ def _validate_model_paths(cfg: PipelineConfig) -> None:
     """Validate that required model paths exist before starting the pipeline."""
     required_paths = [("GAME model dir", cfg.game_model_dir)]
     if cfg.output_lyrics:
-        # The forced-alignment engine decides which aligner model is required.
+        # Cantonese always aligns with TiFA regardless of alignment_engine.
         lang = str(cfg.language or "").strip().lower()
         if str(cfg.alignment_engine or "").strip().lower() == "tifa" or lang == "yue":
             required_paths.append(("TiFA model dir", cfg.tifa_model_path))
         else:
             required_paths.append(("HubertFA model dir", cfg.hfa_model_dir))
         if _uses_pinyin_asr(cfg):
-            # Chinese + pinyin ASR routes to the pinyin model; Qwen is not used.
+            # Pinyin ASR substitutes its own model for Qwen, so validate that path.
             if cfg.pinyin_asr_model_path:
                 required_paths.append(("Pinyin ASR model path", cfg.pinyin_asr_model_path))
         else:
             required_paths.append(("ASR model path", cfg.asr_model_path))
-            # A provided romaji ASR path is used as-is by the ja pipeline;
-            # an empty one degrades gracefully, a broken one must fail here.
-            # With the Qwen engine selected for Japanese it is bypassed entirely.
+            # An empty romaji path degrades gracefully but a provided broken one
+            # must fail here; the Qwen engine bypasses it entirely.
             if _ja_uses_romaji_asr(cfg) and cfg.phoneme_asr_model_path:
                 required_paths.append(("Phoneme ASR model path", cfg.phoneme_asr_model_path))
         if lang == "ja" and str(cfg.japanese_g2p_engine or "").strip().lower() == "kashi-g2p-onnx" and cfg.kashi_g2p_model_path:
             required_paths.append(("kashi-g2p model path", cfg.kashi_g2p_model_path))
 
-    # Pitch curves require RMVPE; fail fast with a clear path instead of a
-    # mid-run error inside RmvpeTranscriber.
+    # Pitch curves need RMVPE; fail early rather than mid-run in RmvpeTranscriber.
     wants_pitch_curve = cfg.output_pitch_curve and any(
         fmt in (cfg.output_formats or []) for fmt in ("ustx", "vsqx")
     )
@@ -80,20 +76,10 @@ def _validate_model_paths(cfg: PipelineConfig) -> None:
 def run_auto_lyric_job(cfg: PipelineConfig):
     """Application-layer entry for the primary auto lyric extraction use-case.
 
-    GUI should call this function with a PipelineConfig instead of importing
-    the inference pipeline directly.
-
-    Args:
-        cfg: PipelineConfig with all parameters for the hybrid pipeline.
-
-    Raises:
-        ModelNotFoundError: If required model paths do not exist.
-        CancellationError: If the user cancels the pipeline.
-        Vocal2MidiError: Base exception for other pipeline errors.
+    Raises ModelNotFoundError, CancellationError, or Vocal2MidiError.
     """
     _validate_model_paths(cfg)
 
-    # Check cancellation before starting
     if cfg.cancel_checker and cfg.cancel_checker():
         raise CancellationError("Pipeline was cancelled before starting.")
 
