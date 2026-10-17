@@ -1,7 +1,6 @@
 """Lyric-alignment stage: phoneme/text ASR followed by HubertFA alignment.
 
-Owns the temporary chunk wav/.lab file protocol shared with the HFA stage;
-nothing outside this module reads those files.
+Owns the temporary chunk wav/.lab file protocol shared with the HFA stage.
 """
 from __future__ import annotations
 
@@ -28,7 +27,7 @@ logger = logging.getLogger(__name__)
 ROMAJI_ASR_DEFAULT_DIR = pathlib.Path(__file__).resolve().parents[2] / "models" / "romajiASR"
 PINYIN_ASR_DEFAULT_DIR = pathlib.Path(__file__).resolve().parents[2] / "models" / "pinyinASR"
 
-# Language value that routes Chinese lyric extraction through the direct
+# Language value routing Chinese lyric extraction through the direct
 # pinyin ASR instead of Qwen text ASR.
 PINYIN_ASR_LANGUAGE = "zh-pinyin"
 
@@ -64,9 +63,7 @@ def run_qwen_asr_and_fa(
     japanese_g2p_engine="kashi-g2p-onnx",
     kashi_g2p_model_path="",
 ):
-    """
-    Runs ASR using the Qwen runtime with batching and prepares .lab files for HubertFA.
-    """
+    """Run Qwen text ASR with batching and prepare the .lab files for HubertFA."""
     all_results, chunk_indices = batch_transcribe_asr(
         chunks,
         sr,
@@ -161,12 +158,6 @@ def run_pinyin_asr(
 
 @dataclass(frozen=True)
 class _AlignmentOutcome:
-    """Result of the lyric-alignment stage.
-
-    ``aligned`` is the final run_lyric_alignment flag after every fallback
-    decision along the way.
-    """
-
     chars_dict: dict
     pred_dict: dict
     chunk_logs: list
@@ -218,7 +209,7 @@ def _export_chunk_wavs_from_temp(
     output_dir,
     cancel_checker=None,
 ) -> None:
-    """Copy the stage's chunk_N.wav files out under the {key}_{idx:03d} naming.
+    """Copy the stage's chunk_N.wav files out as {key}_{idx:03d}.wav.
 
     Mirrors the WAV half of hfa_api.export_hfa_artifacts so the chunks switch
     yields the same per-chunk WAV + TextGrid pairs on the TiFA path.
@@ -256,8 +247,7 @@ def _run_lyric_alignment(
 ) -> _AlignmentOutcome:
     """Stages 1+2: phoneme/text ASR followed by forced alignment (HFA or TiFA).
 
-    Owns the temporary directory holding the chunk wavs and .lab files;
-    nothing outside this stage reads them.
+    Owns the temporary directory holding the chunk wavs and .lab files.
     """
     def _check_cancel():
         if cancel_checker and cancel_checker():
@@ -360,9 +350,8 @@ def _run_lyric_alignment(
                         kashi_g2p_model_dir=kashi_g2p_model_path,
                     )
                 finally:
-                    # Cached in load_tifa_model for reuse across runs; per-song
-                    # DirectML session teardown access-violates onnxruntime on
-                    # the next song.
+                    # Cached in load_tifa_model across runs; per-song DirectML
+                    # session teardown access-violates onnxruntime next song.
                     free_memory()
             else:
                 logger.info("\n--- Stage 2/3: Loading HubertFA model ---")
@@ -404,9 +393,8 @@ def _run_lyric_alignment(
                             cancel_checker=cancel_checker,
                         )
                 finally:
-                    # Cached in load_hfa_model for reuse across runs; per-song
-                    # DirectML session teardown access-violates onnxruntime on
-                    # the next song.
+                    # Cached in load_hfa_model across runs; per-song DirectML
+                    # session teardown access-violates onnxruntime next song.
                     free_memory()
             if use_tifa:
                 _check_cancel()
@@ -418,8 +406,8 @@ def _run_lyric_alignment(
                     aligned = False
                 else:
                     # TiFA words are mora-level for ja: use its own romaji/kana
-                    # display tokens so every aligned word gets a lyric (the
-                    # lfa ja display cannot tokenize unspaced kanji text).
+                    # tokens so every aligned word gets a lyric (the lfa ja
+                    # display cannot tokenize unspaced kanji text).
                     for stem, pairs in tifa_display.items():
                         if ctx.lyric_output_mode == "kana":
                             tokens = [kana for _romaji, kana in pairs if kana]
@@ -427,15 +415,14 @@ def _run_lyric_alignment(
                             tokens = [romaji for romaji, _kana in pairs]
                         if tokens:
                             chars_dict[stem] = tokens
-                    # Same chunks-switch contract as export_hfa_artifacts:
-                    # the chunks switch yields per-chunk WAV + TextGrid pairs.
+                    # As in export_hfa_artifacts: the chunks switch yields
+                    # per-chunk WAV + TextGrid pairs.
                     export_chunks = "chunks" in ctx.output_format_set
                     export_textgrid = ("textgrid" in ctx.output_format_set) or export_chunks
                     if export_textgrid:
-                        # Pass the stem-keyed mapping so each TextGrid is named
-                        # by its real chunk index and pairs with the matching
-                        # {output_key}_NNN.wav (pred_dict is in rglob order, not
-                        # positionally aligned to the numeric chunk indices).
+                        # Pass the stem-keyed mapping so each TextGrid is named by
+                        # its real chunk index and pairs with {output_key}_NNN.wav
+                        # (pred_dict is in rglob order, not chunk order).
                         export_textgrids(
                             pred_dict,
                             ctx.output_dir,

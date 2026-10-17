@@ -1,4 +1,3 @@
-"""Tests for the extracted GUI components: LogTerminal and AudioFileList."""
 import os
 
 import pytest
@@ -37,7 +36,6 @@ def test_log_terminal_accumulates_and_clears(qapp):
     terminal.log("hello")
     terminal.log("错误: boom")
     assert terminal._lines == ["hello", "错误: boom"]
-    # severity changes the color of the rendered line
     assert terminal._line_html("错误: boom") != terminal._line_html("hello")
     assert "<span" in terminal._line_html("错误: boom")
     terminal.clear()
@@ -58,7 +56,6 @@ def test_audio_file_list_filters_and_dedupes(qapp):
     assert file_list.all_paths() == ["a.wav", "b.mp3"]
     assert file_list.item(file_list.count() - 1).data(Qt.UserRole) == "b.mp3"
 
-    # re-adding an existing file changes nothing and emits no signals
     assert file_list.add_paths(["a.wav"]) == 0
     assert added_counts == [2]
 
@@ -84,7 +81,6 @@ def test_audio_file_list_settings_request_signal(qapp):
     requested = []
     file_list.settingsRequested.connect(requested.append)
     file_list.add_paths(["a.wav"])
-    # the gear row's settings button targets the file path
     file_list.settingsRequested.emit("a.wav")
     assert requested == ["a.wav"]
 
@@ -102,7 +98,6 @@ def test_gear_button_hidden_for_single_file_visible_in_batch(qapp):
     assert len(file_list._gear_buttons) == 2
     assert all(not btn.isHidden() for btn in file_list._gear_buttons.values())
 
-    # back down to one file: the remaining gear hides again
     file_list.remove_item(file_list.item(0))
     assert file_list.count() == 1
     assert list(file_list._gear_buttons) == ["b.wav"]
@@ -118,7 +113,6 @@ def test_batch_mode_hides_lyric_matching_and_invalidates_lyrics(qapp):
     model_cfg = ModelConfigInterface(settings_ui.settings, settings_ui.project_root)
     view = AutoLyricInterface(settings_ui, model_cfg)
 
-    # 1. Single file mode
     view.audio_list.add_paths(["song1.wav"])
     assert view.audio_list.count() == 1
 
@@ -133,21 +127,17 @@ def test_batch_mode_hides_lyric_matching_and_invalidates_lyrics(qapp):
     assert base["match_lyrics"] is True
     assert base["original_lyrics"] == "test lyrics 123"
 
-    # 2. Add second file -> batch mode
     view.audio_list.add_paths(["song2.wav"])
     assert view.audio_list.count() == 2
 
-    # Cards must be hidden, including lyric_card
     assert view._combo_card.isHidden()
     assert view._output_card.isHidden()
     assert view.lyric_card.isHidden()
 
-    # Lyrics on main window must be invalidated in batch mode
     batch_base = view._current_base_values()
     assert batch_base["match_lyrics"] is False
     assert batch_base["original_lyrics"] == ""
 
-    # 3. Remove second file -> back to single file mode
     view.audio_list.remove_item(view.audio_list.item(1))
     assert view.audio_list.count() == 1
 
@@ -183,19 +173,16 @@ def test_audio_file_list_batch_mode_off_restricts_to_one(qapp):
     file_list.set_batch_mode(False)
     assert file_list.batch_mode is False
 
-    # Adding multiple files when batch_mode is False only adds the first file
     added = file_list.add_paths(["song1.wav", "song2.mp3", "song3.flac"])
     assert added == 1
     assert file_list.count() == 1
     assert file_list.all_paths() == ["song1.wav"]
 
-    # Adding another file replaces the existing file in single-file mode
     added = file_list.add_paths(["song4.wav"])
     assert added == 1
     assert file_list.count() == 1
     assert file_list.all_paths() == ["song4.wav"]
 
-    # Re-adding the exact same file is a no-op
     added = file_list.add_paths(["song4.wav"])
     assert added == 0
     assert file_list.count() == 1
@@ -227,20 +214,16 @@ def test_auto_lyric_view_coordinates_with_global_batch_mode(qapp):
     model_cfg = ModelConfigInterface(settings_ui.settings, settings_ui.project_root)
     view = AutoLyricInterface(settings_ui, model_cfg)
 
-    # 1. Add 2 files while batch mode is on
     view.audio_list.add_paths(["song1.wav", "song2.wav"])
     assert view.audio_list.count() == 2
     assert view._combo_card.isHidden()
 
-    # 2. Turn off batch mode in global settings
     settings_ui.cb_batch_mode.setChecked(False)
-    # The audio list must automatically trim down to 1 file and restore panels
     assert view.audio_list.count() == 1
     assert view.audio_list.all_paths() == ["song1.wav"]
     assert not view._combo_card.isHidden()
     assert not view._output_card.isHidden()
 
-    # 3. In single file mode, attempting to add multiple files adds only 1 (replacing)
     view.audio_list.add_paths(["song3.wav", "song4.wav"])
     assert view.audio_list.count() == 1
     assert view.audio_list.all_paths() == ["song3.wav"]
@@ -254,12 +237,10 @@ def test_quantization_settings_persisted(qapp):
     settings_ui = GlobalSettingsInterface()
     model_cfg = ModelConfigInterface(settings_ui.settings, settings_ui.project_root)
 
-    # 1. Defaults should be "smart" and 0 (off)
     view1 = AutoLyricInterface(settings_ui, model_cfg)
     assert view1.quantize_mode_combo.currentData() == "smart"
     assert view1.quantize_combo.currentData() == 0
 
-    # 2. Change mode to "simple" and step to 480 (1/4 note)
     idx_simple = view1.quantize_mode_combo.findData("simple")
     assert idx_simple >= 0
     view1.quantize_mode_combo.setCurrentIndex(idx_simple)
@@ -270,7 +251,6 @@ def test_quantization_settings_persisted(qapp):
     view1.quantize_combo.setCurrentIndex(idx_480)
     assert int(settings_ui.settings.value("quantization_step")) == 480
 
-    # 3. New view instance should load "simple" and 480 from settings
     view2 = AutoLyricInterface(settings_ui, model_cfg)
     assert view2.quantize_mode_combo.currentData() == "simple"
     assert view2.quantize_combo.currentData() == 480
@@ -293,18 +273,15 @@ def test_model_config_engine_choices_and_kashi_g2p(qapp):
     settings_ui = GlobalSettingsInterface()
     cfg = ModelConfigInterface(settings_ui.settings, settings_ui.project_root)
 
-    # Verify all 4 engines exist
     assert hasattr(cfg, "chinese_asr_engine_combo")
     assert hasattr(cfg, "japanese_asr_engine_combo")
     assert hasattr(cfg, "alignment_engine_combo")
     assert hasattr(cfg, "japanese_g2p_engine_combo")
     assert hasattr(cfg, "kashi_g2p_model_edit")
 
-    # Default value for japanese_g2p_engine
     assert cfg.japanese_g2p_engine() in ("kashi-g2p-onnx", "pyopenjtalk")
     assert cfg.model_path("kashi_g2p_model") == "models/kashi-g2p-onnx"
 
-    # Switching Japanese G2P engine
     idx_py = cfg.japanese_g2p_engine_combo.findData("pyopenjtalk")
     assert idx_py >= 0
     cfg.japanese_g2p_engine_combo.setCurrentIndex(idx_py)
@@ -321,7 +298,6 @@ def test_hfa_disables_cantonese_in_gui(qapp):
     settings_ui = GlobalSettingsInterface()
     cfg = ModelConfigInterface(settings_ui.settings, settings_ui.project_root)
 
-    # 1. Default alignment engine is tifa: Cantonese ('yue') is enabled by default
     assert cfg.alignment_engine() == "tifa"
 
     view = AutoLyricInterface(settings_ui, cfg)
@@ -330,7 +306,6 @@ def test_hfa_disables_cantonese_in_gui(qapp):
     assert view.lang_combo.items[yue_idx].isEnabled
     assert view.lang_combo.itemText(yue_idx) == "yue"
 
-    # 2. Switch aligner to hfa: Cantonese ('yue') becomes disabled
     idx_hfa = cfg.alignment_engine_combo.findData("hfa")
     assert idx_hfa >= 0
     cfg.alignment_engine_combo.setCurrentIndex(idx_hfa)
@@ -342,7 +317,6 @@ def test_hfa_disables_cantonese_in_gui(qapp):
     view.lang_combo.setCurrentIndex(yue_idx)
     assert view.lang_combo.currentData() == "zh"
 
-    # 3. Switch back to tifa: Cantonese ('yue') becomes enabled again
     idx_tifa = cfg.alignment_engine_combo.findData("tifa")
     assert idx_tifa >= 0
     cfg.alignment_engine_combo.setCurrentIndex(idx_tifa)
@@ -350,11 +324,9 @@ def test_hfa_disables_cantonese_in_gui(qapp):
     assert view.lang_combo.items[yue_idx].isEnabled
     assert view.lang_combo.itemText(yue_idx) == "yue"
 
-    # Can now select yue
     view.lang_combo.setCurrentIndex(yue_idx)
     assert view.lang_combo.currentData() == "yue"
 
-    # 4. In FileSettingsDialog, hfa base value disables yue
     base_hfa = dict(view._current_base_values())
     base_hfa["alignment_engine"] = "hfa"
     base_hfa["language"] = "yue"

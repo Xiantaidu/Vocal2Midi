@@ -50,11 +50,9 @@ class RmvpeTranscriber:
         self.provider_name, providers = self._resolve_providers(self.requested_device)
         self.session = self._create_session(providers)
         input_names = {item.name for item in self.session.get_inputs()}
-        # OpenUtau ships a newer compact RMVPE graph that accepts the raw
-        # waveform and threshold directly and returns f0/uv.  The historical
-        # Vocal2Midi graph accepts a precomputed mel tensor and returns
-        # salience.  Keep both contracts supported so the bundled OpenUtau
-        # dependency can be reused on macOS.
+        # OpenUtau ships a newer compact RMVPE graph (waveform+threshold in,
+        # f0/uv out); the historical Vocal2Midi graph takes a mel tensor and
+        # returns salience. Both contracts are kept for the bundled dependency.
         self._direct_f0 = {"waveform", "threshold"}.issubset(input_names)
         self.input_name = next(iter(input_names - {"threshold"})) if self._direct_f0 else self.session.get_inputs()[0].name
         self.fixed_batch_size = self._get_fixed_batch_size()
@@ -241,9 +239,9 @@ class RmvpeTranscriber:
         magnitudes = np.abs(stft).astype(np.float32, copy=False)
         mel_output = self.mel_basis @ magnitudes
         mel_output = np.log(np.clip(mel_output, a_min=1e-5, a_max=None)).astype(np.float32, copy=False)
-        # The exported ONNX graph expects the fixed RMVPE segment path to be 512 frames.
-        # librosa.stft(center=False) yields 513 frames for the legacy 83968-sample segment,
-        # so we trim the trailing frame to match the exported UNet skip dimensions.
+        # The exported ONNX graph expects the fixed RMVPE segment path to be 512
+        # frames, but librosa.stft(center=False) yields 513 for the legacy
+        # 83968-sample segment; trim the trailing frame to match the UNet skips.
         if mel_output.shape[1] == SEG_FRAMES + 1:
             mel_output = mel_output[:, :SEG_FRAMES]
         return np.ascontiguousarray(mel_output)

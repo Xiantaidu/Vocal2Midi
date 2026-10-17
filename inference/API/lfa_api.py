@@ -69,7 +69,6 @@ def _phoneme_tokens_to_romaji_moras(tokens):
         ("ny", "i"): "ni", ("hy", "i"): "hi",
         ("my", "i"): "mi", ("ry", "i"): "ri",
         ("by", "i"): "bi", ("py", "i"): "pi",
-        # Less common but useful canonicalizations.
         ("ty", "i"): "chi", ("ty", "u"): "chu", ("ty", "o"): "cho",
         ("dy", "i"): "ji", ("dy", "u"): "ju", ("dy", "o"): "jo",
     }
@@ -94,7 +93,6 @@ def _phoneme_tokens_to_romaji_moras(tokens):
             i += 1
             continue
         if t == "cl":
-            # Keep as standalone mora-like pause marker
             out.append("cl")
             i += 1
             continue
@@ -326,13 +324,9 @@ def process_asr_to_phonemes(
             continue
 
         match_status = "No original lyrics provided"
-        # TiFA reads chunk_N.txt in preference to the .lab (HubertFA ignores
-        # .txt). Default to the raw ASR text -- for hanzi text TiFA's own G2P
-        # adds polyphone disambiguation -- but when the matcher corrected the
-        # reading, feed TiFA the matched phonetics: otherwise TiFA
-        # re-transcribes the raw ASR text and the reference reading never
-        # reaches the notes (ja lyrics kept the ASR's mishearings while the
-        # corrected moras sat unused in the .lab).
+        # TiFA reads chunk_N.txt in preference to the .lab. Default to the raw
+        # ASR text, but when the matcher corrected the reading feed TiFA the
+        # matched phonetics so the reference reading reaches the notes.
         tifa_text = raw_text
         if direct_phoneme_tokens:
             if language == "zh-pinyin":

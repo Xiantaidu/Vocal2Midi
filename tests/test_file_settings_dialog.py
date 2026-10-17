@@ -1,6 +1,4 @@
-"""Tests for the per-file settings dialog and the shared option tables.
-
-The dialog must round-trip backend values only (no display-text transport)
+"""The dialog must round-trip backend values only (no display-text transport)
 and honor the zh + PinyinASR lyric output lock.
 """
 import os

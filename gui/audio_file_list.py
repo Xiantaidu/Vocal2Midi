@@ -1,4 +1,3 @@
-"""Audio file list with per-row actions and per-file settings storage."""
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, Signal
@@ -12,8 +11,7 @@ from gui.i18n import tr
 class AudioFileList(ListWidget):
     """List of audio files; each row carries settings & delete buttons.
 
-    The display text of items stays empty — the row widget draws the file
-    name itself; the real path lives in Qt.UserRole.
+    Item text stays empty; the row widget draws the name and stores the path in Qt.UserRole.
     """
 
     AUDIO_EXTENSIONS = {".wav", ".m4a", ".flac", ".mp3", ".ogg", ".opus", ".wma", ".webm", ".aif", ".aiff"}
@@ -120,7 +118,6 @@ class AudioFileList(ListWidget):
         return [self.item_path(self.item(i)) for i in range(self.count())]
 
     def _attach_gear_row(self, path: str):
-        """Attach the filename + settings/delete button row to the last item."""
         item = self.item(self.count() - 1)
         if item is None or self.item_path(item) != path:
             return
@@ -137,7 +134,7 @@ class AudioFileList(ListWidget):
         btn.setToolTip(tr("file_settings"))
         btn.setFixedSize(28, 28)
         btn.clicked.connect(lambda checked, f=path: self.settingsRequested.emit(f))
-        btn.setVisible(self.count() >= 2)  # batch mode only
+        btn.setVisible(self.count() >= 2)
         self._gear_buttons[path] = btn
         row_layout.addWidget(btn)
         btn_del = TransparentToolButton(FluentIcon.DELETE, row)

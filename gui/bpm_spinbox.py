@@ -1,4 +1,3 @@
-"""BPM input box with drag-and-drop audio BPM detection support."""
 from __future__ import annotations
 
 import math
@@ -13,13 +12,9 @@ from gui.i18n import tr
 
 
 def round_bpm(val: float) -> float:
-    """Round BPM to one decimal place, with the 2nd decimal place rounded and set to 0.
+    """Round BPM to one decimal; the 2nd decimal decides the 1st (half-up).
 
-    Mathematically:
-        120.46 -> 120.5 (displayed as 120.50 in a 2-decimal spin box)
-        120.44 -> 120.4 (displayed as 120.40)
-        120.45 -> 120.5 (displayed as 120.50)
-        120.00 -> 120.0 (displayed as 120.00)
+    120.46 -> 120.5 (shown as 120.50), 120.44 -> 120.4, 120.45 -> 120.5.
     """
     if val is None or math.isnan(val) or math.isinf(val) or val <= 0:
         return 120.0
@@ -28,14 +23,7 @@ def round_bpm(val: float) -> float:
 
 
 def detect_audio_bpm(audio_path: str | Path) -> float:
-    """Detect BPM of an audio file and return the rounded BPM value.
-
-    Args:
-        audio_path: Path to the target audio file.
-
-    Returns:
-        Estimated BPM float value rounded to the first decimal place.
-    """
+    """Estimate the BPM of an audio file, rounded via :func:`round_bpm`."""
     path = Path(audio_path)
     if not path.is_file():
         raise FileNotFoundError(f"Audio file not found: {path}")
@@ -43,14 +31,12 @@ def detect_audio_bpm(audio_path: str | Path) -> float:
     sr = 22050
     waveform = None
 
-    # First attempt decoding through the bundled ffmpeg pipeline
     try:
         from inference.io.audio_io import load_audio
         waveform, sr = load_audio(path, sr=sr, mono=True)
     except Exception:
         waveform = None
 
-    # Fallback to librosa.load if ffmpeg decoding failed
     if waveform is None or len(waveform) == 0:
         import librosa
         waveform, sr = librosa.load(str(path), sr=sr, mono=True)

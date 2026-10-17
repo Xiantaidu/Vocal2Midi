@@ -1,13 +1,8 @@
-"""Audio loading through the bundled minimal ffmpeg.
+"""Audio loading via the bundled minimal ffmpeg.exe at the repo root.
 
-Every user-facing audio input takes one uniform decode path: the audio-only
-``ffmpeg.exe`` at the repository root decodes any supported container straight
-to raw float32 PCM on stdout. Nothing is written to disk and there is no
-dependence on libsndfile's per-format read support (librosa 0.11 itself has no
-ffmpeg fallback, so formats like M4A would be unreadable without this).
-
-Waveforms are always returned as mono float32 at the requested sample rate;
-resampling and channel mixdown happen inside ffmpeg (swresample).
+All inputs decode straight to raw float32 PCM on stdout (no disk writes,
+resample/mixdown inside ffmpeg); librosa 0.11 has no ffmpeg fallback, so
+formats like M4A would otherwise be unreadable.
 """
 
 from __future__ import annotations
@@ -62,14 +57,8 @@ def _find_ffmpeg() -> str:
 def load_audio(path: str | pathlib.Path, sr: int, mono: bool = True):
     """Decode an audio file to float32 PCM with the bundled ffmpeg.
 
-    Args:
-        path: Audio file path (any format the bundled ffmpeg decodes:
-              wav/flac/mp3/ogg/opus/m4a/aac/wma/webm/aiff/...).
-        sr: Target sample rate; ffmpeg resamples via swresample.
-        mono: Downmix to one channel (all current callers want mono).
-
-    Returns:
-        Tuple of ``(waveform, sr)`` with waveform as 1-D float32.
+    sr resamples via swresample; mono downmixes to one channel. Returns
+    ``(waveform, sr)`` with waveform 1-D float32.
     """
     cmd = [
         _find_ffmpeg(),

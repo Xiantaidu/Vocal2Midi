@@ -1,9 +1,7 @@
 """Shared option tables for the main UI and the per-file settings dialog.
 
-Each table maps backend values to i18n keys; widgets render the label with
-tr() and carry the backend value as userData. Settings, per-file overrides
-and PipelineConfig always transport backend values — display text is never
-used as data.
+Each entry maps a backend value to an i18n key; widgets show ``tr(key)`` and
+carry the backend value as userData. Display text is never used as data.
 """
 from __future__ import annotations
 
@@ -18,8 +16,7 @@ TARGET_LANGUAGE_CHOICES = [
     ("yue", "lang_name_yue"),
 ]
 SLICE_METHOD_CHOICES = [
-    # Canonical slicer_api values (its normalize_slicing_method also accepts
-    # the legacy Chinese aliases, but the GUI sends the canonical ones).
+    # Canonical slicer_api values; the GUI does not send the legacy aliases.
     ("smart", "slice_smart"),
     ("heuristic", "slice_heuristic"),
     ("default", "slice_default"),

@@ -18,16 +18,11 @@ def _is_lexical_word(word) -> bool:
 
 
 def _repair_short_word_boundaries(words) -> list[str]:
-    """
-    Repair abnormally short lexical words produced by HFA.
+    """Repair abnormally short lexical words produced by HFA.
 
-    Rule of thumb:
-    1. the current lexical word must be among the globally shortest few;
-    2. it must also be locally much shorter than both surrounding lexical words;
-    3. there must be a later lexical word, so the current word is not the last note.
-
-    When triggered, the current word end is stretched to the next lexical word start,
-    crossing over silence tags such as SP if necessary.
+    Triggers when the word is among the globally shortest few and much shorter
+    than both neighbors; its end is stretched to the next word start, crossing
+    silence tags such as SP.
     """
     lexical_indices = [idx for idx, word in enumerate(words) if _is_lexical_word(word)]
     if len(lexical_indices) < 3:
@@ -99,8 +94,8 @@ def _repair_pred_dict_short_words(pred_dict) -> None:
     if total_repaired > 0:
         logger.info(f"[HFA Repair] Total repaired short words: {total_repaired}")
 
-# Per-language dictionary files shipped inside the HFA model folder.
-# English uses the DiffSinger CMU dict (no stress digits, reduced vowels).
+# Per-language dict files in the HFA model folder; the English one is the
+# DiffSinger CMU dict (no stress digits, reduced vowels).
 _HFA_DICT_FILES = {
     "zh": "ds-zh-pinyin-lite.txt",
     "ja": "japanese_dict_full.txt",
@@ -112,13 +107,11 @@ _HFA_MODEL_CACHE: dict[tuple[str, str], InferenceOnnx] = {}
 
 
 def load_hfa_model(model_dir, device=None, use_cache: bool = True):
-    """
-    Load the HubertFA ONNX model on DirectML by default, with CPU fallback.
+    """Load the HubertFA ONNX model on DirectML by default, with CPU fallback.
 
-    Cached in-process and reused across pipeline runs: recreating the
-    DirectML session per song corrupts onnxruntime's DML state and
-    access-violates the process on the next song. run_hubert_fa resets the
-    per-run state (dataset/predictions) at entry, so reuse is safe.
+    Cached in-process: recreating the DirectML session per song corrupts
+    onnxruntime's DML state and access-violates the process on the next song.
+    run_hubert_fa resets per-run state at entry, so reuse is safe.
     """
     resolved = str(pathlib.Path(model_dir))
     key = (resolved, str(device or "").strip().lower() or "auto")
@@ -157,9 +150,9 @@ def run_hubert_fa(hfa_model, temp_dir, language="zh", cancel_checker=None, use_p
     dict_path = hfa_model.vocab_folder / dict_file
 
     if use_phoneme_g2p:
-        # The input .lab file already contains phoneme tokens.
-        # For Japanese, add an extra "phoneme -> mora word boundary" pass so HFA
-        # still aligns at the phoneme level while word boundaries better match mora units.
+        # Input .lab already holds phoneme tokens. For Japanese add a
+        # phoneme -> mora word-boundary pass so HFA aligns at phoneme level
+        # while word boundaries match mora units.
         g2p_mode = "ja_mora_phoneme" if language == "ja" else "phoneme"
         hfa_model.get_dataset(wav_folder=temp_dir, language=language, g2p=g2p_mode, dictionary_path=None)
     else:
@@ -167,8 +160,8 @@ def run_hubert_fa(hfa_model, temp_dir, language="zh", cancel_checker=None, use_p
     if cancel_checker and cancel_checker():
         raise InterruptedError("HFA task was cancelled")
     if len(hfa_model.dataset) > 0:
-        # Detect breaths (AP) for Chinese and English; Japanese relies on its own
-        # mora dictionary without non-lexical detection.
+        # Detect breaths (AP) for Chinese and English; Japanese relies on its
+        # own mora dictionary.
         nl_phonemes = "AP" if language in {"zh", "en"} else ""
         hfa_model.infer(non_lexical_phonemes=nl_phonemes, pad_times=1, pad_length=5)
 

@@ -1,29 +1,19 @@
 #!/usr/bin/env python3
 """Build llama.cpp for Vocal2Midi's Qwen3-ASR runtime on macOS and Windows.
 
-This script is deliberately **non-invasive**:
+Non-invasive: llama.cpp is only cloned and compiled, and Vocal2Midi's Python
+sources are untouched. The installed library names are exactly the ones
+``inference/qwen3asr_dml/llama.py`` looks up in its ``bin`` folder:
 
-* it never patches llama.cpp -- upstream sources are only cloned and compiled;
-* it never touches Vocal2Midi's Python sources -- the platform specific
-  library names it produces are exactly the ones
-  ``inference/qwen3asr_dml/llama.py`` already looks up in its ``bin`` folder;
-
-      darwin  -> libggml.dylib / libggml-base.dylib / libllama.dylib
-      win32   -> ggml.dll      / ggml-base.dll      / llama.dll
-      linux   -> libggml.so    / libggml-base.so    / libllama.so
-
-  so switching llama.cpp builds is a matter of dropping files into ``bin``.
+    darwin  -> libggml.dylib / libggml-base.dylib / libllama.dylib
+    win32   -> ggml.dll      / ggml-base.dll      / llama.dll
+    linux   -> libggml.so    / libggml-base.so    / libllama.so
 
 Typical use::
 
-    # macOS (Metal + CPU), the default for this project
-    python scripts/build_llama_runtime.py
-
-    # Windows (DirectML + CPU)
-    python scripts/build_llama_runtime.py --backend dml
-
-    # keep the checkout, just rebuild after changing options
-    python scripts/build_llama_runtime.py --skip-fetch
+    python scripts/build_llama_runtime.py                 # macOS (Metal + CPU)
+    python scripts/build_llama_runtime.py --backend dml   # Windows (DirectML + CPU)
+    python scripts/build_llama_runtime.py --skip-fetch    # rebuild existing checkout
 """
 
 from __future__ import annotations
@@ -300,7 +290,6 @@ def main() -> int:
 
     cmake = find_cmake()
 
-    # 1. fetch -------------------------------------------------------------
     if args.skip_fetch or (source_dir / "CMakeLists.txt").is_file():
         print(f"[1/4] 复用已有源码: {source_dir}")
     else:
@@ -309,14 +298,12 @@ def main() -> int:
         run(["git", "clone", "--depth", "1", "--branch", args.tag,
              REPO_URL, str(source_dir)], dry_run=args.dry_run)
 
-    # 2. configure ---------------------------------------------------------
     print("[2/4] cmake configure")
     cfg = [cmake, "-S", str(source_dir), "-B", str(build_dir)]
     cfg += pick_generator(system, jobs)
     cfg += cmake_configure_args(system, backend, install_dir)
     run(cfg, dry_run=args.dry_run)
 
-    # 3. build -------------------------------------------------------------
     print("[3/4] 编译 llama 库")
     build = [cmake, "--build", str(build_dir), "--target", "llama",
              "--config", "Release"]
@@ -326,7 +313,6 @@ def main() -> int:
         build += ["--", "-j", str(jobs)]
     run(build, dry_run=args.dry_run)
 
-    # 4. install -----------------------------------------------------------
     print("[4/4] 安装到运行时目录")
     if not args.dry_run:
         install_dir.mkdir(parents=True, exist_ok=True)

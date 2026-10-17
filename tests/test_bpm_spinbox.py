@@ -1,4 +1,3 @@
-"""Unit and integration tests for BpmSpinBox and BPM detection."""
 import os
 import pathlib
 import wave
@@ -22,14 +21,12 @@ def qapp():
 
 
 def create_synthetic_wav(path: pathlib.Path, bpm: float = 120.0, duration: float = 10.0, sr: int = 22050):
-    """Generate a clean click/beat WAV file with a given BPM."""
     total_samples = int(duration * sr)
     beat_interval = 60.0 / bpm
     samples = np.zeros(total_samples, dtype=np.int16)
 
     for beat_time in np.arange(0, duration, beat_interval):
         idx = int(beat_time * sr)
-        # click burst: 100 samples
         burst_len = min(100, total_samples - idx)
         if burst_len > 0:
             samples[idx : idx + burst_len] = 20000
@@ -42,7 +39,6 @@ def create_synthetic_wav(path: pathlib.Path, bpm: float = 120.0, duration: float
 
 
 def test_round_bpm_accuracy():
-    """Verify that the 2nd decimal place is rounded and set to 0 (precision = 0.1)."""
     assert round_bpm(120.46) == 120.5
     assert f"{round_bpm(120.46):.2f}" == "120.50"
 
@@ -58,7 +54,6 @@ def test_round_bpm_accuracy():
     assert round_bpm(135.96) == 136.0
     assert f"{round_bpm(135.96):.2f}" == "136.00"
 
-    # Edge cases
     assert round_bpm(None) == 120.0
     assert round_bpm(float("nan")) == 120.0
     assert round_bpm(float("inf")) == 120.0
@@ -66,21 +61,17 @@ def test_round_bpm_accuracy():
 
 
 def test_detect_audio_bpm_synthetic(tmp_path):
-    """Test BPM detection on a generated wav file with 120 BPM."""
     wav_path = tmp_path / "test_120bpm.wav"
     create_synthetic_wav(wav_path, bpm=120.0, duration=15.0)
 
     bpm = detect_audio_bpm(wav_path)
-    # Target is 120.0; accurate to 1 decimal place with 2nd place 0
     assert isinstance(bpm, float)
     assert abs(bpm - 120.0) <= 1.0
-    # Must be rounded to 1 decimal place
     assert round(bpm, 1) == bpm
     assert f"{bpm:.2f}".endswith("0")
 
 
 def test_detect_audio_bpm_invalid_file(tmp_path):
-    """Test error handling on missing or empty files."""
     with pytest.raises(FileNotFoundError):
         detect_audio_bpm(tmp_path / "nonexistent.wav")
 
@@ -108,14 +99,12 @@ def test_bpm_spinbox_properties(qapp):
 def test_bpm_spinbox_drag_filter(qapp):
     box = BpmSpinBox()
 
-    # Drag non-audio file
     mime_txt = QMimeData()
     mime_txt.setUrls([QUrl.fromLocalFile("test.txt")])
     event_enter_txt = QDragEnterEvent(QPointF(5, 5).toPoint(), Qt.CopyAction, mime_txt, Qt.LeftButton, Qt.NoModifier)
     box.dragEnterEvent(event_enter_txt)
     assert not event_enter_txt.isAccepted()
 
-    # Drag audio file
     mime_wav = QMimeData()
     mime_wav.setUrls([QUrl.fromLocalFile("test.wav")])
     event_enter_wav = QDragEnterEvent(QPointF(5, 5).toPoint(), Qt.CopyAction, mime_wav, Qt.LeftButton, Qt.NoModifier)

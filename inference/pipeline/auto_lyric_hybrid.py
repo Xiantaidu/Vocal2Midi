@@ -8,7 +8,6 @@ from application.config import (
     validate_slice_bounds,
 )
 
-# Allow running this script directly from anywhere
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -58,11 +57,7 @@ def _resolve_output_key(output_filename: str, audio_path: str) -> str:
 
 
 def normalize_pipeline_language(language: str | None) -> tuple[str, bool]:
-    """Map language to the pipeline value and the pinyin-ASR flag.
-
-    'zh-pinyin' selects the direct pinyin ASR engine; every other
-    language keeps its existing engine (ja romaji ASR or Qwen text ASR).
-    """
+    """Map language to the pipeline value and the pinyin-ASR flag."""
     value = str(language or "").strip().lower()
     if value == PINYIN_ASR_LANGUAGE:
         return PINYIN_ASR_LANGUAGE, True
@@ -99,7 +94,6 @@ def _export_chunk_wavs(chunks, sr: int, output_key: str, output_dir: pathlib.Pat
 
 
 def _resolve_rmvpe_path(model_path: str) -> str:
-    """Resolve the RMVPE model path."""
     if not model_path:
         raise ValueError("RMVPE model path cannot be empty")
     return model_path
@@ -107,8 +101,6 @@ def _resolve_rmvpe_path(model_path: str) -> str:
 
 @dataclass(frozen=True)
 class _PipelineContext:
-    """Normalized run-wide values shared by the pipeline stages."""
-
     device: str
     output_key: str
     output_dir: pathlib.Path
@@ -142,13 +134,13 @@ def _prepare_context(
     output_dir = pathlib.Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     language, use_pinyin_asr = normalize_pipeline_language(language)
-    # Explicit Chinese ASR selection routes plain zh through the direct pinyin
-    # ASR exactly like the legacy 'zh-pinyin' language value.
+    # An explicit "pinyin" Chinese engine routes plain zh to the direct
+    # pinyin ASR, exactly like the legacy 'zh-pinyin' language value.
     if language == "zh" and str(chinese_asr_engine or "").strip().lower() == "pinyin":
         language = PINYIN_ASR_LANGUAGE
         use_pinyin_asr = True
     lyric_output_mode = _normalize_lyric_output_mode(language, lyric_output_mode)
-    # HFA/GAME/VSQX only know the base languages; the pinyin ASR is a zh variant.
+    # HFA/GAME/VSQX only know base languages; pinyin ASR is a zh variant.
     fa_language = "zh" if language == PINYIN_ASR_LANGUAGE else language
     return _PipelineContext(
         device=device,
@@ -178,9 +170,8 @@ def _extract_pitch_curve(
 ):
     """RMVPE pitch curve for USTX/VSQX export; None when not requested.
 
-    The transcriber is cached in-process and reused across pipeline runs --
-    recreating its DirectML session per song corrupts onnxruntime's DML
-    state and access-violates the process on the next song.
+    The transcriber is process-cached: recreating its DirectML session per
+    song access-violates onnxruntime on the next song.
     """
     if not (("ustx" in output_format_set or "vsqx" in output_format_set) and output_pitch_curve):
         return None
@@ -299,9 +290,8 @@ def _run_game_stage(
         if cancel_checker and cancel_checker():
             raise InterruptedError("Task was cancelled")
     finally:
-        # The model stays cached in load_game_model for reuse across runs;
-        # tearing the DirectML session down per song access-violates
-        # onnxruntime on the next song.
+        # Model stays cached in load_game_model across runs; tearing the
+        # DirectML session down per song access-violates onnxruntime next song.
         free_memory()
     return all_notes
 
@@ -387,7 +377,6 @@ def auto_lyric_hybrid_pipeline(
     asr_session=None,
     cancel_checker=None,
 ):
-    """Auto Lyric Hybrid ONNX pipeline."""
     ctx = _prepare_context(
         audio_path, output_filename, output_dir, output_formats,
         language, chinese_asr_engine, lyric_output_mode,

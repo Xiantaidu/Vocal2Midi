@@ -75,7 +75,7 @@ class _FluentMainWindow(FluentWindow):
                 item.setText(tr(key))
 
     def _apply_fixed_physical_size(self, width: int, height: int):
-        """Lock the window size in physical pixels: logical = physical / scale factor.
+        """Lock the window size in physical pixels: logical = physical / scale.
 
         Qt's resize/setFixedSize take logical pixels, so passing 1260x1000
         verbatim at 125% scaling would produce a 1575x1250 physical window.
@@ -105,10 +105,8 @@ class _FluentMainWindow(FluentWindow):
         self.addSubInterface(self.modelConfigInterface, FluentIcon.DEVELOPER_TOOLS, tr("nav_model"))
         self.addSubInterface(self.globalSettingsInterface, FluentIcon.SETTING, tr("nav_settings"), position=NavigationItemPosition.BOTTOM)
 
-        # Hide the hamburger/menu button at the top of the sidebar.
         self.navigationInterface.setMenuButtonVisible(False)
         
-        # Keep the sidebar width fixed.
         self.navigationInterface.setExpandWidth(50)
         self.navigationInterface.setMinimumExpandWidth(50)
         self.navigationInterface.setMaximumWidth(50)
@@ -136,11 +134,9 @@ class _FluentMainWindow(FluentWindow):
         if self.autoLyricInterface.wait_for_worker(5000):
             event.accept()
             return
-        # Cancellation is cooperative: the worker can sit in an
-        # uninterruptible low-level call (e.g. an ffmpeg decode, which allows
-        # up to 10 minutes) for longer than the grace period. Destroying it
-        # anyway would crash the process, so hide the window and close for
-        # real once the thread has actually finished.
+        # Cancellation is cooperative and the worker can sit in an
+        # uninterruptible call (ffmpeg decode allows up to 10 minutes), so hide
+        # the window and finish closing once the thread actually settles.
         self.hide()
         self.autoLyricInterface.on_worker_settled(self.close)
         event.ignore()

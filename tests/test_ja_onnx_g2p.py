@@ -1,8 +1,6 @@
 """ja_g2p_onnx integration: shared loader, TiFA converter, HFA JaG2p backend.
-
-Real-model tests skip when models/ja_g2p_onnx is absent. The model is the
-primary Japanese G2P for both engines: kanji -> contextually disambiguated
-kana -> romaji -> phonemes via japanese_dict_full.txt.
+Real-model tests skip when the onnx bundle is absent; the model is the primary
+Japanese G2P for both engines (kanji -> kana -> romaji -> phonemes).
 """
 from pathlib import Path
 
@@ -156,7 +154,6 @@ def test_tifa_converter_beams_reading_candidates():
     assert [group.script for group in by_text["私"].readings[0].paths[0]] == ["わ", "た", "し"]
     assert len(by_text["行"].readings) >= 2, "okurigana stem must carry candidates"
     assert [group.script for group in by_text["行"].readings[0].paths[0]] == ["い"]
-    # particle edges normalize to pronunciation
     assert [group.script for group in by_text["は"].readings[0].paths[0]] == ["わ"]
     assert [group.script for group in by_text["へ"].readings[0].paths[0]] == ["え"]
 

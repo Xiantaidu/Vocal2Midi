@@ -1,8 +1,6 @@
-"""Encoding gate: the four text shapes must encode against the real TiFA vocabulary.
-
-These are the acceptance gate for "TiFA full-text mode covers every ASR path's
-text": hanzi (Qwen zh), kana (Qwen ja), pinyin tokens, romaji mora tokens and
-English words. Skipped when the tifa-1.0-onnx bundle is absent.
+"""Acceptance gate for TiFA full-text mode covering every ASR path text: hanzi (Qwen zh),
+kana (Qwen ja), pinyin tokens, romaji mora tokens and English words.
+Skipped when the tifa-1.0-onnx bundle is absent.
 """
 from pathlib import Path
 
@@ -168,10 +166,9 @@ def test_ja_dakuten_digraphs_encode(pipeline, vocabulary):
 
 
 def test_ja_nonstandard_kana_readings_are_faithful():
-    """A handful of lexicon typos were mapped to the wrong sound. Pin the
-    corrected readings so they never regress to the collapsed palatalized form:
-    だョ (東京だョ = da-yo) must stay two mora, and づ-onset foreign spellings
-    (zain/zopfli) must keep the z consonant, not gain a spurious 'du'."""
+    """Pin corrected lexicon readings so they never regress to the collapsed
+    palatalized form: だョ (東京だョ = da-yo) stays two mora, and づ-onset
+    (zain/zopfli) foreign spellings keep the z consonant, not a spurious du."""
     from inference.TiFA.g2p.converters.japanese import JapaneseKanaConverter
 
     conv = JapaneseKanaConverter(

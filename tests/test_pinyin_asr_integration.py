@@ -1,8 +1,6 @@
-"""Tests for wiring the direct pinyin ASR into the Chinese lyric flow.
-
-Convention: language '中文-拼音' ("Chinese-Pinyin") / 'zh-pinyin' routes lyric extraction through
-the pinyin ONNX CTC model; every other language keeps the existing engines
-(ja romaji ASR, otherwise Qwen text ASR).
+"""Convention: language zh-pinyin routes lyric extraction through the pinyin ONNX
+CTC model; every other language keeps the existing engines (ja romaji ASR,
+otherwise Qwen text ASR).
 """
 
 from pathlib import Path
@@ -22,8 +20,6 @@ from inference.pinyin_asr.runtime import PinyinASROnnxModel, resolve_model_dir
 from inference.pipeline import auto_lyric_hybrid as pipeline
 from inference.pipeline import lyric_alignment
 
-
-# --- language routing helpers ---
 
 def test_normalize_pipeline_language_maps_chinese_pinyin():
     assert pipeline.normalize_pipeline_language("zh-pinyin") == ("zh-pinyin", True)
@@ -48,8 +44,6 @@ def test_pinyin_asr_path_resolution(tmp_path):
     else:
         assert default is None
 
-
-# --- pipeline engine routing ---
 
 def _base_kwargs(tmp_path: Path) -> dict:
     return {
@@ -176,7 +170,6 @@ def test_plain_zh_still_uses_qwen(monkeypatch, tmp_path):
 
 
 def test_zh_with_pinyin_engine_routes_to_pinyin_asr(monkeypatch, tmp_path):
-    """The model-config Chinese ASR choice routes plain zh through the pinyin ASR."""
     _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *a, **k: None)
     monkeypatch.setattr(lyric_alignment, "_select_pinyin_asr_path", lambda path: "pinyin")
@@ -208,7 +201,6 @@ def test_zh_with_pinyin_engine_routes_to_pinyin_asr(monkeypatch, tmp_path):
 
 
 def test_ja_with_qwen_engine_skips_romaji_asr(monkeypatch, tmp_path):
-    """The model-config Japanese ASR choice can force the Qwen text-ASR path."""
     _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *a, **k: None)
     monkeypatch.setattr(lyric_alignment, "_select_romaji_asr_path", lambda path: "romaji")
@@ -249,8 +241,6 @@ def test_ja_default_engine_still_uses_romaji_asr(monkeypatch, tmp_path):
     run_romaji.assert_called_once()
     run_qwen.assert_not_called()
 
-
-# --- pinyin token processing (lfa) ---
 
 def test_direct_pinyin_tokens_without_matcher(tmp_path):
     results = [{"text": "ni hao", "phonemes": ["ni", "hao"]}]
@@ -319,8 +309,6 @@ def test_empty_pinyin_result_is_skipped(tmp_path):
     assert "Ignored" in logs[0]
 
 
-# --- asr_api batching ---
-
 def test_batch_transcribe_pinyin_asr_writes_chunks_and_returns_results(monkeypatch, tmp_path):
     fake_model = MagicMock()
     fake_model.transcribe.return_value = [
@@ -346,8 +334,6 @@ def test_batch_transcribe_pinyin_asr_writes_chunks_and_returns_results(monkeypat
     fake_model.transcribe.assert_called_once()
 
 
-# --- runtime model file resolution / real ONNX smoke ---
-
 def test_resolve_model_dir_accepts_dir_and_onnx_file(tmp_path):
     model_dir = tmp_path / "bundle"
     model_dir.mkdir()
@@ -371,7 +357,6 @@ def test_from_model_path_reports_missing_files(tmp_path):
 
 
 def test_real_pinyin_onnx_transcribe_structure():
-    """Loads the real exp26b bundle and checks the transcription result shape."""
     default_dir = Path(__file__).resolve().parents[1] / "models" / "pinyinASR"
     model_file = default_dir / "model_fp16_dynb.onnx"
     if not model_file.exists():

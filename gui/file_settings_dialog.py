@@ -1,9 +1,6 @@
 """Per-file settings dialog for batch mode.
 
-Presents the full parameter set that the main UI controls, seeded from the
-main UI's current values, so each file in a batch can be customized
-individually. Combos are filled from the shared option tables and every
-values() entry is a backend value — display text is never transported.
+Every ``values()`` entry is a backend value — display text is never transported.
 """
 from __future__ import annotations
 
@@ -58,7 +55,6 @@ class FileSettingsDialog(MessageBoxBase):
         grid.setHorizontalSpacing(20)
         grid.setVerticalSpacing(12)
 
-        # ── recognition ─────────────────────────────────────────────
         # The Chinese ASR engine is a global choice; when PinyinASR is active
         # the lyric output for zh is locked to pinyin here as well.
         self._pinyin_locked = str(base_values.get("chinese_asr_engine", "qwen")).strip().lower() == "pinyin"
@@ -122,7 +118,6 @@ class FileSettingsDialog(MessageBoxBase):
         self.cb_pitch_curve.setChecked(base_values["pitch_curve"])
         _add_pair(grid, 4, 0, tr("pitch_curve"), self.cb_pitch_curve, self)
 
-        # ── output ──────────────────────────────────────────────────
         self.tempo_spin = BpmSpinBox(self)
         self.tempo_spin.setRange(10, 300)
         self.tempo_spin.setValue(float(base_values["tempo"]))
@@ -156,13 +151,11 @@ class FileSettingsDialog(MessageBoxBase):
         grid.setColumnStretch(3, 1)
         self.viewLayout.addLayout(grid)
 
-    # ── language-linked lyric output options ────────────────────────
     def _fill_lyric_output_options(self, language: str, selected: str | None):
         """Rebuild the lyric output options for the given language.
 
-        `selected` is a backend value; the combo keeps it when still
-        available. Under zh with PinyinASR the format is locked to pinyin
-        and the combo is disabled.
+        ``selected`` is a backend value, kept when still available. Under zh
+        with PinyinASR the format is locked to pinyin and the combo disabled.
         """
         locked = language == "zh" and self._pinyin_locked
         choices = [

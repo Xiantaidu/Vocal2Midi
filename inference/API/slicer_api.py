@@ -70,16 +70,14 @@ def _merge_segments(left: dict, right: dict, sr: int) -> dict:
 def _merge_short_segments(chunks: list, sr: int, min_len_sec: float, max_len_sec: float) -> list:
     """Greedily merge adjacent short segments to approach min_len_sec target.
 
-    Merge strategy:
-    1. Sort by offset.
-    2. Scan left to right and merge when the current segment is shorter than
-       min_len_sec and the merged segment remains within max_len_sec.
-    3. Repeat until no more merges are possible or every segment reaches min_len_sec.
+    Sort by offset, scan left to right merging while the current segment is
+    shorter than min_len_sec and the result stays within max_len_sec, and
+    repeat until no more merges are possible.
     """
     if not chunks:
         return chunks
 
-    merged = [dict(chunks[0])]  # shallow copy
+    merged = [dict(chunks[0])]
     for i in range(1, len(chunks)):
         cur = merged[-1]
         cur_dur = _segment_duration_sec(cur, sr)
@@ -87,7 +85,6 @@ def _merge_short_segments(chunks: list, sr: int, min_len_sec: float, max_len_sec
         nxt_dur = _segment_duration_sec(nxt, sr)
         combined_dur = _merged_duration_sec(cur, nxt, sr)
 
-        # Merge if the current segment is too short and the combined duration remains valid.
         if cur_dur < min_len_sec and combined_dur <= max_len_sec:
             logger.info(f"  Merging short segment at {nxt['offset']:.2f}s ({nxt_dur:.2f}s) "
                   f"→ combined {combined_dur:.2f}s")
@@ -113,7 +110,6 @@ def _merge_short_segments(chunks: list, sr: int, min_len_sec: float, max_len_sec
     # Recurse because merges can still leave short segments behind.
     any_short = any(_segment_duration_sec(c, sr) < min_len_sec for c in merged)
     if any_short and len(merged) < len(chunks):
-        # Continue only if the previous pass made progress.
         merged = _merge_short_segments(merged, sr, min_len_sec, max_len_sec)
 
     return merged
@@ -172,7 +168,6 @@ def get_pitch_curve(
 
     if voiced_flag_override is not None and voiced_flag_override_step_sec and voiced_flag_override_step_sec > 0:
         target_frames = int(np.ceil(len(y) / hop_length)) + 1
-        # Add the segment offset to get global times
         times = np.arange(target_frames, dtype=np.float64) * (hop_length / sr) + segment_offset_sec
         src_idx = np.round(times / voiced_flag_override_step_sec).astype(np.int64)
         src_idx = np.clip(src_idx, 0, len(voiced_flag_override) - 1)
@@ -188,7 +183,6 @@ def get_pitch_curve(
         frame_length=hop_length * 4, # pyin requires a larger frame
         hop_length=hop_length
     )
-    # Set unvoiced frames to 0
     f0[~voiced_flag] = 0
     return f0, voiced_flag
 
@@ -213,10 +207,7 @@ def _sliding_window_split(
     frame_length: int,
     hop_length: int,
 ):
-    """
-    Internal helper for splitting a single, long audio segment.
-    This function assumes the input has already been cleared of long silences.
-    """
+    """Split one long segment; the input is assumed already cleared of long silences."""
     total_samples = waveform.shape[-1]
     total_sec = total_samples / sr
     
@@ -282,9 +273,7 @@ def grid_search_slice(
     min_interval_ms: int = 200,
     max_sil_kept_ms: int = 500,
 ):
-    """
-    Slices audio by performing a grid search for the best parameters.
-    """
+    """Slice audio by performing a grid search for the best parameters."""
     logger.info(f"Running grid search slicer for target range [{min_len_sec:.1f}s, {max_len_sec:.1f}s]...")
 
     thresholds = [-45, -40, -35, -30, -25, -20] 
@@ -356,9 +345,7 @@ def heuristic_slice(
     split_threshold_db: float = -30.0,
     ultra_short_sec: float = 0.35,
 ):
-    """
-    A two-stage heuristic slicer.
-    """
+    """A two-stage heuristic slicer."""
     logger.info(f"Stage 1: Removing long silences below {silence_removal_threshold_db}dB...")
     pre_slicer = Slicer(
         sr=sr,
@@ -399,7 +386,6 @@ def heuristic_slice(
     final_chunks.sort(key=lambda x: x['offset'])
     final_chunks = _merge_tiny_chunks(final_chunks, sr=sr, tiny_sec=ultra_short_sec)
 
-    # Stage 3: merge neighboring short segments toward the target duration range.
     if final_chunks:
         merge_before = len(final_chunks)
         durations_before = [len(c["waveform"]) / sr for c in final_chunks]
@@ -414,13 +400,8 @@ def heuristic_slice(
     return final_chunks
 
 def _split_wrapper(segment, slicer_func):
-    """
-    A wrapper function for parallel processing.
-    It takes a segment dictionary and a slicing function, and returns the processed chunks.
-    """
-    # Pass segment['offset'] through so pitch extraction stays aligned to global time.
+    """Wrap a slicer for parallel processing over one segment dict."""
     sub_chunks = slicer_func(segment['waveform'], segment_offset_sec=segment['offset'])
-    # Add the original offset to each sub-chunk
     for sub in sub_chunks:
         sub['offset'] += segment['offset']
     return sub_chunks
@@ -436,9 +417,7 @@ def _pitch_based_split(
     voiced_flag_override_step_sec: float | None = None,
     segment_offset_sec: float = 0.0,
 ):
-    """
-    Internal helper for splitting a single, long audio segment based on pitch.
-    """
+    """Split one long segment by pitch."""
     total_samples = waveform.shape[-1]
     total_sec = total_samples / sr
 
@@ -477,7 +456,6 @@ def _pitch_based_split(
         if start_frame < end_frame:
             unvoiced_indices = np.where(~voiced_flag[start_frame:end_frame])[0]
             if len(unvoiced_indices) > 0:
-                # Find the longest continuous unvoiced segment
                 max_len = 0
                 best_start = -1
                 for k, g in itertools.groupby(enumerate(unvoiced_indices), lambda i_x: i_x[0] - i_x[1]):
@@ -486,13 +464,11 @@ def _pitch_based_split(
                         max_len = len(group)
                         best_start = group[0]
                 
-                # Cut in the middle of the longest unvoiced segment
                 if best_start != -1:
                     cut_idx_in_window = best_start + max_len // 2
                     cut_frame = start_frame + cut_idx_in_window
                     cut_type = "Pitch-based (unvoiced)"
 
-        # Fallback to RMS-based splitting if no good unvoiced segment is found
         if cut_frame == -1:
             rms_db = get_rms_db(waveform, frame_length=hop_length*4, hop_length=hop_length)
             start_frame_rms = librosa.time_to_frames(window_start_sec, sr=sr, hop_length=hop_length)
@@ -505,7 +481,7 @@ def _pitch_based_split(
                 best_idx_in_window = np.argmin(window_rms)
                 cut_frame = start_frame_rms + best_idx_in_window
                 cut_type = f"Fallback to RMS (Local Min {window_rms[best_idx_in_window]:.1f}dB)"
-            else: # Should not happen often
+            else:
                 cut_frame = end_frame
                 cut_type = "Fallback (end of window)"
 
@@ -535,9 +511,7 @@ def pitch_based_slice(
     voiced_flag_override: np.ndarray | None = None,
     voiced_flag_override_step_sec: float | None = None,
 ):
-    """
-    A two-stage slicer using pitch information.
-    """
+    """A two-stage slicer using pitch information."""
     logger.info(f"Stage 1: Removing long silences below {silence_removal_threshold_db}dB...")
     pre_slicer = Slicer(
         sr=sr,
@@ -570,7 +544,6 @@ def pitch_based_slice(
     if long_segments:
         logger.info(f"  Found {len(long_segments)} long segments to split in parallel...")
         
-        # Create a partial function with fixed arguments
         slicer_func = functools.partial(
             _pitch_based_split,
             sr=sr,
@@ -581,18 +554,14 @@ def pitch_based_slice(
             voiced_flag_override_step_sec=voiced_flag_override_step_sec,
         )
         
-        # Create a wrapper for the slicer function to handle segment offsets
         split_task = functools.partial(_split_wrapper, slicer_func=slicer_func)
 
         with ProcessPoolExecutor() as executor:
-            # Map the task to all long segments
             processed_chunks_iter = executor.map(split_task, long_segments)
             
-            # Flatten the list of lists
             processed_chunks = [chunk for sublist in processed_chunks_iter for chunk in sublist]
 
         final_chunks = short_segments + processed_chunks
-        # Sort by offset to maintain original order
         final_chunks.sort(key=lambda x: x['offset'])
     else:
         final_chunks = short_segments
@@ -630,9 +599,7 @@ def slice_audio(
     rmvpe_voiced_mask: np.ndarray | None = None,
     rmvpe_time_step_seconds: float | None = None,
 ):
-    """
-    Top-level API for slicing audio with different methods.
-    """
+    """Top-level audio slicing API; `method` selects default/smart/heuristic/grid."""
     normalized_method = normalize_slicing_method(method)
     logger.info(f"Slicing audio with method: '{normalized_method}'")
     if normalized_method == "smart":

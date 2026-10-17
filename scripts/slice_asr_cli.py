@@ -1,16 +1,3 @@
-"""Batch slicing + local Qwen3-ASR CLI.
-
-This script processes a folder of audio files, optionally slices each file,
-runs local ASR on each chunk, and writes both chunk WAVs and `.lab` text files.
-
-Supported input formats: `.wav`, `.m4a`, `.mp3`
-Supported workflows:
-- normal slicing + ASR
-- `--no-slice` whole-file ASR
-- JSON-driven re-slicing via `--from-json`
-- persistent ASR / RMVPE runtimes via `--keep-model` / `--keep-rmvpe`
-"""
-
 from __future__ import annotations
 
 import argparse

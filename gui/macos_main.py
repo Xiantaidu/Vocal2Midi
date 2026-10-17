@@ -1,10 +1,8 @@
 """Native macOS window shell for the Vocal2Midi desktop UI.
 
-The Windows build uses ``FluentWindow`` from ``gui/fluent_compat.py``.  That
-class relies on the frameless-window native integration and is not a good fit
-for macOS (it can crash when Qt is running without a Windows-style composition
-backend).  This module keeps the same pages and settings, but hosts them in a
-normal QMainWindow with a compact native sidebar.
+The Windows build uses ``FluentWindow`` from ``gui/fluent_compat.py``, whose
+frameless-window native integration is not a good fit for macOS. This module
+keeps the same pages and settings in a plain QMainWindow with a native sidebar.
 """
 
 import os
@@ -41,8 +39,6 @@ def _load_app_icon() -> QIcon:
 
 
 class MacMainWindow(QMainWindow):
-    """The macOS desktop window with the same three Vocal2Midi pages."""
-
     pageChanged = Signal(int)
 
     def __init__(self):

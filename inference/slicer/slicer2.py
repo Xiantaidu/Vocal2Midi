@@ -13,9 +13,7 @@ def get_rms(
     y = np.pad(y, padding, mode=pad_mode)
 
     axis = -1
-    # put our new within-frame axis at the end for now
     out_strides = y.strides + tuple([y.strides[axis]])
-    # Reduce the shape on the framing axis
     x_shape_trimmed = list(y.shape)
     x_shape_trimmed[axis] -= frame_length - 1
     out_shape = tuple(x_shape_trimmed) + tuple([frame_length])
@@ -27,12 +25,10 @@ def get_rms(
     else:
         target_axis = axis + 1
     xw = np.moveaxis(xw, -1, target_axis)
-    # Downsample along the target axis
     slices = [slice(None)] * xw.ndim
     slices[axis] = slice(0, None, hop_length)
     x = xw[tuple(slices)]
 
-    # Calculate power
     power = np.mean(np.abs(x) ** 2, axis=-2, keepdims=True)
 
     return np.sqrt(power)
@@ -69,7 +65,6 @@ class Slicer:
             chunk['waveform'] = waveform[begin * self.hop_size: min(waveform.shape[0], end * self.hop_size)]
         return chunk
 
-    # @timeit
     def slice(self, waveform):
         if len(waveform.shape) > 1:
             samples = waveform.mean(axis=0)
@@ -82,22 +77,17 @@ class Slicer:
         silence_start = None
         clip_start = 0
         for i, rms in enumerate(rms_list):
-            # Keep looping while frame is silent.
             if rms < self.threshold:
-                # Record start of silent frames.
                 if silence_start is None:
                     silence_start = i
                 continue
-            # Keep looping while frame is not silent and silence start has not been recorded.
             if silence_start is None:
                 continue
-            # Clear recorded silence start if interval is not enough or clip is too short
             is_leading_silence = silence_start == 0 and i > self.max_sil_kept
             need_slice_middle = i - silence_start >= self.min_interval and i - clip_start >= self.min_length
             if not is_leading_silence and not need_slice_middle:
                 silence_start = None
                 continue
-            # Need slicing. Record the range of silent frames to be removed.
             if i - silence_start <= self.max_sil_kept:
                 pos = rms_list[silence_start: i + 1].argmin() + silence_start
                 if silence_start == 0:
@@ -125,13 +115,11 @@ class Slicer:
                     sil_tags.append((pos_l, pos_r))
                 clip_start = pos_r
             silence_start = None
-        # Deal with trailing silence.
         total_frames = rms_list.shape[0]
         if silence_start is not None and total_frames - silence_start >= self.min_interval:
             silence_end = min(total_frames, silence_start + self.max_sil_kept)
             pos = rms_list[silence_start: silence_end + 1].argmin() + silence_start
             sil_tags.append((pos, total_frames + 1))
-        # Apply and return slices.
         if len(sil_tags) == 0:
             return [{'offset': 0, 'waveform': waveform}]
         else:

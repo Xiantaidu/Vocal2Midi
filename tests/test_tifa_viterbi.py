@@ -1,4 +1,3 @@
-"""Known-answer tests for the vendored TiFA Viterbi decoder."""
 import numpy as np
 
 from inference.TiFA.decoding import decode_alignment_flat
@@ -55,7 +54,7 @@ def test_group_forces_no_gap_between_tokens():
         skip_penalty=0.5,
     )
 
-    assert spans[0, 0, 1] == spans[0, 1, 0]  # token 1 starts exactly at token 0's end
+    assert spans[0, 0, 1] == spans[0, 1, 0]
 
 
 def test_batch_with_varying_lengths():

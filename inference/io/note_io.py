@@ -77,7 +77,6 @@ def _save_midi(notes: list[NoteInfo], filepath: pathlib.Path, tempo: int = 120):
         events.append((abs_onset_ticks, 1, midi_pitch, "on", note))
         events.append((abs_offset_ticks, 0, midi_pitch, "off", note))
 
-    # Sort by tick; at equal ticks emit note_off before note_on.
     events.sort(key=lambda e: (e[0], e[1]))
 
     last_abs_ticks = 0

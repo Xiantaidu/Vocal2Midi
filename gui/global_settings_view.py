@@ -94,7 +94,6 @@ class GlobalSettingsInterface(ScrollArea):
         title_layout.addWidget(btn_reset)
         self.vBoxLayout.addLayout(title_layout)
 
-        # ── appearance ──────────────────────────────────────────────
         appearance_card = CardWidget(self)
         appearance_layout = QVBoxLayout(appearance_card)
         appearance_title = BodyLabel(self)
@@ -128,7 +127,6 @@ class GlobalSettingsInterface(ScrollArea):
         appearance_layout.addLayout(appearance_grid)
         self.vBoxLayout.addWidget(appearance_card)
 
-        # ── general ─────────────────────────────────────────────────
         general_card = CardWidget(self)
         general_layout = QVBoxLayout(general_card)
         general_title = BodyLabel(self)
@@ -149,7 +147,6 @@ class GlobalSettingsInterface(ScrollArea):
         general_layout.addLayout(general_row)
         self.vBoxLayout.addWidget(general_card)
 
-        # ── advanced processing parameters ──────────────────────────
         adv_card = CardWidget(self)
         adv_layout = QVBoxLayout(adv_card)
         adv_title = BodyLabel(self)
@@ -235,7 +232,6 @@ class GlobalSettingsInterface(ScrollArea):
         adv_layout.addLayout(adv_grid)
         self.vBoxLayout.addWidget(adv_card)
 
-        # ── debug ───────────────────────────────────────────────────
         debug_card = CardWidget(self)
         debug_layout = QVBoxLayout(debug_card)
         debug_title = BodyLabel(self)
@@ -274,7 +270,6 @@ class GlobalSettingsInterface(ScrollArea):
         debug_layout.addLayout(debug_grid)
         self.vBoxLayout.addWidget(debug_card)
 
-        # ── about ───────────────────────────────────────────────────
         about_card = CardWidget(self)
         about_layout = QVBoxLayout(about_card)
         about_title = BodyLabel(self)
@@ -292,7 +287,6 @@ class GlobalSettingsInterface(ScrollArea):
         self.setWidgetResizable(True)
         self.enableTransparentBackground()
 
-    # ── i18n helpers ────────────────────────────────────────────────
     def _bind_tr(self, fn):
         self._tr_bindings.append(fn)
         fn()
@@ -343,7 +337,6 @@ class GlobalSettingsInterface(ScrollArea):
         self.settings.setValue("enable_batch_mode", enabled)
         self.batchModeChanged.emit(enabled)
 
-    # ── read-only accessors for other pages ─────────────────────────
     # Other pages read pipeline parameters through these instead of reaching
     # into the widgets directly.
     def batch_size(self) -> int:
@@ -395,7 +388,6 @@ class GlobalSettingsInterface(ScrollArea):
     def enable_batch_mode(self) -> bool:
         return self.cb_batch_mode.isChecked()
 
-    # ── existing behaviour ──────────────────────────────────────────
     def reset_to_default(self):
         self.seg_thresh_spin.setValue(self.default_values["seg_thresh"])
         self.seg_rad_spin.setValue(self.default_values["seg_rad"])

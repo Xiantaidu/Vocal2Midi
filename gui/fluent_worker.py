@@ -24,7 +24,6 @@ class _QtLogHandler(logging.Handler):
             self.handleError()
 
 
-# Import the hybrid pipeline
 try:
     from application.pipeline import run_auto_lyric_job, open_asr_session
     HYBRID_AVAILABLE = True
@@ -54,13 +53,10 @@ class WorkerThread(QThread):
     progress_signal = Signal(int, int, str)  # (current file index, total files, filename)
 
     def __init__(self, tasks: list[tuple[PipelineConfig, str]]):
-        """Initialize the worker thread with a list of (config, filename) tasks.
+        """Initialize the worker with a list of ``(config, filename)`` tasks.
 
-        Each task carries its own PipelineConfig so every file can have
-        custom settings in batch mode.
-
-        Args:
-            tasks: List of (PipelineConfig, audio filename) tuples.
+        Each task carries its own PipelineConfig so files can be customized
+        individually in batch mode.
         """
         super().__init__()
         self.tasks = tasks
@@ -77,8 +73,8 @@ class WorkerThread(QThread):
         # multi-GB Qwen model loads once instead of per file.
         session = open_asr_session() if HYBRID_AVAILABLE else None
         # Pipeline modules log instead of printing; capture those records for
-        # the GUI log window while the worker runs. The stdout redirector
-        # below stays for third-party prints that bypass logging.
+        # the GUI log. The stdout redirector stays for third-party prints that
+        # bypass logging.
         root_logger = logging.getLogger()
         old_root_level = root_logger.level
         log_handler = _QtLogHandler(self.log_signal)

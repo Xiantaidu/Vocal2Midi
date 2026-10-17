@@ -1,5 +1,3 @@
-"""Model configuration interface — ASR engine choices and model paths."""
-
 import pathlib
 
 from PySide6.QtCore import Signal
@@ -36,7 +34,6 @@ ENGINE_ROWS = [
     ("japanese_g2p_engine", "ja_g2p_choice", [("kashi-g2p-onnx", "g2p_kashi"), ("pyopenjtalk", "g2p_pyopenjtalk")], "kashi-g2p-onnx"),
 ]
 
-# Backward-compatible alias for the ASR subset of ENGINE_ROWS.
 ASR_ENGINE_ROWS = ENGINE_ROWS[:2]
 
 
@@ -126,8 +123,6 @@ class ModelConfigInterface(ScrollArea):
         self.setWidgetResizable(True)
         self.enableTransparentBackground()
 
-    # ── widget helpers ──────────────────────────────────────────────
-
     def _bind_tr(self, fn):
         self._tr_bindings.append(fn)
         fn()
@@ -136,7 +131,6 @@ class ModelConfigInterface(ScrollArea):
         for fn in self._tr_bindings:
             fn()
 
-    # ── read-only accessors for other pages ─────────────────────────
     # Other pages read model paths and engine choices through these instead
     # of reaching into the row widgets directly.
     def model_path(self, settings_key: str) -> str:
@@ -203,8 +197,6 @@ class ModelConfigInterface(ScrollArea):
         btn.clicked.connect(lambda checked, e=edit: self._browse_dir(e))
         row.addWidget(btn)
         parent_layout.addLayout(row)
-
-    # ── path helpers ─────────────────────────────────────────────────
 
     def _to_project_relative(self, path_str: str) -> str:
         p = pathlib.Path(path_str).resolve()

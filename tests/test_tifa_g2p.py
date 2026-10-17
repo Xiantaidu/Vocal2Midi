@@ -1,8 +1,6 @@
-"""Real-data smoke tests for the vendored TiFA G2P pipeline.
-
-Covers the four text shapes the alignment stage can receive per ASR path:
-hanzi (Qwen zh), kana (Qwen ja), pinyin tokens, romaji mora tokens, plus
-English words. Skipped when the tifa-1.0-onnx bundle is absent.
+"""Real-data smoke tests for the vendored TiFA G2P pipeline: the four text shapes the
+alignment stage can receive per ASR path (hanzi, kana, pinyin tokens, romaji mora tokens,
+English words). Skipped when the tifa-1.0-onnx bundle is absent.
 """
 from pathlib import Path
 

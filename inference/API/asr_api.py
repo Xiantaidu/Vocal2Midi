@@ -16,7 +16,6 @@ from inference.t2s_utils import traditional_to_simplified
 
 logger = logging.getLogger(__name__)
 
-# --- Qwen Model Loading ---
 _QWEN_MODEL_CACHE = {}
 _QWEN_MODEL_CACHE_LOCK = threading.Lock()
 _ROMAJI_MODEL_CACHE = {}
@@ -36,8 +35,8 @@ DEFAULT_QWEN_ASR_PROMPT_EN = (
 _ASCII_WORD_RE = re.compile(r"[A-Za-z]+(?:['’\-][A-Za-z]+)*")
 _ASCII_PUNCT_RE = re.compile(r"[!\"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]+")
 _CJK_KANA_SPACE_RE = re.compile(r"(?<=[\u3400-\u9fff\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f])\s+(?=[\u3400-\u9fff\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f])")
-# English words for the HFA CMU dictionary: letters joined by apostrophes/hyphens
-# (e.g. don't, world-class). Curly apostrophes are normalized to straight ones.
+# English words for the HFA CMU dictionary: letters joined by apostrophes or
+# hyphens (don't, world-class); curly apostrophes are normalized to straight.
 _ENGLISH_DICT_WORD_RE = re.compile(r"[A-Za-z]+(?:['\-][A-Za-z]+)*")
 
 
@@ -54,7 +53,6 @@ def _normalize_lyric_language(language: str | None) -> str:
     return value
 
 
-# Language name passed to the Qwen ASR prompt for each pipeline language.
 QWEN_ASR_LANGUAGE_NAMES = {
     "ja": "Japanese",
     "zh": "Chinese",
@@ -113,10 +111,7 @@ def _sanitize_qwen_asr_results(results, language: str | None):
 
 
 def load_qwen_model(model_path, device=None, use_cache=True):
-    """
-    Loads the Qwen ASR model using the unified ONNX + llama.cpp runtime.
-    Caches model in-process to avoid repeated loading.
-    """
+    """Load the Qwen ASR model via the unified ONNX + llama.cpp runtime."""
     requested_device = normalize_runtime_device(device)
     cache_key = (str(model_path), requested_device)
     if use_cache:
@@ -160,7 +155,6 @@ def load_qwen_model(model_path, device=None, use_cache=True):
 
 
 def clear_qwen_model_cache():
-    """Clears in-process Qwen ASR model cache."""
     with _QWEN_MODEL_CACHE_LOCK:
         cached_models = list(_QWEN_MODEL_CACHE.values())
         _QWEN_MODEL_CACHE.clear()
@@ -176,9 +170,8 @@ def clear_qwen_model_cache():
 def load_romaji_asr_model(model_dir, device=None, use_cache=True):
     """Load the Japanese romaji ASR ONNX runtime from a model directory.
 
-    Cached in-process and reused across pipeline runs: recreating the
-    DirectML session per song corrupts onnxruntime's DML state and
-    access-violates the process on the next song.
+    Cached in-process: recreating the DirectML session per song corrupts
+    onnxruntime's DML state and access-violates the process on the next song.
     """
     resolved_dir = str(resolve_model_dir(model_dir))
     requested_device = normalize_runtime_device(device)
@@ -220,9 +213,8 @@ def clear_romaji_model_cache():
 def load_pinyin_asr_model(model_dir, device=None, use_cache=True):
     """Load the Chinese pinyin ASR ONNX runtime from a model directory.
 
-    Cached in-process and reused across pipeline runs: recreating the
-    DirectML session per song corrupts onnxruntime's DML state and
-    access-violates the process on the next song.
+    Cached in-process: recreating the DirectML session per song corrupts
+    onnxruntime's DML state and access-violates the process on the next song.
     """
     resolved_dir = str(resolve_pinyin_model_dir(model_dir))
     requested_device = normalize_runtime_device(device)
@@ -323,12 +315,10 @@ def batch_transcribe_romaji_asr(
     return all_results, chunk_indices
 
 
-# --- Process Pool Worker ---
 _WORKER_ASR_MODEL = None
 
 
 def _init_worker(model_path, device):
-    """Initializer for each worker process in the pool."""
     global _WORKER_ASR_MODEL
     proc_name = mp.current_process().name
     logger.info(f"Initializing ASR worker ({proc_name}) with model '{model_path}' on {device}...")
@@ -337,7 +327,6 @@ def _init_worker(model_path, device):
 
 
 def _transcribe_task(paths, asr_lang, context, model=None):
-    """The actual transcription task executed by a worker process or in-process."""
     m = model if model is not None else _WORKER_ASR_MODEL
     if m is None:
         return RuntimeError("ASR worker model not initialized.")
@@ -350,8 +339,6 @@ def _transcribe_task(paths, asr_lang, context, model=None):
 
 def _asr_worker_main(model_path, device, task_queue, result_queue):
     """Runs a single non-daemon ASR worker process for Qwen inference."""
-    # Child process: route module logging (including the qwen runtime) to the
-    # inherited console stream, message-only like the old prints.
     logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
     model = None
     try:
@@ -472,12 +459,10 @@ def _wait_for_worker_message(result_queue, worker, *, timeout_sec, cancel_checke
 class AsrSubprocessSession:
     """A reusable Qwen ASR subprocess worker spanning multiple pipeline runs.
 
-    The worker process (and the multi-GB model it loads) is spawned lazily on
-    the first transcribe() call and reused across calls, so a batch of files
-    pays the model load once instead of per file. If the bound model path or
-    device changes, or the worker died, the next call respawns it. close()
-    releases the worker; jobs that never reach the Qwen text-ASR stage never
-    spawn one.
+    The worker (and its multi-GB model) is spawned lazily on the first
+    transcribe() call and reused, so a batch of files pays the model load once.
+    A changed model path/device or a dead worker respawns it; close() releases
+    it. Jobs that never reach the Qwen text-ASR stage never spawn one.
     """
 
     def __init__(self, *, startup_timeout_sec: float = 180, batch_timeout_sec: float = 180):
@@ -628,7 +613,6 @@ class AsrSubprocessSession:
         self._device = None
 
 
-# --- Main ASR API ---
 def batch_transcribe_asr(
     chunks,
     sr,
@@ -646,9 +630,8 @@ def batch_transcribe_asr(
 ):
     """Saves chunks to temp_dir and runs batched ASR transcription.
 
-    With force_subprocess=True and a shared `session`, the spawned worker
-    process (and its loaded model) is reused across calls; without a session
-    a one-shot worker is spawned for this call only.
+    With force_subprocess=True and a shared `session` the spawned worker is
+    reused across calls; without a session it is one-shot.
     """
     asr_batch_size = max(1, int(asr_batch_size))
     asr_lang = QWEN_ASR_LANGUAGE_NAMES.get(

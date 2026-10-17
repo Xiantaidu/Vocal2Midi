@@ -321,10 +321,7 @@ def test_qwen_asr_language_names_cover_english():
     assert QWEN_ASR_LANGUAGE_NAMES["zh"] == "Chinese"
 
 
-# --- shared subprocess session across pipeline runs ---
-
 def test_shared_session_spawns_worker_once(monkeypatch, tmp_path):
-    """A shared AsrSubprocessSession spawns one worker for many calls."""
     worker = _FakeProcess()
     task_queue = _FakeQueue()
     result_queue = _FakeQueue()
@@ -350,7 +347,7 @@ def test_shared_session_spawns_worker_once(monkeypatch, tmp_path):
     assert worker.started is True
     assert worker.terminated is False  # never hard-killed between calls
     session.close()
-    assert task_queue.items[-1] == {"type": "stop"}  # graceful shutdown
+    assert task_queue.items[-1] == {"type": "stop"}
 
 
 def test_session_respawns_worker_when_device_changes(monkeypatch, tmp_path):
@@ -382,7 +379,6 @@ def test_session_respawns_worker_when_device_changes(monkeypatch, tmp_path):
 
 
 def test_sessionless_call_uses_one_shot_worker(monkeypatch, tmp_path):
-    """Without a session every call spawns and shuts down its own worker."""
     worker = _FakeProcess()
     task_queue = _FakeQueue()
     result_queue = _FakeQueue()

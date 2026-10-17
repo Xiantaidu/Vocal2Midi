@@ -1,10 +1,6 @@
-"""Reading-consistency gate: display G2P (LyricFA ZhG2p) and alignment G2P
-(TiFA cpp-pinyin) must agree on the cantonese/mandarin defaults they were
-given. Regression for the reported 只 zi2->zek3 misreading and the phrase-table
-sharing that keeps both engines on one data set.
-
-JyutpingConverter pins are skipped when the model bundle (jyutping_dict.txt)
-is absent; the ZhG2p pins run anywhere (LyricFA dicts are vendored).
+"""Reading-consistency gate: display G2P (LyricFA ZhG2p) and alignment G2P (TiFA cpp-pinyin)
+must agree on their cantonese/mandarin defaults. Regression for the reported 只 zi2->zek3 misreading.
+JyutpingConverter pins skip without the model bundle; ZhG2p pins run anywhere.
 """
 from pathlib import Path
 

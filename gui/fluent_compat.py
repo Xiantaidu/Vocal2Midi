@@ -1,17 +1,3 @@
-"""Self-contained replacement for the qfluentwidgets widgets used by the GUI.
-
-Vocal2Midi previously depended on ``PySide6-Fluent-Widgets`` (qfluentwidgets),
-which is GPLv3 and therefore incompatible with this repository's Apache-2.0
-license. This module re-implements the small slice of that library the GUI
-actually uses, on top of plain PySide6, so the application can ship under a
-single permissive license.
-
-Only the API surface this project touches is provided (26 names). The
-implementations are original; they borrow the *names* and the Fluent design
-language, not the upstream code. Icon artwork is loaded from
-``gui/assets/icons`` and comes from Microsoft's Fluent UI System Icons (MIT).
-"""
-
 from __future__ import annotations
 
 import enum
@@ -98,9 +84,9 @@ _ICON_DIR = Path(__file__).resolve().parent / "assets" / "icons"
 _CONTROL_HEIGHT = 33
 
 # Accent palette, matching the Fluent theme colour the GUI shipped with.
-_ACCENT = "#009faa"          # primary
-_ACCENT_HOVER = "#00a7b3"    # light 1
-_ACCENT_PRESSED = "#3eabb3"  # light 3
+_ACCENT = "#009faa"
+_ACCENT_HOVER = "#00a7b3"
+_ACCENT_PRESSED = "#3eabb3"
 
 # UI font stack, matching the original library's default families and order.
 _FONT_FAMILIES = ("Segoe UI", "Microsoft YaHei", "PingFang SC")
@@ -108,7 +94,6 @@ _FONT_CACHE: QFont | None = None
 
 
 def _base_font() -> QFont:
-    """The application font: 14 px in the original family stack."""
     global _FONT_CACHE
     if _FONT_CACHE is None:
         font = QFont()
@@ -119,28 +104,20 @@ def _base_font() -> QFont:
 
 
 def _rgba(r: int, g: int, b: int, a: float) -> str:
-    """Format a QSS rgba() colour from a 0-1 alpha ratio."""
     return f"rgba({r}, {g}, {b}, {a:.4f})"
 
 
 def _tokens() -> dict:
-    """Theme-dependent colour tokens, taken from the original Fluent QSS.
-
-    Keys mirror the states the widgets below need; values already include the
-    light/dark decision so call sites stay free of branching.
-    """
     if _resolve_dark():
         return {
             "window": "#202020",
             "text": "#ffffff",
-            # flat control surface: barely-there white overlay
             "control_bg": _rgba(255, 255, 255, 0.0605),
             "control_hover": _rgba(255, 255, 255, 0.0837),
             "control_pressed": _rgba(255, 255, 255, 0.0326),
             # Text inputs (LineEdit/TextEdit/SpinBox) draw a strong bottom
-            # edge; combo boxes use a milder pair, and the emphasised edge
-            # moves to the top in dark mode. The original QSS keeps these
-            # separate, so they are not shared here either.
+            # edge; combo boxes use a milder pair with the emphasised edge on
+            # top in dark mode, so the two sets are kept separate.
             "field_border": _rgba(255, 255, 255, 0.08),
             "field_border_bottom": _rgba(255, 255, 255, 0.5442),
             "combo_border": _rgba(255, 255, 255, 0.053),
@@ -150,7 +127,6 @@ def _tokens() -> dict:
             "text_secondary": _rgba(255, 255, 255, 0.786),
             "text_disabled": _rgba(255, 255, 255, 0.3628),
             "text_placeholder": _rgba(255, 255, 255, 0.6063),
-            # cards: a 5% white wash over the window colour
             "card_bg": _rgba(255, 255, 255, 0.0512),
             "card_border": _rgba(255, 255, 255, 0.0706),
             "hover_overlay": _rgba(255, 255, 255, 0.0392),
@@ -192,12 +168,7 @@ def _tokens() -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# Theme
-# ---------------------------------------------------------------------------
-
 class Theme(enum.Enum):
-    """Theme selector, mirroring the upstream enum's members."""
 
     LIGHT = "Light"
     DARK = "Dark"
@@ -205,12 +176,6 @@ class Theme(enum.Enum):
 
 
 class _Config(QObject):
-    """Holds the global theme and broadcasts changes.
-
-    ``log_terminal`` relies on ``themeChangedFinished`` to rebuild its
-    colour-coded output after the theme flips, so the signal must fire
-    exactly when the theme is applied.
-    """
 
     themeChangedFinished = Signal()
 
@@ -221,7 +186,6 @@ _current_theme = Theme.LIGHT
 
 
 def _resolve_dark() -> bool:
-    """Whether the active theme should render as dark."""
     if _current_theme is Theme.DARK:
         return True
     if _current_theme is Theme.LIGHT:
@@ -233,7 +197,6 @@ def _resolve_dark() -> bool:
 
 
 def isDarkTheme() -> bool:
-    """Return True when the current theme renders as dark."""
     return _resolve_dark()
 
 
@@ -274,11 +237,6 @@ def _dark_palette() -> QPalette:
 
 
 def setTheme(theme: Theme) -> None:
-    """Apply ``theme`` globally and notify listeners.
-
-    Widgets that need theme-specific colours connect to
-    ``qconfig.themeChangedFinished`` and re-read :func:`isDarkTheme`.
-    """
     global _current_theme
     _current_theme = theme if isinstance(theme, Theme) else Theme.LIGHT
 
@@ -290,12 +248,7 @@ def setTheme(theme: Theme) -> None:
     qconfig.themeChangedFinished.emit()
 
 
-# ---------------------------------------------------------------------------
-# Icons
-# ---------------------------------------------------------------------------
-
 class FluentIcon(enum.Enum):
-    """Icon selector. The value doubles as the asset file stem."""
 
     MUSIC = "Music"
     SETTING = "Setting"
@@ -307,12 +260,10 @@ class FluentIcon(enum.Enum):
     PAUSE = "Pause"
 
     def path(self, theme: Theme = Theme.AUTO) -> str:
-        """Filesystem path of the SVG variant for ``theme``."""
         variant = "white" if _theme_is_dark(theme) else "black"
         return str(_ICON_DIR / f"{self.value}_{variant}.svg")
 
     def icon(self, theme: Theme = Theme.AUTO, color: QColor | None = None) -> QIcon:
-        """Return a fresh :class:`QIcon` for the current theme."""
         return QIcon(self.path(theme))
 
 
@@ -323,7 +274,6 @@ def _theme_is_dark(theme: Theme) -> bool:
 
 
 def toQIcon(icon) -> QIcon:
-    """Coerce an icon argument (FluentIcon, QIcon, path or None) to QIcon."""
     if icon is None:
         return QIcon()
     if isinstance(icon, QIcon):
@@ -332,21 +282,12 @@ def toQIcon(icon) -> QIcon:
         return icon.icon()
     if isinstance(icon, str):
         return QIcon(icon)
-    if hasattr(icon, "icon"):  # any FluentIcon-like object
+    if hasattr(icon, "icon"):
         return icon.icon()
     return QIcon()
 
 
-# ---------------------------------------------------------------------------
-# Labels
-# ---------------------------------------------------------------------------
-
 class _CompatLabel(QLabel):
-    """Shared constructor handling for the label classes.
-
-    The upstream classes accept either ``(parent)`` or ``(text, parent)``;
-    call sites use both spellings.
-    """
 
     _font_size = 14
     _font_weight = "normal"
@@ -366,26 +307,16 @@ class _CompatLabel(QLabel):
 
 
 class BodyLabel(_CompatLabel):
-    """Standard body text."""
+    pass
 
 
 class SubtitleLabel(_CompatLabel):
-    """Section subtitle, rendered a little larger."""
 
     _font_size = 20
     _font_weight = "600"
 
 
-# ---------------------------------------------------------------------------
-# Containers
-# ---------------------------------------------------------------------------
-
 class CardWidget(QFrame):
-    """Rounded panel used to group related controls.
-
-    The original draws a translucent light wash over the window colour with a
-    hairline border, rather than a solid fill.
-    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -409,7 +340,6 @@ class CardWidget(QFrame):
 
 
 class ScrollArea(QScrollArea):
-    """Scrollable page container."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -417,23 +347,13 @@ class ScrollArea(QScrollArea):
         self.setWidgetResizable(True)
 
     def enableTransparentBackground(self):
-        """Let the page background show through this scroll area."""
         self.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         view = self.widget()
         if view is not None:
             view.setStyleSheet("background: transparent;")
 
 
-# ---------------------------------------------------------------------------
-# Inputs
-# ---------------------------------------------------------------------------
-
 class ComboItem:
-    """One entry of a :class:`ComboBox`.
-
-    Exposes ``isEnabled`` because ``test_gui_components`` inspects it
-    directly (the upstream library keeps the same attribute).
-    """
 
     def __init__(self, text: str, icon=None, userData=None, isEnabled: bool = True):
         self.text = text
@@ -443,10 +363,6 @@ class ComboItem:
 
 
 class ComboBox(QComboBox):
-    """Drop-down box that also tracks items in a ``self.items`` list.
-
-    Values travel as ``userData``; display text is never used as data.
-    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -527,12 +443,6 @@ class ComboBox(QComboBox):
 
 
 def _field_qss(selector: str) -> str:
-    """QSS for the flat input surface used by text fields and spin boxes.
-
-    A translucent fill with a hairline border, plus a much stronger line
-    along the bottom edge — that asymmetric border is the field's signature
-    look, and the bottom edge is what makes the box read as a box at all.
-    """
     t = _tokens()
     return (
         f"{selector} {{"
@@ -554,7 +464,6 @@ def _field_qss(selector: str) -> str:
 
 
 class _FieldMixin:
-    """Re-applies the field QSS whenever the theme changes."""
 
     _field_selector = ""
     _field_padding = "0px 10px"
@@ -577,16 +486,10 @@ class _FieldMixin:
 
 
 class _SpinArrowButton(QToolButton):
-    """Borderless up/down arrow button inside a spin box.
-
-    Qt's native spin buttons draw a raised, bordered widget that does not fit
-    the Fluent look; the original library instead places two flat arrow
-    buttons over the field. This mirrors that: transparent until hovered.
-    """
 
     def __init__(self, direction: str, parent=None):
         super().__init__(parent)
-        self._direction = direction  # "up" or "down"
+        self._direction = direction
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAutoRaise(True)
         self.setIconSize(QSize(10, 10))
@@ -614,12 +517,6 @@ class _SpinArrowButton(QToolButton):
 
 
 class _SpinBoxMixin:
-    """Replaces the native spin buttons with flat Fluent arrows.
-
-    The native buttons are switched off with ``NoButtons``; two
-    :class:`_SpinArrowButton` widgets are laid out on the right and wired to
-    ``stepUp``/``stepDown``, so value editing is unchanged.
-    """
 
     def _init_spin_arrows(self):
         self.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
@@ -632,7 +529,6 @@ class _SpinBoxMixin:
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # Sit the pair flush against the right edge, vertically centred.
         margin, spacing = 4, 5
         h = self.height()
         y = (h - 23) // 2
@@ -642,12 +538,6 @@ class _SpinBoxMixin:
 
 
 class LineEdit(_FieldMixin, QLineEdit):
-    """Single-line text field.
-
-    Fixed to 33 px, matching the control height the GUI was laid out with;
-    without it the field collapses to its font height and the border reads as
-    a thin hairline.
-    """
 
     _field_selector = "QLineEdit"
 
@@ -658,7 +548,6 @@ class LineEdit(_FieldMixin, QLineEdit):
 
 
 class ListWidget(QListWidget):
-    """Item list, used for the audio file rows."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -678,7 +567,6 @@ class ListWidget(QListWidget):
 
 
 class TextEdit(_FieldMixin, QTextEdit):
-    """Multi-line text field."""
 
     _field_selector = "QTextEdit"
 
@@ -688,19 +576,16 @@ class TextEdit(_FieldMixin, QTextEdit):
 
 
 class SpinBox(_SpinBoxMixin, _FieldMixin, QSpinBox):
-    """Integer spin box with flat Fluent arrows."""
 
     _field_selector = "QSpinBox"
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Leave the right side free for the two arrow buttons.
         self._init_field("0px 74px 0px 10px")
         self._init_spin_arrows()
 
 
 class DoubleSpinBox(_SpinBoxMixin, _FieldMixin, QDoubleSpinBox):
-    """Floating-point spin box with flat Fluent arrows."""
 
     _field_selector = "QDoubleSpinBox"
 
@@ -711,11 +596,6 @@ class DoubleSpinBox(_SpinBoxMixin, _FieldMixin, QDoubleSpinBox):
 
 
 class SwitchButton(QWidget):
-    """Toggle switch with an on/off caption.
-
-    Mirrors the upstream API: ``checkedChanged(bool)``, ``setChecked``,
-    ``isChecked`` and ``setOffText``.
-    """
 
     checkedChanged = Signal(bool)
 
@@ -741,7 +621,6 @@ class SwitchButton(QWidget):
         self.setFixedHeight(22)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 
-    # -- state ------------------------------------------------------------
     def isChecked(self) -> bool:
         return self._indicator.isChecked()
 
@@ -749,7 +628,6 @@ class SwitchButton(QWidget):
         if bool(checked) != self._indicator.isChecked():
             self._indicator.setChecked(bool(checked))
 
-    # -- text -------------------------------------------------------------
     def text(self) -> str:
         return self._text
 
@@ -793,7 +671,6 @@ class SwitchButton(QWidget):
 
 
 class _SwitchIndicator(QWidget):
-    """The pill-shaped track and knob drawn inside :class:`SwitchButton`."""
 
     toggled = Signal(bool)
 
@@ -808,7 +685,6 @@ class _SwitchIndicator(QWidget):
         self._anim.setDuration(120)
         self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
-    # -- animated knob position -------------------------------------------
     def getKnobX(self) -> float:
         return self._knob_x
 
@@ -818,7 +694,6 @@ class _SwitchIndicator(QWidget):
 
     knobX = Property(float, getKnobX, setKnobX)
 
-    # -- state ------------------------------------------------------------
     def isChecked(self) -> bool:
         return self._checked
 
@@ -842,7 +717,6 @@ class _SwitchIndicator(QWidget):
         else:
             self.setKnobX(target)
 
-    # -- interaction ------------------------------------------------------
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self.isEnabled():
             self.toggle()
@@ -858,7 +732,6 @@ class _SwitchIndicator(QWidget):
         self.update()
         super().leaveEvent(event)
 
-    # -- painting ---------------------------------------------------------
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -905,17 +778,7 @@ class _SwitchIndicator(QWidget):
         painter.drawEllipse(int(self._knob_x), 5, 12, 12)
 
 
-# ---------------------------------------------------------------------------
-# Buttons
-# ---------------------------------------------------------------------------
-
 def _apply_button_style(button: QPushButton, primary: bool):
-    """Apply the original Fluent button surface to ``button``.
-
-    Standard buttons are a translucent wash with a hairline border and a
-    marginally stronger bottom edge; primary buttons are filled with the
-    accent colour.
-    """
     t = _tokens()
     if primary:
         # The accent is a light teal, so the label flips to black on dark.
@@ -956,11 +819,6 @@ def _apply_button_style(button: QPushButton, primary: bool):
 
 
 class PushButton(QPushButton):
-    """Standard button.
-
-    Accepts ``(text, parent, icon)`` — the shape the GUI uses — as well as
-    ``(parent)`` and ``(text, parent)``.
-    """
 
     def __init__(self, text=None, parent=None, icon=None):
         if isinstance(text, QWidget) and parent is None:
@@ -985,7 +843,6 @@ class PushButton(QPushButton):
 
 
 class PrimaryPushButton(PushButton):
-    """Accent-coloured call-to-action button."""
 
     def __init__(self, text=None, parent=None, icon=None):
         super().__init__(text, parent, icon)
@@ -994,7 +851,6 @@ class PrimaryPushButton(PushButton):
 
 
 class TransparentToolButton(QToolButton):
-    """Borderless icon button, used for per-row actions."""
 
     def __init__(self, icon=None, parent=None):
         if isinstance(icon, QWidget) and parent is None:
@@ -1019,12 +875,7 @@ class TransparentToolButton(QToolButton):
         super().setIcon(toQIcon(icon))
 
 
-# ---------------------------------------------------------------------------
-# Indicators
-# ---------------------------------------------------------------------------
-
 class IconWidget(QWidget):
-    """Small widget that paints a single icon."""
 
     def __init__(self, icon=None, parent=None):
         if isinstance(icon, QWidget) and parent is None:
@@ -1046,7 +897,6 @@ class IconWidget(QWidget):
 
 
 class IndeterminateProgressRing(QWidget):
-    """Spinning arc shown while a background job runs."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1087,12 +937,7 @@ class IndeterminateProgressRing(QWidget):
         painter.drawArc(rect, -self._angle * 16, 90 * 16)
 
 
-# ---------------------------------------------------------------------------
-# Notifications
-# ---------------------------------------------------------------------------
-
 class InfoBarPosition(enum.Enum):
-    """Where an :class:`InfoBar` appears over its parent."""
 
     TOP = 0
     BOTTOM = 1
@@ -1104,13 +949,7 @@ class InfoBarPosition(enum.Enum):
 
 
 class InfoBar(QFrame):
-    """Transient floating notification.
 
-    Use the class methods (``success``/``error``/``warning``/``info``); they
-    build, position and show the bar, then dismiss it after ``duration`` ms.
-    """
-
-    # Status glyph colours, matching the original info-bar icons.
     _ICON_COLORS = {
         "info": {"light": "#00b7c3", "dark": "#29f7ff", "char": "\u2139"},
         "success": {"light": "#0f7b0f", "dark": "#6ccb5f", "char": "\u2714"},
@@ -1183,7 +1022,6 @@ class InfoBar(QFrame):
             "}"
         )
 
-    # -- lifecycle --------------------------------------------------------
     def _dismiss(self):
         self.hide()
         self.deleteLater()
@@ -1226,7 +1064,6 @@ class InfoBar(QFrame):
         if self._duration and self._duration > 0:
             QTimer.singleShot(self._duration, self._dismiss)
 
-    # -- class-method constructors ---------------------------------------
     @classmethod
     def _create(cls, kind, title, content, orient, is_closable, duration, position, parent):
         bar = cls(
@@ -1257,16 +1094,7 @@ class InfoBar(QFrame):
         return cls._create("error", title, content, orient, isClosable, duration, position, parent)
 
 
-# ---------------------------------------------------------------------------
-# Dialogs
-# ---------------------------------------------------------------------------
-
 class MessageBoxBase(QDialog):
-    """Dialog base with a content area and an OK/Cancel button row.
-
-    Subclasses add widgets to ``viewLayout`` and read them back in their own
-    ``values()``; ``yesButton`` accepts the dialog when ``validate()`` holds.
-    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1324,16 +1152,10 @@ class MessageBoxBase(QDialog):
             self.accept()
 
     def validate(self) -> bool:
-        """Hook for subclasses to reject invalid input before closing."""
         return True
 
 
-# ---------------------------------------------------------------------------
-# Main window
-# ---------------------------------------------------------------------------
-
 class NavigationItemPosition(enum.Enum):
-    """Where a navigation entry is placed in the sidebar."""
 
     TOP = 0
     SCROLL_TOP = 1
@@ -1341,7 +1163,6 @@ class NavigationItemPosition(enum.Enum):
 
 
 class _NavItemHandle:
-    """Stand-in for a sidebar entry, exposing the ``setText`` the GUI uses."""
 
     def __init__(self, navigation, name: str):
         self._navigation = navigation
@@ -1352,12 +1173,6 @@ class _NavItemHandle:
 
 
 class NavigationInterface(QWidget):
-    """Icon rail on the left edge of :class:`FluentWindow`.
-
-    Kept deliberately close to ``macos_main``'s sidebar: a flat icon list.
-    The Windows shell requests a 50 px rail, so entries render icon-only and
-    carry their caption as a tooltip.
-    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1396,7 +1211,6 @@ class NavigationInterface(QWidget):
             "}"
         )
 
-    # -- construction -----------------------------------------------------
     def add_item(self, name: str, icon, text: str, position: NavigationItemPosition):
         item = QListWidgetItem(toQIcon(icon), "" if self._icon_only else text)
         item.setData(Qt.ItemDataRole.UserRole, name)
@@ -1422,10 +1236,8 @@ class NavigationInterface(QWidget):
             item.setToolTip(text)
 
     def widget(self, name: str):
-        """Return a handle for the entry named ``name`` (or None)."""
         return _NavItemHandle(self, name) if name in self._items else None
 
-    # -- API used by the shell -------------------------------------------
     def setMenuButtonVisible(self, visible: bool):
         # This shell has no hamburger button; the call is accepted for
         # compatibility with the previous widget library.
@@ -1454,11 +1266,6 @@ class NavigationInterface(QWidget):
 
 
 class FluentWindow(QMainWindow):
-    """Main window with an icon rail and a stack of pages.
-
-    The ``addSubInterface`` / ``navigationInterface`` / ``stackedWidget``
-    surface matches what ``gui/fluent_main.py`` drives.
-    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1491,7 +1298,6 @@ class FluentWindow(QMainWindow):
 
     def addSubInterface(self, interface: QWidget, icon, text: str,
                         position: NavigationItemPosition = NavigationItemPosition.TOP):
-        """Register a page and add a sidebar entry for it."""
         name = interface.objectName()
         self._interfaces[name] = interface
         self.stackedWidget.addWidget(interface)
@@ -1504,5 +1310,4 @@ class FluentWindow(QMainWindow):
             self.stackedWidget.setCurrentWidget(interface)
 
     def setMicaEffectEnabled(self, enabled: bool):
-        """No-op: the Mica backdrop depends on the previous UI library."""
         return None

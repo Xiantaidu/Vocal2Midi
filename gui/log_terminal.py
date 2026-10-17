@@ -1,4 +1,3 @@
-"""Log terminal widget: monospaced output colored by severity, theme-aware."""
 import re
 
 from gui.fluent_compat import TextEdit, isDarkTheme, qconfig
@@ -41,8 +40,6 @@ class LogTerminal(TextEdit):
         self.setObjectName("logTerminal")
         self._lines: list[str] = []
         self._apply_style()
-        # Rebuild the terminal colours once the new theme is applied, so no
-        # line keeps colours from the previous background.
         qconfig.themeChangedFinished.connect(self._on_theme_changed)
 
     def log(self, msg: str):
@@ -85,8 +82,7 @@ class LogTerminal(TextEdit):
         return f'<span style="color:{p[kind]};">{text}</span>'
 
     def _on_theme_changed(self):
-        # rebuild every log line on theme change so stale colors never sit on
-        # the new background
+        # Rebuild every line so no stale colour sits on the new background.
         self._apply_style()
         self.setHtml("<br>".join(self._line_html(m) for m in self._lines))
         scrollbar = self.verticalScrollBar()

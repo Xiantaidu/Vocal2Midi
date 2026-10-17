@@ -1,4 +1,3 @@
-"""Real-model tests for the TiFA aligner (skipped without the ONNX bundle)."""
 import importlib.util
 from pathlib import Path
 

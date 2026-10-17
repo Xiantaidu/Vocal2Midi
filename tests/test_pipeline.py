@@ -1,5 +1,3 @@
-"""Unit tests for application/pipeline.py with PipelineConfig."""
-
 import os
 import tempfile
 from pathlib import Path
@@ -17,11 +15,9 @@ from application.exceptions import (
 
 
 class TestValidateModelPaths:
-    """Tests for _validate_model_paths function."""
 
     @pytest.fixture
     def base_cfg(self):
-        """PipelineConfig with non-existent paths."""
         return PipelineConfig(
             audio_path="test.wav",
             output_filename="output",
@@ -36,7 +32,6 @@ class TestValidateModelPaths:
         )
 
     def test_missing_all_paths_raises(self, base_cfg):
-        """Should raise ModelNotFoundError when all paths are missing."""
         with pytest.raises(ModelNotFoundError) as exc_info:
             _validate_model_paths(base_cfg)
         assert "GAME" in exc_info.value.details
@@ -44,29 +39,25 @@ class TestValidateModelPaths:
         assert "ASR" in exc_info.value.details
 
     def test_missing_partial_paths_raises(self, base_cfg, tmp_path):
-        """Should raise when some paths are missing."""
         existing = str(tmp_path)
-        base_cfg.game_model_dir = existing  # valid
+        base_cfg.game_model_dir = existing
         # hfa_model_dir and asr_model_path still invalid
 
         with pytest.raises(ModelNotFoundError) as exc_info:
             _validate_model_paths(base_cfg)
-        assert "GAME" not in exc_info.value.details  # valid path not in errors
+        assert "GAME" not in exc_info.value.details
         assert "HubertFA" in exc_info.value.details
         assert "ASR" in exc_info.value.details
 
     def test_all_valid_paths_passes(self, base_cfg, tmp_path):
-        """Should not raise when all paths exist."""
         existing = str(tmp_path)
         base_cfg.game_model_dir = existing
         base_cfg.hfa_model_dir = existing
         base_cfg.asr_model_path = existing
 
-        # Should not raise
         _validate_model_paths(base_cfg)
 
     def test_empty_string_path_raises(self, base_cfg):
-        """Empty string paths should be treated as invalid."""
         base_cfg.game_model_dir = ""
         base_cfg.hfa_model_dir = "/exists"
         base_cfg.asr_model_path = "/exists"
@@ -75,7 +66,6 @@ class TestValidateModelPaths:
             _validate_model_paths(base_cfg)
 
     def test_no_lyrics_mode_only_requires_game_model(self, base_cfg, tmp_path):
-        """No-lyrics mode should not require ASR or HFA models."""
         base_cfg.output_lyrics = False
         base_cfg.game_model_dir = str(tmp_path)
         base_cfg.hfa_model_dir = "/does/not/exist/hfa"
@@ -84,19 +74,16 @@ class TestValidateModelPaths:
         _validate_model_paths(base_cfg)
 
     def test_zh_pinyin_engine_skips_qwen_path_check(self, base_cfg, tmp_path):
-        """Chinese + PinyinASR validates the pinyin model, not the Qwen one."""
         existing = str(tmp_path)
         base_cfg.game_model_dir = existing
         base_cfg.hfa_model_dir = existing
         base_cfg.pinyin_asr_model_path = existing
-        base_cfg.asr_model_path = "/does/not/exist/asr"  # unused by the pinyin engine
+        base_cfg.asr_model_path = "/does/not/exist/asr"
         base_cfg.chinese_asr_engine = "pinyin"
 
-        # Should not raise
         _validate_model_paths(base_cfg)
 
     def test_zh_qwen_engine_requires_qwen_path(self, base_cfg, tmp_path):
-        """Chinese + Qwen3-ASR (default) still requires the Qwen model path."""
         existing = str(tmp_path)
         base_cfg.game_model_dir = existing
         base_cfg.hfa_model_dir = existing
@@ -107,7 +94,6 @@ class TestValidateModelPaths:
         assert "ASR" in exc_info.value.details
 
     def test_ja_qwen_engine_bypasses_romaji_path_check(self, base_cfg, tmp_path):
-        """Japanese + Qwen3-ASR must not fail on a broken romaji model path."""
         existing = str(tmp_path)
         base_cfg.game_model_dir = existing
         base_cfg.hfa_model_dir = existing
@@ -119,7 +105,6 @@ class TestValidateModelPaths:
         _validate_model_paths(base_cfg)
 
     def test_cantonese_requires_tifa_model_path(self, base_cfg, tmp_path):
-        """Cantonese always requires TiFA aligner model."""
         existing = str(tmp_path)
         base_cfg.game_model_dir = existing
         base_cfg.asr_model_path = existing
@@ -144,11 +129,9 @@ class TestValidateModelPaths:
 
 
 class TestRunAutoLyricJob:
-    """Tests for run_auto_lyric_job."""
 
     @pytest.fixture
     def valid_cfg(self, tmp_path):
-        """PipelineConfig with valid paths."""
         return PipelineConfig(
             audio_path="test.wav",
             output_filename="output",
@@ -164,7 +147,6 @@ class TestRunAutoLyricJob:
 
     @patch("application.pipeline.auto_lyric_hybrid_pipeline")
     def test_successful_execution(self, mock_pipeline, valid_cfg):
-        """Should call the pipeline with correct arguments."""
         run_auto_lyric_job(valid_cfg)
 
         mock_pipeline.assert_called_once()
@@ -175,7 +157,6 @@ class TestRunAutoLyricJob:
 
     @patch("application.pipeline.auto_lyric_hybrid_pipeline")
     def test_cancellation_before_start(self, mock_pipeline, valid_cfg):
-        """Should raise CancellationError if cancel_checker returns True."""
         valid_cfg.cancel_checker = lambda: True
 
         with pytest.raises(CancellationError) as exc_info:
@@ -186,7 +167,6 @@ class TestRunAutoLyricJob:
 
     @patch("application.pipeline.auto_lyric_hybrid_pipeline")
     def test_cancel_checker_not_called_when_none(self, mock_pipeline, valid_cfg):
-        """Should not raise when cancel_checker is None."""
         valid_cfg.cancel_checker = None
 
         run_auto_lyric_job(valid_cfg)
@@ -194,7 +174,6 @@ class TestRunAutoLyricJob:
 
     @patch("application.pipeline.auto_lyric_hybrid_pipeline")
     def test_pipeline_interrupted_error_converted(self, mock_pipeline, valid_cfg):
-        """InterruptedError should be converted to CancellationError."""
         mock_pipeline.side_effect = InterruptedError("interrupted")
 
         with pytest.raises(CancellationError):
@@ -202,7 +181,6 @@ class TestRunAutoLyricJob:
 
     @patch("application.pipeline.auto_lyric_hybrid_pipeline")
     def test_generic_exception_converted(self, mock_pipeline, valid_cfg):
-        """Generic exceptions should be wrapped in Vocal2MidiError."""
         mock_pipeline.side_effect = RuntimeError("Something went wrong")
 
         with pytest.raises(Vocal2MidiError) as exc_info:

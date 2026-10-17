@@ -44,7 +44,7 @@ pip-wheel-metadata/
 /outputs/
 /tmp_out/
 /.tmp_debug/
-
+.workbuddy/
 *.lab
 *.textgrid
 TEST.wav

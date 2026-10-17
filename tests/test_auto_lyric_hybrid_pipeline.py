@@ -386,7 +386,6 @@ def test_chunks_format_exports_chunk_wavs_without_lyrics(monkeypatch, tmp_path):
 
 
 def test_tifa_engine_routes_to_tifa_fa(monkeypatch, tmp_path):
-    """alignment_engine='tifa' bypasses HubertFA and calls the TiFA aligner."""
     chunks = _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
     monkeypatch.setattr(lyric_alignment, "run_qwen_asr_and_fa", lambda *a, **k: ({"chunk_0": ["a"]}, ["log"]))
@@ -448,8 +447,6 @@ def test_pinyin_asr_mode_passes_base_language_to_tifa(monkeypatch, tmp_path):
 
 
 def test_tifa_chunks_switch_exports_wav_and_textgrid(monkeypatch, tmp_path):
-    """The chunks switch must yield per-chunk WAV + TextGrid pairs on the
-    TiFA path, mirroring export_hfa_artifacts' contract."""
     _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
 
@@ -482,7 +479,6 @@ def test_tifa_chunks_switch_exports_wav_and_textgrid(monkeypatch, tmp_path):
 
 
 def test_default_alignment_engine_uses_tifa(monkeypatch, tmp_path):
-    """The default alignment_engine must use the TiFA path."""
     _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
     monkeypatch.setattr(lyric_alignment, "run_qwen_asr_and_fa", lambda *a, **k: ({"chunk_0": ["a"]}, ["log"]))
@@ -512,7 +508,6 @@ def test_default_alignment_engine_uses_tifa(monkeypatch, tmp_path):
 
 
 def test_explicit_alignment_engine_hfa_uses_hfa(monkeypatch, tmp_path):
-    """Explicit alignment_engine='hfa' must keep the HubertFA path intact."""
     _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
     monkeypatch.setattr(lyric_alignment, "run_qwen_asr_and_fa", lambda *a, **k: ({"chunk_0": ["a"]}, ["log"]))
@@ -540,7 +535,6 @@ def test_explicit_alignment_engine_hfa_uses_hfa(monkeypatch, tmp_path):
 
 
 def test_cantonese_automatically_routes_to_tifa(monkeypatch, tmp_path):
-    """Cantonese language='yue' must route to TiFA even when alignment_engine is 'hfa'."""
     _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
     run_qwen = MagicMock(return_value=({"chunk_0": ["海"]}, ["log"]))

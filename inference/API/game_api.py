@@ -5,7 +5,6 @@ import traceback
 import librosa
 import numpy as np
 
-# Add repo path if needed
 ROOT_DIR = pathlib.Path(__file__).parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
@@ -20,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 _SINGABLE_JA_PHONEMES = {"a", "i", "u", "e", "o"}
 _SINGABLE_ZH_FALLBACK_VOWELS = set("aeiouv")
-# ARPABET vowel inventory used by the English CMU dict (ds_cmudict-07b.txt).
+# ARPABET vowels in the English CMU dict (ds_cmudict-07b.txt).
 _SINGABLE_EN_PHONEMES = {
     "aa", "ae", "ah", "ao", "aw", "ax", "ay",
     "eh", "er", "ey", "ih", "iy", "ow", "oy", "uh", "uw",
@@ -83,13 +82,9 @@ def _find_word_nucleus_start(word, language: str | None) -> float | None:
 def _english_syllable_chunks(word):
     """Split one aligned English word into per-syllable time chunks.
 
-    Vowel-nucleus semantics, matching the zh/ja path: every chunk starts at
-    its vowel nucleus while an inter-syllable onset stays inside the preceding
-    chunk. The caller additionally extends the final chunk across the next
-    word's onset (see _extract_vowel_boundaries_english), so word-initial
-    consonants are sung inside the previous note and notes stay contiguous
-    instead of puncturing the phrase with vuvs=0 holes. Returns
-    [(start, end), ...] or None when the word has no singable vowel.
+    Each chunk starts at its vowel nucleus while an inter-syllable onset stays
+    in the preceding chunk, so word-initial consonants are sung inside the
+    previous note. Returns [(start, end), ...] or None when no singable vowel.
     """
     phones = getattr(word, "phonemes", None) or []
     if not phones:
@@ -111,8 +106,7 @@ def _extract_vowel_boundaries_english(result_word, original_chars: list[str]):
 
     Each chunk becomes one align unit for GAME; chunk 0 carries the whole word
     as its lyric and every later chunk carries "+" (the syllable-position
-    marker). Melisma (pitch-transition) notes inside a chunk fall back to the sustain symbol
-    assigned by the caller.
+    marker). Melisma notes inside a chunk use the caller's sustain symbol.
     """
     word_durs = []
     word_vuvs = []
@@ -147,12 +141,9 @@ def _extract_vowel_boundaries_english(result_word, original_chars: list[str]):
                 last_end = word.end
             continue
 
-        # zh/ja-style end anchoring: the word's final chunk extends to the
-        # next singable word's vowel nucleus, so that word's onset consonants
-        # are sung inside this note and consecutive notes butt together
-        # instead of puncturing the phrase with a vuvs=0 hole at every word
-        # boundary. After a pause (SP/AP) there is no previous note to absorb
-        # the onset, and the caller's gap entry applies as in zh/ja.
+        # The final chunk extends to the next singable word's vowel nucleus, so
+        # that word's onset consonants are sung inside this note (no vuvs=0 hole
+        # per word boundary); after SP/AP the caller's gap entry applies.
         note_end = float(word.end)
         if i + 1 < len(result_word) and result_word[i + 1].text not in _NON_SINGABLE_WORD_TOKENS:
             next_nucleus = _find_word_nucleus_start(result_word[i + 1], "en")
@@ -182,12 +173,10 @@ _GAME_MODEL_CACHE: dict[tuple[str, str], GameOnnxModel] = {}
 
 
 def load_game_model(model_dir: str, device=None, use_cache: bool = True):
-    """
-    Loads the GAME ONNX model suite.
+    """Load the GAME ONNX model suite.
 
-    Cached in-process and reused across pipeline runs: recreating the
-    DirectML session per song corrupts onnxruntime's DML state and
-    access-violates the process on the next song.
+    Cached in-process: recreating the DirectML session per song corrupts
+    onnxruntime's DML state and access-violates the process on the next song.
     """
     resolved = str(pathlib.Path(model_dir))
     key = (resolved, str(device or "").strip().lower() or "auto")
@@ -344,12 +333,9 @@ def extract_pitches_and_align(
     cancel_checker=None,
     language=None,
 ):
-    """
-    Extract pitches using the GAME ONNX runtime and align them to lyrics.
-    """
-    # Melisma (pitch-transition) notes keep '-' for every language; for English the '+' on
-    # syllable positions comes from the per-syllable chunk lyrics instead
-    # (see _extract_vowel_boundaries_english).
+    """Extract pitches using the GAME ONNX runtime and align them to lyrics."""
+    # Melisma notes keep '-' for every language; English '+' on syllable
+    # positions comes from the per-syllable chunk lyrics instead.
     sustain_lyric = "-"
     logger.info("[Hybrid Pipeline] Extracting pitches with GAME ONNX...")
 
@@ -496,9 +482,7 @@ def extract_pitches_only(
     cancel_checker=None,
     language=None,
 ):
-    """
-    Extract pitches using the GAME ONNX runtime without lyric alignment.
-    """
+    """Extract pitches using the GAME ONNX runtime without lyric alignment."""
     logger.info("[Hybrid Pipeline] Extracting pitches with GAME ONNX (no-lyrics mode)...")
 
     all_notes = []

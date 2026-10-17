@@ -1,14 +1,6 @@
-"""Tests for the quantization dispatch: simple mode + the smart rhythmic
-alignment engine, strictly per the reference smart_quantize.py.
-
-The smart engine aligns to the correction grid the caller selects
-(``quantization_step``: 480 = 1/4, 240 = 1/8, 120 = 1/16, 60 = 1/32,
-30 = 1/64) with no bar/measure awareness: the importance ladder is
-relative to the beat, and a failed chain (infeasible overlaps) leaves
-the notes untouched — the reference semantics, intentionally not "fixed".
-
-All fixtures are synthetic NoteInfo lists at BPM 120, where one tick is
-1/960 s (PPQ 480).
+"""Tests for the quantization dispatch (simple + smart rhythmic alignment, per reference smart_quantize.py).
+The smart engine aligns to ``quantization_step`` (480=1/4, 240=1/8, 120=1/16, 60=1/32, 30=1/64) with no bar
+awareness; a failed chain leaves notes untouched. Fixtures are synthetic NoteInfo at BPM 120, one tick = 1/960 s.
 """
 
 import logging
@@ -50,9 +42,6 @@ def _notes_from_ticks(pairs, lyrics=None):
     ]
 
 
-# ── simple mode ──────────────────────────────────────────────────────
-
-
 def test_simple_mode_snaps_to_grid():
     notes = _notes_from_ticks([(73, 221), (350, 407)])
     quantize_notes(notes, TEMPO, STEP, mode="simple")
@@ -88,15 +77,10 @@ def test_should_apply_quantization_gate():
     assert should_apply_quantization("simple", 0) is False
 
 
-# ── smart mode ───────────────────────────────────────────────────────
-
-
 def test_engine_quarter_is_the_beat_and_grid_is_a_128th():
-    # Regression pin for the reference's historical bug: TICKS_PER_QUARTER
-    # used to be QUARTER/4, so its MIDI path read every position as 1/4
-    # while the engine-scale path stayed correct. The corrected engine
-    # defines one quarter note = one beat = 32 correction-grid columns, and
-    # the ladder is relative to the beat (no bar/measure concept).
+    # Regression pin for the reference bug: TICKS_PER_QUARTER was QUARTER/4,
+    # so one quarter = one beat = 32 correction-grid columns, and the ladder
+    # is relative to the beat (no bar/measure concept).
     assert TICKS_PER_QUARTER == QUARTER
     assert QUARTER == GRID * 32
     assert Fraction(QUARTER, 480) * 480 == QUARTER

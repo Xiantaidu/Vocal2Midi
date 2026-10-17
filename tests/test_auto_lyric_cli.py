@@ -1,4 +1,3 @@
-"""Tests for the headless auto_lyric_cli script."""
 import importlib.util
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -109,7 +108,7 @@ def test_collect_inputs_expands_filters_and_dedupes(tmp_path):
 
     files = auto_lyric_cli.collect_inputs([tmp_path / "a.wav", tmp_path], out_dir)
     names = [p.name for p in files]
-    assert names == ["a.wav", "b.mp3", "c.wav"]  # txt filtered, out/ excluded, deduped
+    assert names == ["a.wav", "b.mp3", "c.wav"]
 
     flat = auto_lyric_cli.collect_inputs([tmp_path], out_dir, recursive=False)
     assert [p.name for p in flat] == ["a.wav", "b.mp3"]

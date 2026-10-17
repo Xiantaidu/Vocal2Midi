@@ -265,7 +265,6 @@ class AutoLyricInterface(ScrollArea):
         self._last_device = None
         self.update_lyrics_visibility()
         self.update_lyric_output_options()
-        # Switching the Chinese ASR engine re-evaluates the pinyin output lock.
         self.model_config.chinese_asr_engine_changed.connect(
             lambda _value: self.update_lyric_output_options()
         )
@@ -275,9 +274,8 @@ class AutoLyricInterface(ScrollArea):
         )
         self._last_device = self.device_combo.currentText()  # baseline; don't wipe saved batches on startup
         self.on_export_format_changed()
-        self._update_batch_mode()  # all widgets exist now
+        self._update_batch_mode()
 
-    # ── i18n helpers ────────────────────────────────────────────────
     def _bind_tr(self, fn):
         self._tr_bindings.append(fn)
         fn()
@@ -296,7 +294,6 @@ class AutoLyricInterface(ScrollArea):
         row.addWidget(label)
         row.addWidget(widget)
 
-    # ── drag & drop ─────────────────────────────────────────────────
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
@@ -317,7 +314,6 @@ class AutoLyricInterface(ScrollArea):
         else:
             event.ignore()
 
-    # ── log terminal ────────────────────────────────────────────────
     def log_msg(self, msg):
         self.log_edit.log(msg)
 
@@ -358,7 +354,6 @@ class AutoLyricInterface(ScrollArea):
     def on_progress(self, current: int, total: int, filename: str):
         self.run_status_label.setText(tr("processing", i=current, n=total, f=filename))
 
-    # ── option helpers ──────────────────────────────────────────────
     def apply_device_batch_defaults(self, device: str):
         # Apply conservative batch defaults only when the device actually
         # changes; never wipe a value the user persisted in global settings.
@@ -556,7 +551,6 @@ class AutoLyricInterface(ScrollArea):
     def clear_audio_files(self):
         self.audio_list.clear_all()
 
-    # ── batch mode ──────────────────────────────────────────────────
     def _update_batch_mode(self):
         """Single file keeps the panels; more than one file in the list enters
         batch mode: panels hide and the list grows to fill the freed space."""
@@ -733,7 +727,6 @@ class AutoLyricInterface(ScrollArea):
             if self.worker.isRunning():
                 self.log_msg(tr("stop_hint"))
 
-    # ── worker lifecycle accessors (used by the main window) ────────
     def is_running(self) -> bool:
         return self.worker is not None and self.worker.isRunning()
 

@@ -1,15 +1,13 @@
 """Lightweight UI translations for the Fluent GUI.
 
 `tr(key)` returns the text for the active language; widgets bind a zero-arg
-refresh callable via `_bind_tr`-style helpers so a language switch can
-retranslate the whole UI live without recreating widgets.
+refresh callable so a language switch can retranslate the UI without rebuilding.
 """
 from __future__ import annotations
 
 current_language = "zh"
 
 _STRINGS: dict[str, dict[str, str]] = {
-    # ── main window ────────────────────────────────────────────────
     "nav_auto": {"zh": "自动提取与灌注", "en": "Auto Extract & Lyrics"},
     "nav_model": {"zh": "模型配置", "en": "Model Config"},
     "nav_settings": {"zh": "全局设置", "en": "Settings"},
@@ -30,7 +28,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "zh": "提取任务尚未结束，关闭窗口将强制停止任务。确定关闭吗？",
         "en": "Extraction is still running. Closing the window will force-stop it. Close anyway?",
     },
-    # ── auto lyric page ────────────────────────────────────────────
     "app_title": {"zh": "自动提取与歌词灌注", "en": "Auto Extract & Lyrics"},
     "upload_audio": {"zh": "上传音频文件", "en": "Upload Audio Files"},
     "pick_files": {"zh": "选择文件", "en": "Add Files"},
@@ -135,7 +132,6 @@ _STRINGS: dict[str, dict[str, str]] = {
     "fail_title": {"zh": "任务失败", "en": "Task Failed"},
     "fail_body": {"zh": "发生错误，详情请查看运行日志", "en": "An error occurred; see the run log for details"},
     "error_prefix": {"zh": "错误", "en": "Error"},
-    # ── per-file batch settings ────────────────────────────────────
     "file_settings": {"zh": "文件参数", "en": "File Settings"},
     "file_settings_hint": {
         "zh": "该文件的参数已按界面当前设置初始化，可单独调整；调整只对此文件生效。",
@@ -147,13 +143,11 @@ _STRINGS: dict[str, dict[str, str]] = {
         "zh": "已选择 {n} 个文件，每个文件可单独设置参数",
         "en": "{n} files selected; each file has its own settings",
     },
-    # ── worker thread ──────────────────────────────────────────────
     "worker_processing": {"zh": "========== 正在处理: {f} ==========", "en": "========== Processing: {f} =========="},
     "worker_success": {"zh": "提取成功！文件已保存至: {d}", "en": "Extraction succeeded! Files saved to: {d}"},
     "worker_cancelled": {"zh": "任务已被取消。", "en": "Task was cancelled."},
     "worker_stopped": {"zh": "任务已被强制停止。", "en": "Task was force-stopped."},
     "worker_error": {"zh": "发生错误:\n{tb}", "en": "An error occurred:\n{tb}"},
-    # ── global settings page ───────────────────────────────────────
     "settings_title": {"zh": "全局设置", "en": "Global Settings"},
     "reset_defaults": {"zh": "恢复默认", "en": "Restore Defaults"},
     "general_settings": {"zh": "常规设置", "en": "General Settings"},
@@ -184,7 +178,6 @@ _STRINGS: dict[str, dict[str, str]] = {
     "round_pitch": {"zh": "音高取整:", "en": "Round Pitch:"},
     "about": {"zh": "关于", "en": "About"},
     "version_info": {"zh": "版本: v{version}", "en": "Version: v{version}"},
-    # ── model config page ──────────────────────────────────────────
     "model_title": {"zh": "模型配置", "en": "Model Configuration"},
     "zh_asr_choice": {"zh": "中文ASR选择:", "en": "Chinese ASR:"},
     "ja_asr_choice": {"zh": "日语ASR选择:", "en": "Japanese ASR:"},
