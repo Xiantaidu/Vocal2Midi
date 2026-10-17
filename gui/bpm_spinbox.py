@@ -6,7 +6,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QThread, Qt, Signal
-from qfluentwidgets import DoubleSpinBox
+from gui.fluent_compat import DoubleSpinBox
 
 from gui.audio_file_list import AudioFileList
 from gui.i18n import tr

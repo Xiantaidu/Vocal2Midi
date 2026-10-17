@@ -1,10 +1,10 @@
 """Native macOS window shell for the Vocal2Midi desktop UI.
 
-The Windows build uses qfluentwidgets' ``FluentWindow``.  That class relies on
-the frameless-window native integration and is not a good fit for macOS (it
-can crash when Qt is running without a Windows-style composition backend).
-This module keeps the same pages and settings, but hosts them in a normal
-QMainWindow with a compact native sidebar.
+The Windows build uses ``FluentWindow`` from ``gui/fluent_compat.py``.  That
+class relies on the frameless-window native integration and is not a good fit
+for macOS (it can crash when Qt is running without a Windows-style composition
+backend).  This module keeps the same pages and settings, but hosts them in a
+normal QMainWindow with a compact native sidebar.
 """
 
 import os
@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from qfluentwidgets import FluentIcon, setTheme, Theme
+from gui.fluent_compat import FluentIcon, setTheme, Theme
 
 from gui import __version__
 from gui.auto_lyric_view import AutoLyricInterface

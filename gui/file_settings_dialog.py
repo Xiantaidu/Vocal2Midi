@@ -7,7 +7,7 @@ values() entry is a backend value — display text is never transported.
 """
 from __future__ import annotations
 
-from qfluentwidgets import (
+from gui.fluent_compat import (
     MessageBoxBase,
     BodyLabel,
     ComboBox,

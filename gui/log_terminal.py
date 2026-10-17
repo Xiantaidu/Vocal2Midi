@@ -1,7 +1,7 @@
 """Log terminal widget: monospaced output colored by severity, theme-aware."""
 import re
 
-from qfluentwidgets import TextEdit, isDarkTheme, qconfig
+from gui.fluent_compat import TextEdit, isDarkTheme, qconfig
 
 
 class LogTerminal(TextEdit):
@@ -41,9 +41,8 @@ class LogTerminal(TextEdit):
         self.setObjectName("logTerminal")
         self._lines: list[str] = []
         self._apply_style()
-        # themeChangedFinished fires after qfluentwidgets reapplies its widget
-        # stylesheets; otherwise our terminal style gets overwritten by the
-        # library's TextEdit stylesheet
+        # Rebuild the terminal colours once the new theme is applied, so no
+        # line keeps colours from the previous background.
         qconfig.themeChangedFinished.connect(self._on_theme_changed)
 
     def log(self, msg: str):

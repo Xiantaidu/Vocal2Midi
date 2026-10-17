@@ -73,7 +73,7 @@ audio
 application/   application-layer orchestration and config objects
 docs/          architecture notes and supporting docs
 models/        local model directories
-gui/           PySide6 + qfluentwidgets desktop UI v2.0.0
+gui/           PySide6 desktop UI v2.0.0
 inference/     ASR, alignment, pitch extraction, slicing, quantization, export
 scripts/       batch CLI and portable build helpers
 tests/         automated tests
@@ -93,7 +93,6 @@ The main runtime dependencies are:
 
 - `onnxruntime-directml`
 - `PySide6`
-- `PySide6-Fluent-Widgets`
 - `librosa`
 - `soundfile`
 - `mido`

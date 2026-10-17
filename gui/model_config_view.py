@@ -5,7 +5,7 @@ import pathlib
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFileDialog
 
-from qfluentwidgets import (
+from gui.fluent_compat import (
     ScrollArea,
     PushButton,
     CardWidget,

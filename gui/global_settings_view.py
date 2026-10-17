@@ -10,7 +10,7 @@ from application.config import (
     SLICE_DURATION_MIN_SEC,
     validate_slice_bounds,
 )
-from qfluentwidgets import (
+from gui.fluent_compat import (
     ScrollArea,
     PushButton,
     CardWidget,

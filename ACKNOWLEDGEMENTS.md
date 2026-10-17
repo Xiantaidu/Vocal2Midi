@@ -22,7 +22,14 @@ Third-party components, vendored code, bundled data, dictionaries, and other emb
 | FunASR | broader ASR foundation referenced by the Qwen3-ASR integration path | https://github.com/modelscope/FunASR |
 | llama.cpp | Platform-aware decoder runtime used by the Qwen3-ASR path | https://github.com/ggml-org/llama.cpp |
 | ONNX Runtime | DirectML and CPU inference execution | https://github.com/microsoft/onnxruntime |
-| PyQt-Fluent-Widgets | Fluent-style desktop UI components | https://github.com/zhiyiYo/PyQt-Fluent-Widgets |
+| Fluent UI System Icons | Icon artwork for the desktop UI | https://github.com/microsoft/fluentui-system-icons |
+
+## Icon artwork
+
+The desktop UI is built directly on PySide6 via the in-repository compatibility
+layer `gui/fluent_compat.py`. Its icon artwork is taken from Microsoft's Fluent
+UI System Icons, which is distributed under the **MIT License**. The icon files
+and their license text live in `gui/assets/icons/`.
 
 ## Vendored components in this repository
 

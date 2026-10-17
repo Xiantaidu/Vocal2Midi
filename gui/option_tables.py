@@ -7,7 +7,7 @@ used as data.
 """
 from __future__ import annotations
 
-from qfluentwidgets import ComboBox
+from gui.fluent_compat import ComboBox
 
 from gui.i18n import tr
 

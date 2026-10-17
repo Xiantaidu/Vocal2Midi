@@ -4,7 +4,7 @@ import pathlib
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFileDialog
 from PySide6.QtCore import Qt
 
-from qfluentwidgets import (
+from gui.fluent_compat import (
     ScrollArea,
     PushButton,
     PrimaryPushButton,

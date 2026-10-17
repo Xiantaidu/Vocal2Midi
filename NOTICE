@@ -18,7 +18,7 @@ integration, including:
 - TIFA
 - llama.cpp
 - ONNX Runtime
-- PyQt-Fluent-Widgets
+- Fluent UI System Icons
 
 Known vendored or adapted directories in this repository include:
 
@@ -27,6 +27,11 @@ Known vendored or adapted directories in this repository include:
 - inference/LyricFA/
 - inference/TiFA/
 - inference/qwen3asr_dml/gguf/
+
+The desktop UI is built directly on PySide6. Its icon artwork comes from
+Microsoft's Fluent UI System Icons (https://github.com/microsoft/fluentui-system-icons),
+used under the MIT License; the icon files and their license text are kept in
+gui/assets/icons/.
 
 Additional third-party components, model assets, dictionaries, bundled data,
 and embedded materials may carry their own copyright notices, license terms,

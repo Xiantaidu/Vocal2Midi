@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon
 
-from qfluentwidgets import FluentWindow, NavigationItemPosition, setTheme, Theme, FluentIcon
+from gui.fluent_compat import FluentWindow, NavigationItemPosition, setTheme, Theme, FluentIcon
 
 from gui import __version__
 from gui.global_settings_view import GlobalSettingsInterface
@@ -93,8 +93,8 @@ class _FluentMainWindow(FluentWindow):
         return {"dark": Theme.DARK, "auto": Theme.AUTO}.get(raw, Theme.LIGHT)
 
     def _enable_mica(self):
-        # Mica only exists on Windows 11; qfluentwidgets degrades gracefully
-        # elsewhere, and older builds may not expose the API at all.
+        # Mica only exists on Windows 11.  The compat window treats this as a
+        # no-op, and older builds may not expose the API at all.
         try:
             self.setMicaEffectEnabled(True)
         except Exception:
@@ -158,9 +158,9 @@ def run_app():
     sys.exit(app.exec())
 
 
-# qfluentwidgets' frameless window is intended for the Windows desktop.  On
-# macOS use the native Qt shell while keeping this module's public MainWindow
-# import stable for callers and tests.
+# The frameless Fluent window is intended for the Windows desktop.  On macOS
+# use the native Qt shell while keeping this module's public MainWindow import
+# stable for callers and tests.
 if sys.platform == "darwin":
     from gui.macos_main import MacMainWindow
 

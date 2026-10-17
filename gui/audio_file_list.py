@@ -4,7 +4,7 @@ from pathlib import Path
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QAbstractItemView, QWidget
 
-from qfluentwidgets import BodyLabel, FluentIcon, ListWidget, TransparentToolButton
+from gui.fluent_compat import BodyLabel, FluentIcon, ListWidget, TransparentToolButton
 
 from gui.i18n import tr
 
