@@ -2,6 +2,10 @@ import os
 
 from inference.API.asr_api import AsrSubprocessSession
 from inference.pipeline.auto_lyric_hybrid import auto_lyric_hybrid_pipeline
+from inference.pipeline.lyric_alignment import (
+    _select_pinyin_asr_path,
+    _select_romaji_asr_path,
+)
 from application.config import PipelineConfig
 from application.exceptions import (
     Vocal2MidiError,
@@ -32,6 +36,25 @@ def _ja_uses_romaji_asr(cfg: PipelineConfig) -> bool:
     ).strip().lower() != "qwen"
 
 
+def _required_asr_paths(cfg: PipelineConfig) -> list[tuple[str, str]]:
+    """Return the ASR models the selected engine will actually load.
+
+    Mirrors ``_select_phoneme_engine``: the direct pinyin/romaji engines
+    substitute their own model for Qwen instead of adding to it. Both engines
+    degrade to Qwen text ASR when no model resolves, so Qwen is required only
+    in that fallback case.
+    """
+    if _uses_pinyin_asr(cfg):
+        pinyin_path = _select_pinyin_asr_path(cfg.pinyin_asr_model_path)
+        if pinyin_path is not None:
+            return [("Pinyin ASR model path", pinyin_path)]
+    elif _ja_uses_romaji_asr(cfg):
+        romaji_path = _select_romaji_asr_path(cfg.phoneme_asr_model_path)
+        if romaji_path is not None:
+            return [("Phoneme ASR model path", romaji_path)]
+    return [("ASR model path", cfg.asr_model_path)]
+
+
 def _validate_model_paths(cfg: PipelineConfig) -> None:
     """Validate that required model paths exist before starting the pipeline."""
     required_paths = [("GAME model dir", cfg.game_model_dir)]
@@ -42,16 +65,7 @@ def _validate_model_paths(cfg: PipelineConfig) -> None:
             required_paths.append(("TiFA model dir", cfg.tifa_model_path))
         else:
             required_paths.append(("HubertFA model dir", cfg.hfa_model_dir))
-        if _uses_pinyin_asr(cfg):
-            # Pinyin ASR substitutes its own model for Qwen, so validate that path.
-            if cfg.pinyin_asr_model_path:
-                required_paths.append(("Pinyin ASR model path", cfg.pinyin_asr_model_path))
-        else:
-            required_paths.append(("ASR model path", cfg.asr_model_path))
-            # An empty romaji path degrades gracefully but a provided broken one
-            # must fail here; the Qwen engine bypasses it entirely.
-            if _ja_uses_romaji_asr(cfg) and cfg.phoneme_asr_model_path:
-                required_paths.append(("Phoneme ASR model path", cfg.phoneme_asr_model_path))
+        required_paths.extend(_required_asr_paths(cfg))
         if lang == "ja" and str(cfg.japanese_g2p_engine or "").strip().lower() == "kashi-g2p-onnx" and cfg.kashi_g2p_model_path:
             required_paths.append(("kashi-g2p model path", cfg.kashi_g2p_model_path))
 

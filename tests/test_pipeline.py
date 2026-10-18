@@ -127,6 +127,35 @@ class TestValidateModelPaths:
             _validate_model_paths(base_cfg)
         assert "Phoneme ASR" in exc_info.value.details
 
+    def test_ja_romaji_engine_does_not_require_qwen_path(self, base_cfg, tmp_path):
+        # Regression: selecting RomajiASR must not demand the unused Qwen model.
+        existing = str(tmp_path)
+        base_cfg.game_model_dir = existing
+        base_cfg.hfa_model_dir = existing
+        base_cfg.language = "ja"
+        base_cfg.phoneme_asr_model_path = existing
+        base_cfg.asr_model_path = "/does/not/exist/qwen"
+
+        _validate_model_paths(base_cfg)
+
+    def test_ja_romaji_engine_with_unset_path_falls_back_to_qwen(
+        self, base_cfg, tmp_path, monkeypatch
+    ):
+        # No romaji model resolves at all: runtime degrades to Qwen, so it is
+        # required even though the engine selection says "romaji".
+        import application.pipeline as pipeline_module
+
+        monkeypatch.setattr(pipeline_module, "_select_romaji_asr_path", lambda path: None)
+        existing = str(tmp_path)
+        base_cfg.game_model_dir = existing
+        base_cfg.hfa_model_dir = existing
+        base_cfg.language = "ja"
+        base_cfg.phoneme_asr_model_path = ""
+
+        with pytest.raises(ModelNotFoundError) as exc_info:
+            _validate_model_paths(base_cfg)
+        assert "ASR" in exc_info.value.details
+
 
 class TestRunAutoLyricJob:
 
