@@ -1,12 +1,14 @@
 # Runtime note:
 # - `llama.cpp` uses Metal on Apple Silicon, or Vulkan/CPU on other platforms.
 # - The ONNX backends default to DirectML and fall back to CPU when DML is unavailable.
+# - The PySide6 upper bound keeps new installs on Qt versions verified against the
+#   local GUI widgets; 6.13+ is untested.
 
 click
 librosa
 mido
 numpy<2.0.0
-PySide6
+PySide6<6.13
 PyYAML
 scipy>=1.10.0
 onnxruntime-directml; sys_platform == "win32"

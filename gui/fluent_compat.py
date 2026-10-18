@@ -3,6 +3,7 @@ from __future__ import annotations
 import enum
 from pathlib import Path
 
+from PySide6 import __version__ as _pyside_version
 from PySide6.QtCore import (
     Property,
     QEasingCurve,
@@ -24,7 +25,6 @@ from PySide6.QtGui import (
     QPen,
 )
 from PySide6.QtWidgets import (
-    QAbstractSpinBox,
     QApplication,
     QComboBox,
     QDialog,
@@ -82,6 +82,10 @@ _ICON_DIR = Path(__file__).resolve().parent / "assets" / "icons"
 # Control height the GUI was laid out with (the original library pins text
 # inputs and spin boxes to this; the height lives in code, not in QSS).
 _CONTROL_HEIGHT = 33
+
+# Qt changed how spin boxes lay out their internal line edit in 6.12; see
+# _SpinBoxMixin._init_spin_arrows.
+_QT_VERSION = tuple(int(part) for part in _pyside_version.split(".")[:2])
 
 # Accent palette, matching the Fluent theme colour the GUI shipped with.
 _ACCENT = "#009faa"
@@ -516,16 +520,39 @@ class _SpinArrowButton(QToolButton):
         )
 
 
+def _spin_arrows_qss(selector: str) -> str:
+    """Hide a spin box's native arrows, which the custom buttons replace."""
+    return (
+        f"{selector}::up-button, {selector}::down-button"
+        " { width: 0; height: 0; border: none; }"
+    )
+
+
 class _SpinBoxMixin:
 
     def _init_spin_arrows(self):
-        self.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        # Qt 6.12 collapses the internal QLineEdit to 1px wide when
+        # setButtonSymbols(NoButtons) is combined with field padding, so the
+        # native arrows are hidden via QSS instead of via setButtonSymbols.
         self.setFixedHeight(_CONTROL_HEIGHT)
 
         self.upButton = _SpinArrowButton("up", self)
         self.downButton = _SpinArrowButton("down", self)
         self.upButton.clicked.connect(self.stepUp)
         self.downButton.clicked.connect(self.stepDown)
+
+        # 6.12 also ignores the field padding, leaving the value flush against
+        # the border; only there is the gutter reserved by hand.
+        if _QT_VERSION >= (6, 12):
+            line_edit = self.lineEdit()
+            if line_edit is not None:
+                line_edit.setTextMargins(10, 0, 74, 0)
+
+    def _restyle_field(self):
+        super()._restyle_field()
+        self.setStyleSheet(
+            self.styleSheet() + _spin_arrows_qss(self._field_selector)
+        )
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

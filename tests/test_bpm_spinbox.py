@@ -169,3 +169,41 @@ def test_bpm_spinbox_lineedit_event_filter(qapp, tmp_path):
     assert len(detected) == 1
     assert abs(detected[0] - 100.0) <= 1.5
     assert box.value() == detected[0]
+
+
+def test_spin_box_keeps_value_visible(qapp):
+    """The value must stay readable at the widths the GUI actually uses.
+
+    Qt 6.12 shrinks the internal QLineEdit when setButtonSymbols(NoButtons)
+    is combined with field padding, and an earlier fix then shrank the text
+    area a second time by adding margins on top of that padding. Both left
+    every numeric field blank, so this measures the usable text area rather
+    than the raw line-edit width.
+    """
+    from gui.fluent_compat import DoubleSpinBox, SpinBox
+
+    # 180 px matches the controls in the settings grid.
+    for widget, value in ((DoubleSpinBox(), 120.5), (SpinBox(), 8)):
+        widget.setRange(0, 300)
+        widget.setValue(value)
+        widget.resize(180, 33)
+        widget.show()
+        qapp.processEvents()
+
+        line_edit = widget.lineEdit()
+        margins = line_edit.textMargins()
+        text_width = line_edit.fontMetrics().horizontalAdvance(line_edit.text())
+        usable = line_edit.geometry().width() - margins.left() - margins.right()
+
+        assert usable >= text_width, (
+            f"{type(widget).__name__} leaves too little room for its value: "
+            f"{usable}px usable for {text_width}px of text"
+        )
+
+        # The value must also not be drawn underneath the custom arrow buttons.
+        text_right = line_edit.geometry().x() + margins.left() + text_width
+        assert text_right <= widget.upButton.x(), (
+            f"{type(widget).__name__} value overlaps the arrow buttons"
+        )
+
+        widget.close()
