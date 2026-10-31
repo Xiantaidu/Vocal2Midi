@@ -7,6 +7,17 @@ from .ZhG2p import ZhG2p, split_string as zh_split_string
 from .JaG2p import JaG2p
 
 
+def _shared_g2p(g2p_cache: Optional[Dict], key: str, factory):
+    """Reuse one G2P instance per key so batches stop reloading dictionaries."""
+    if g2p_cache is None:
+        return factory(key)
+    instance = g2p_cache.get(key)
+    if instance is None:
+        instance = factory(key)
+        g2p_cache[key] = instance
+    return instance
+
+
 class LanguageProcessor(ABC):
     def __init__(self, language_code: str, allowed_chars: str) -> None:
         self.language_code = language_code.lower()
@@ -28,9 +39,9 @@ class LanguageProcessor(ABC):
 class ChineseProcessor(LanguageProcessor):
     _CHINESE_CHAR_RANGE: str = r'[\u4e00-\u9fa5]'
 
-    def __init__(self) -> None:
+    def __init__(self, g2p_cache: Optional[Dict[str, ZhG2p]] = None) -> None:
         super().__init__('zh', self._CHINESE_CHAR_RANGE)
-        self.g2p: ZhG2p = ZhG2p('mandarin')
+        self.g2p: ZhG2p = _shared_g2p(g2p_cache, "mandarin", ZhG2p)
 
     def split_text(self, text: str) -> List[str]:
         return zh_split_string(text)
@@ -53,11 +64,14 @@ class EnglishProcessor(LanguageProcessor):
 
 
 class JapaneseProcessor(LanguageProcessor):
-    def __init__(self, engine: str = "kashi-g2p-onnx", model_dir: Optional[str] = None) -> None:
+    def __init__(self, engine: str = "kashi-g2p-onnx", model_dir: Optional[str] = None,
+                 g2p_cache: Optional[Dict] = None) -> None:
         # Japanese text often contains kana/kanji/full-width symbols. We avoid
         # aggressive regex filtering here and rely on JaG2p frontend analysis.
         super().__init__('ja', r'.')
-        self.g2p: JaG2p = JaG2p(engine=engine, model_dir=model_dir)
+        self.g2p: JaG2p = _shared_g2p(
+            g2p_cache, f"ja:{engine}:{model_dir}", lambda _key: JaG2p(engine=engine, model_dir=model_dir)
+        )
 
     def clean_text(self, text: str) -> str:
         # Keep original Japanese content and only normalize whitespace.
@@ -114,9 +128,9 @@ class LyricData:
 class CantoneseProcessor(LanguageProcessor):
     _CHINESE_CHAR_RANGE: str = r'[\u4e00-\u9fa5]'
 
-    def __init__(self) -> None:
+    def __init__(self, g2p_cache: Optional[Dict[str, ZhG2p]] = None) -> None:
         super().__init__('yue', self._CHINESE_CHAR_RANGE)
-        self.g2p: ZhG2p = ZhG2p('cantonese')
+        self.g2p: ZhG2p = _shared_g2p(g2p_cache, "cantonese", ZhG2p)
 
     def split_text(self, text: str) -> List[str]:
         return zh_split_string(text)
@@ -140,6 +154,9 @@ class ProcessorFactory:
             raise ValueError(f"Unsupported language: {language_code}")
         if code == 'ja':
             return cls._PROCESSOR_MAP[code](**kwargs)
+        g2p_cache = kwargs.get('g2p_cache')
+        if g2p_cache is not None:
+            return cls._PROCESSOR_MAP[code](g2p_cache=g2p_cache)
         return cls._PROCESSOR_MAP[code]()
 
     @classmethod

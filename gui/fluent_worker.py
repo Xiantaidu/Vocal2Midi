@@ -25,11 +25,27 @@ class _QtLogHandler(logging.Handler):
 
 
 try:
-    from application.pipeline import run_auto_lyric_job, open_asr_session
+    from application.batch import run_auto_lyric_batch
     HYBRID_AVAILABLE = True
 except ImportError as e:
     print(f"WARNING: Hybrid pipeline not available. Error: {e}")
     HYBRID_AVAILABLE = False
+
+
+def classify_batch_result(items):
+    """Summarize a finished batch so the UI never reports success on failure.
+
+    The batch runner isolates per-song failures instead of raising, so a clean
+    return says nothing about the outcome; this turns the item list into one of
+    ``("success" | "partial" | "all_failed", total, failed, first_error)``.
+    """
+    items = list(items or [])
+    failed = [item for item in items if getattr(item, "failed_stage", None)]
+    if items and len(failed) == len(items):
+        return "all_failed", len(items), failed, failed[0].error
+    if failed:
+        return "partial", len(items), failed, None
+    return "success", len(items), failed, None
 
 
 class StreamRedirector:
@@ -51,6 +67,7 @@ class WorkerThread(QThread):
     finished_signal = Signal(str)
     error_signal = Signal(str)
     progress_signal = Signal(int, int, str)  # (current file index, total files, filename)
+    stage_progress_signal = Signal(str, int, int, str)  # (stage name, done, total, filename)
 
     def __init__(self, tasks: list[tuple[PipelineConfig, str]]):
         """Initialize the worker with a list of ``(config, filename)`` tasks.
@@ -62,6 +79,9 @@ class WorkerThread(QThread):
         self.tasks = tasks
         self._is_running = True
 
+    def _cancel_checker(self) -> bool:
+        return (not self._is_running) or self.isInterruptionRequested()
+
     def run(self):
         old_stdout = sys.stdout
         old_stderr = sys.stderr
@@ -69,9 +89,6 @@ class WorkerThread(QThread):
         sys.stderr = StreamRedirector(sys.stderr, self.log_signal)
 
         total = len(self.tasks)
-        # One lazily-spawned ASR subprocess serves the whole batch; the
-        # multi-GB Qwen model loads once instead of per file.
-        session = open_asr_session() if HYBRID_AVAILABLE else None
         # Pipeline modules log instead of printing; capture those records for
         # the GUI log. The stdout redirector stays for third-party prints that
         # bypass logging.
@@ -84,25 +101,37 @@ class WorkerThread(QThread):
             save_dirs = {str(task_config.output_dir) for task_config, _ in self.tasks}
             save_dir = save_dirs.pop() if len(save_dirs) == 1 else "; ".join(sorted(save_dirs))
 
-            for file_index, (config, filename) in enumerate(self.tasks, start=1):
+            for index, (config, filename) in enumerate(self.tasks, start=1):
                 if not self._is_running:
                     break
-                self.log_signal.emit(tr("worker_processing", f=filename))
-
                 config.audio_path = str(pathlib.Path(filename))
                 config.output_filename = filename
-                config.asr_session = session
-                config.cancel_checker = lambda: (
-                    not self._is_running
-                ) or self.isInterruptionRequested()
+                config.cancel_checker = self._cancel_checker
+                self.progress_signal.emit(index, total, filename)
 
-                self.progress_signal.emit(file_index, total, filename)
-                run_auto_lyric_job(config)
+            items = run_auto_lyric_batch(
+                self.tasks,
+                log=self.log_signal.emit,
+                progress=self._on_stage_progress,
+                cancel_checker=self._cancel_checker,
+            )
 
-            if self._is_running:
-                self.finished_signal.emit(tr("worker_success", d=save_dir))
-            else:
+            # The batch isolates per-song failures, so "no exception" does not
+            # mean success: report what actually came out of the queue.
+            outcome, total_items, failed, first_error = classify_batch_result(items)
+            if not self._is_running:
                 self.error_signal.emit(tr("worker_cancelled"))
+            elif outcome == "all_failed":
+                self.error_signal.emit(
+                    tr("worker_all_failed", n=total_items, e=first_error)
+                )
+            elif outcome == "partial":
+                self.finished_signal.emit(
+                    tr("worker_partial", ok=total_items - len(failed),
+                       n=total_items, bad=len(failed), d=save_dir)
+                )
+            else:
+                self.finished_signal.emit(tr("worker_success", d=save_dir))
 
         except (InterruptedError, CancellationError):
             self.error_signal.emit(tr("worker_stopped"))
@@ -111,10 +140,15 @@ class WorkerThread(QThread):
         finally:
             root_logger.removeHandler(log_handler)
             root_logger.setLevel(old_root_level)
-            if session is not None:
-                session.close()
             sys.stdout = old_stdout
             sys.stderr = old_stderr
+
+    def _on_stage_progress(self, stage: str, done: int, total: int, filename: str) -> None:
+        """Batch stages sweep the queue, so report stage progress first."""
+        self.stage_progress_signal.emit(stage, done, total, filename)
+        self.log_signal.emit(
+            tr("worker_stage", s=tr(f"stage_{stage}"), i=done, n=total, f=pathlib.Path(filename).name)
+        )
 
     def stop(self):
         self._is_running = False

@@ -4,6 +4,7 @@ Owns the temporary chunk wav/.lab file protocol shared with the HFA stage.
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import pathlib
 import tempfile
@@ -182,7 +183,7 @@ def _select_phoneme_engine(
 
     phoneme_asr_path = None
     if engine == "romaji":
-        logger.info("\n--- Stage 1/3: Running mora ASR for Japanese lyric mode ---")
+        logger.info("\n--- Lyrics 1/2: Running mora ASR for Japanese lyric mode ---")
         phoneme_asr_path = _select_romaji_asr_path(phoneme_asr_model_path)
         if phoneme_asr_path is None:
             logger.warning(
@@ -191,7 +192,7 @@ def _select_phoneme_engine(
             )
             engine = None
     elif engine == "pinyin":
-        logger.info("\n--- Stage 1/3: Running pinyin ASR for Chinese-pinyin lyric mode ---")
+        logger.info("\n--- Lyrics 1/2: Running pinyin ASR for Chinese-pinyin lyric mode ---")
         phoneme_asr_path = _select_pinyin_asr_path(pinyin_asr_model_path)
         if phoneme_asr_path is None:
             logger.warning(
@@ -244,10 +245,17 @@ def _run_lyric_alignment(
     asr_batch_size,
     asr_session,
     cancel_checker,
+    text_dir=None,
+    asr_result=None,
 ) -> _AlignmentOutcome:
     """Stages 1+2: phoneme/text ASR followed by forced alignment (HFA or TiFA).
 
     Owns the temporary directory holding the chunk wavs and .lab files.
+
+    Batch mode runs ASR as a separate stage and passes ``asr_result`` together
+    with the ``text_dir`` that stage filled with chunk wavs and .lab files.
+    Supplying both skips stage 1 here, so a song is transcribed once instead
+    of twice.
     """
     def _check_cancel():
         if cancel_checker and cancel_checker():
@@ -258,66 +266,75 @@ def _run_lyric_alignment(
     chunk_logs = []
     aligned = True
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_dir_path = pathlib.Path(temp_dir)
-
-        engine, ja_wants_romaji, phoneme_asr_path = _select_phoneme_engine(
-            ctx.language, ctx.lyric_output_mode, ctx.use_pinyin_asr,
-            japanese_asr_engine, phoneme_asr_model_path, pinyin_asr_model_path,
-        )
-        if engine == "romaji":
-            chars_dict, chunk_logs = run_romaji_asr(
-                chunks,
-                sr,
-                temp_dir_path,
-                matcher,
-                asr_model_path=phoneme_asr_path,
-                device=ctx.device,
-                language=ctx.language,
-                lyric_output_mode=ctx.lyric_output_mode,
-                asr_batch_size=asr_batch_size,
-                cancel_checker=cancel_checker,
-            )
-        elif engine == "pinyin":
-            chars_dict, chunk_logs = run_pinyin_asr(
-                chunks,
-                sr,
-                temp_dir_path,
-                matcher,
-                asr_model_path=phoneme_asr_path,
-                device=ctx.device,
-                language=ctx.language,
-                lyric_output_mode=ctx.lyric_output_mode,
-                asr_batch_size=asr_batch_size,
-                cancel_checker=cancel_checker,
-            )
+    with contextlib.ExitStack() as stack:
+        if text_dir is not None and asr_result is not None:
+            temp_dir_path = pathlib.Path(text_dir)
+            # Copy: stage 2 rewrites chars_dict with the aligner's own tokens,
+            # and the caller still needs its ASR-side text intact.
+            asr_chars, asr_logs = asr_result
+            chars_dict = dict(asr_chars or {})
+            chunk_logs = list(asr_logs or [])
         else:
-            if ctx.language == "ja" and ctx.lyric_output_mode in {"romaji", "kana"}:
-                if ja_wants_romaji:
-                    logger.warning("\n--- Stage 1/3: Mora ASR unavailable; fallback to text ASR + Japanese G2P ---")
-                else:
-                    logger.info("\n--- Stage 1/3: Running text ASR (Qwen) + Japanese G2P ---")
-            elif ctx.use_pinyin_asr:
-                logger.warning("\n--- Stage 1/3: Pinyin ASR unavailable; fallback to text ASR + Chinese G2P ---")
-            elif ctx.language == "yue":
-                logger.info("\n--- Stage 1/3: Running text ASR (Qwen) for Cantonese ---")
-            else:
-                logger.info("\n--- Stage 1/3: Running ASR in subprocess isolation mode ---")
-            chars_dict, chunk_logs = run_qwen_asr_and_fa(
-                chunks,
-                sr,
-                temp_dir_path,
-                matcher,
-                asr_model_path=asr_model_path,
-                device=ctx.device,
-                asr_batch_size=asr_batch_size,
-                language=ctx.language,
-                lyric_output_mode=ctx.lyric_output_mode,
-                cancel_checker=cancel_checker,
-                asr_session=asr_session,
-                japanese_g2p_engine=japanese_g2p_engine,
-                kashi_g2p_model_path=kashi_g2p_model_path,
+            temp_dir = stack.enter_context(tempfile.TemporaryDirectory())
+            temp_dir_path = pathlib.Path(temp_dir)
+
+            engine, ja_wants_romaji, phoneme_asr_path = _select_phoneme_engine(
+                ctx.language, ctx.lyric_output_mode, ctx.use_pinyin_asr,
+                japanese_asr_engine, phoneme_asr_model_path, pinyin_asr_model_path,
             )
+            if engine == "romaji":
+                chars_dict, chunk_logs = run_romaji_asr(
+                    chunks,
+                    sr,
+                    temp_dir_path,
+                    matcher,
+                    asr_model_path=phoneme_asr_path,
+                    device=ctx.device,
+                    language=ctx.language,
+                    lyric_output_mode=ctx.lyric_output_mode,
+                    asr_batch_size=asr_batch_size,
+                    cancel_checker=cancel_checker,
+                )
+            elif engine == "pinyin":
+                chars_dict, chunk_logs = run_pinyin_asr(
+                    chunks,
+                    sr,
+                    temp_dir_path,
+                    matcher,
+                    asr_model_path=phoneme_asr_path,
+                    device=ctx.device,
+                    language=ctx.language,
+                    lyric_output_mode=ctx.lyric_output_mode,
+                    asr_batch_size=asr_batch_size,
+                    cancel_checker=cancel_checker,
+                )
+            else:
+                if ctx.language == "ja" and ctx.lyric_output_mode in {"romaji", "kana"}:
+                    if ja_wants_romaji:
+                        logger.warning("\n--- Lyrics 1/2: Mora ASR unavailable; fallback to text ASR + Japanese G2P ---")
+                    else:
+                        logger.info("\n--- Lyrics 1/2: Running text ASR (Qwen) + Japanese G2P ---")
+                elif ctx.use_pinyin_asr:
+                    logger.warning("\n--- Lyrics 1/2: Pinyin ASR unavailable; fallback to text ASR + Chinese G2P ---")
+                elif ctx.language == "yue":
+                    logger.info("\n--- Lyrics 1/2: Running text ASR (Qwen) for Cantonese ---")
+                else:
+                    logger.info("\n--- Lyrics 1/2: Running ASR in subprocess isolation mode ---")
+                chars_dict, chunk_logs = run_qwen_asr_and_fa(
+                    chunks,
+                    sr,
+                    temp_dir_path,
+                    matcher,
+                    asr_model_path=asr_model_path,
+                    device=ctx.device,
+                    asr_batch_size=asr_batch_size,
+                    language=ctx.language,
+                    lyric_output_mode=ctx.lyric_output_mode,
+                    cancel_checker=cancel_checker,
+                    asr_session=asr_session,
+                    japanese_g2p_engine=japanese_g2p_engine,
+                    kashi_g2p_model_path=kashi_g2p_model_path,
+                )
         _check_cancel()
 
         if not chars_dict:
@@ -332,7 +349,7 @@ def _run_lyric_alignment(
         if aligned:
             use_tifa = str(alignment_engine or "").strip().lower() == "tifa" or ctx.language == "yue"
             if use_tifa:
-                logger.info("\n--- Stage 2/3: Loading TiFA model ---")
+                logger.info("\n--- Lyrics 2/2: Loading TiFA model ---")
                 tifa_model = load_tifa_model(tifa_model_path, device=ctx.device)
                 try:
                     _check_cancel()
@@ -354,7 +371,7 @@ def _run_lyric_alignment(
                     # session teardown access-violates onnxruntime next song.
                     free_memory()
             else:
-                logger.info("\n--- Stage 2/3: Loading HubertFA model ---")
+                logger.info("\n--- Lyrics 2/2: Loading HubertFA model ---")
                 hfa_model = load_hfa_model(hfa_model_dir, device=ctx.device)
                 try:
                     _check_cancel()

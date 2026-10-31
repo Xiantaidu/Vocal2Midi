@@ -2,9 +2,12 @@ import pathlib
 import sys
 from dataclasses import dataclass
 
+import numpy as np
+
 from application.config import (
     DEFAULT_SLICE_MAX_SEC,
     DEFAULT_SLICE_MIN_SEC,
+    PipelineConfig,
     validate_slice_bounds,
 )
 
@@ -18,7 +21,7 @@ from inference.io.note_io import _save_midi, _save_text
 from inference.quant.quantization import quantize_notes, should_apply_quantization
 
 from inference.API.lfa_api import create_lyric_matcher, _normalize_lyric_output_mode
-from inference.API.game_api import load_game_model, extract_pitches_and_align, extract_pitches_only
+from inference.API.game_api import load_game_model, extract_chunk_notes
 from inference.API.rmvpe_api import RmvpeTranscriber
 from inference.API.ustx_api import save_ustx
 from inference.API.vsqx_api import save_vsqx
@@ -34,6 +37,7 @@ from inference.pipeline.lyric_alignment import (
     run_qwen_asr_and_fa,
     run_romaji_asr,
 )
+from inference.pipeline.lyric_mapping import assign_chunk_lyrics
 from inference.pipeline.memory_utils import free_memory
 
 import logging
@@ -158,6 +162,15 @@ def _prepare_context(
 _RMVPE_TRANSCRIBER_CACHE: dict[tuple[str, str], RmvpeTranscriber] = {}
 
 
+def clear_rmvpe_cache() -> None:
+    """Drop cached RMVPE transcribers so their sessions leave VRAM."""
+    while _RMVPE_TRANSCRIBER_CACHE:
+        _key, transcriber = _RMVPE_TRANSCRIBER_CACHE.popitem()
+        transcriber.shutdown()
+        del transcriber
+    free_memory()
+
+
 def _extract_pitch_curve(
     waveform,
     sr,
@@ -171,15 +184,16 @@ def _extract_pitch_curve(
     """RMVPE pitch curve for USTX/VSQX export; None when not requested.
 
     The transcriber is process-cached: recreating its DirectML session per
-    song access-violates onnxruntime on the next song.
+    song access-violates onnxruntime on the next song. Batch mode unloads it
+    once through :func:`clear_rmvpe_cache` when the stage finishes.
     """
     if not (("ustx" in output_format_set or "vsqx" in output_format_set) and output_pitch_curve):
         return None
     rmvpe_model = _resolve_rmvpe_path(rmvpe_model_path)
-    logger.info(f"[Hybrid Pipeline] Running RMVPE from: {rmvpe_model}")
     key = (rmvpe_model, str(device or "").strip().lower() or "auto")
     rmvpe = _RMVPE_TRANSCRIBER_CACHE.get(key)
     if rmvpe is None:
+        logger.info(f"[Hybrid Pipeline] Running RMVPE from: {rmvpe_model}")
         rmvpe = RmvpeTranscriber(rmvpe_model, device=device)
         _RMVPE_TRANSCRIBER_CACHE[key] = rmvpe
     rmvpe_result = rmvpe.infer(waveform, sr, cancel_checker=cancel_checker)
@@ -196,7 +210,15 @@ def _slice_chunks(
     slice_max_sec,
     rmvpe_result,
     cancel_checker,
+    storage_dir=None,
 ):
+    """Slice the waveform; with storage_dir the chunks are also written to disk.
+
+    The slicer returns sample views of the source waveform, so keeping N songs
+    sliced in memory would pin every source array. Spilling the chunk audio to
+    storage_dir stores them compactly instead, and it lets the next stages run
+    once GAME has been dropped to leave room for the alignment models.
+    """
     rmvpe_voiced_mask = None
     rmvpe_step = None
     if rmvpe_result is not None and getattr(rmvpe_result, "voiced_mask", None) is not None:
@@ -216,14 +238,62 @@ def _slice_chunks(
         raise InterruptedError("Task was cancelled")
     if not chunks:
         raise RuntimeError("No audio chunks generated in slicing stage, aborted.")
+    if storage_dir is not None:
+        _store_chunk_audio(chunks, sr, pathlib.Path(storage_dir), cancel_checker=cancel_checker)
     return chunks
+
+
+def _store_chunk_audio(chunks, sr, storage_dir: pathlib.Path, cancel_checker=None) -> None:
+    """Append every chunk waveform to storage_dir/chunk_000.wav.
+
+    The chunks are contiguous back-to-back in one mono float32 file (the same
+    layout read_chunk_audio expects), so the whole song costs one small file.
+    """
+    import soundfile as sf
+
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    payload = np.concatenate(
+        [np.ascontiguousarray(chunk["waveform"]).reshape(-1) for chunk in chunks]
+    ) if chunks else np.zeros(0, dtype=np.float32)
+    if cancel_checker and cancel_checker():
+        raise InterruptedError("Task was cancelled")
+    sf.write(storage_dir / "chunk_000.wav", payload, sr, subtype="FLOAT", format="WAV")
+
+
+def read_chunk_audio(chunks, sr, storage_dir):
+    """Rebuild the chunk list from storage_dir with read-only waveform views.
+
+    Each chunk keeps the dict the slicer produced (offset, channel layout) and
+    swaps in a strided view over one shared float32 buffer, so N songs on disk
+    cost one array each in memory instead of a whole decoded waveform.
+    """
+    import soundfile as sf
+
+    storage_dir = pathlib.Path(storage_dir)
+    if not chunks:
+        return []
+    buffer = sf.read(str(storage_dir / "chunk_000.wav"), dtype="float32")[0]
+    rebuilt = []
+    position = 0
+    for chunk in chunks:
+        view = buffer[position:position + len(chunk["waveform"])]
+        restored = dict(chunk)
+        restored["waveform"] = view
+        position += len(chunk["waveform"])
+        rebuilt.append(restored)
+    return rebuilt
+
+
+def release_chunk_audio(chunks) -> None:
+    """Drop chunk waveforms and the RMVPE curves attached to them."""
+    for chunk in chunks or []:
+        chunk["waveform"] = None
 
 
 def _run_game_stage(
     chunks,
     sr,
     ctx: _PipelineContext,
-    outcome,
     *,
     ts,
     game_model_dir,
@@ -233,67 +303,44 @@ def _run_game_stage(
     est_threshold,
     cancel_checker,
 ):
-    """Stage 3: GAME note extraction with per-chunk pitch-only fallback."""
-    all_notes = []
-    if outcome is not None and outcome.aligned:
-        logger.info("\n--- Stage 3/3: Loading GAME model ---")
-    else:
-        if "chunks" in ctx.output_format_set:
-            _export_chunk_wavs(chunks, sr, ctx.output_key, ctx.output_dir, cancel_checker=cancel_checker)
-        if outcome is not None:
-            logger.warning("\n--- Fallback: Loading GAME model (pitch-only mode) ---")
-        else:
-            logger.info("\n--- Stage 1/1: Loading GAME model (No-Lyrics Mode) ---")
+    """GAME note extraction, independent of the lyrics; one note list per chunk.
 
+    No alignment durations are fed in: the melody is transcribed from the
+    audio alone and the lyrics are mapped onto it afterwards.
+    """
+    logger.info("\n--- Note extraction: Loading GAME model ---")
     game_model = load_game_model(game_model_dir, device=ctx.device)
     try:
         if cancel_checker and cancel_checker():
             raise InterruptedError("Task was cancelled")
         logger.info("--------------------------------------\n")
-
-        if outcome is not None and outcome.aligned:
-            aligned_result = extract_pitches_and_align(
-                chunks, sr, outcome.pred_dict, outcome.chars_dict, game_model, ts,
-                seg_threshold, seg_radius, est_threshold, batch_size,
-                cancel_checker=cancel_checker,
-                language=ctx.fa_language,
-            )
-            if isinstance(aligned_result, tuple):
-                all_notes, processed_aligned_chunks = aligned_result
-            else:
-                all_notes = aligned_result
-                processed_aligned_chunks = set()
-            fallback_chunks = []
-            for chunk_idx, chunk in enumerate(chunks):
-                if chunk_idx not in processed_aligned_chunks:
-                    fallback_chunks.append(chunk)
-            if fallback_chunks:
-                logger.warning(
-                    f"[Warning] Running pitch-only GAME fallback for "
-                    f"{len(fallback_chunks)} chunk(s) without usable lyric alignment."
-                )
-                all_notes.extend(
-                    extract_pitches_only(
-                        fallback_chunks, sr, game_model, ts,
-                        seg_threshold, seg_radius, est_threshold, batch_size,
-                        cancel_checker=cancel_checker,
-                        language=ctx.fa_language,
-                    )
-                )
-        else:
-            all_notes = extract_pitches_only(
-                chunks, sr, game_model, ts,
-                seg_threshold, seg_radius, est_threshold, batch_size,
-                cancel_checker=cancel_checker,
-                language=ctx.fa_language,
-            )
+        chunk_notes = extract_chunk_notes(
+            chunks, sr, game_model, ts,
+            seg_threshold, seg_radius, est_threshold, batch_size,
+            cancel_checker=cancel_checker,
+            language=ctx.fa_language,
+        )
         if cancel_checker and cancel_checker():
             raise InterruptedError("Task was cancelled")
     finally:
         # Model stays cached in load_game_model across runs; tearing the
         # DirectML session down per song access-violates onnxruntime next song.
         free_memory()
-    return all_notes
+    return chunk_notes
+
+
+def _merge_lyrics(chunk_notes, chunks, ctx: _PipelineContext, outcome):
+    """Map the aligned lyrics onto the GAME notes; unaligned chunks stay pitch-only."""
+    if outcome is not None and outcome.aligned:
+        logger.info("\n--- Lyric mapping: placing aligned lyrics on the GAME notes ---")
+    elif outcome is not None:
+        logger.warning("[Warning] No usable lyric alignment; exporting pitch-only notes.")
+    return assign_chunk_lyrics(
+        chunk_notes,
+        [chunk["offset"] for chunk in chunks],
+        outcome,
+        ctx.fa_language,
+    )
 
 
 def _export_outputs(
@@ -310,7 +357,15 @@ def _export_outputs(
     quant_simplicity,
     pitch_format,
     round_pitch,
+    chunks=None,
+    sr=44100,
+    cancel_checker=None,
 ):
+    # The aligners export the chunk WAVs next to their TextGrids; without an
+    # alignment the sliced audio is written here instead.
+    if "chunks" in ctx.output_format_set and not aligned and chunks:
+        _export_chunk_wavs(chunks, sr, ctx.output_key, ctx.output_dir, cancel_checker=cancel_checker)
+
     all_notes.sort(key=lambda x: x.onset)
 
     export_asr_match_log = output_lyrics and (("asr_match_log" in ctx.output_format_set) or ("chunks" in ctx.output_format_set))
@@ -376,7 +431,20 @@ def auto_lyric_hybrid_pipeline(
     kashi_g2p_model_path: str = "",
     asr_session=None,
     cancel_checker=None,
+    chunk_storage_dir=None,
+    defer_game: bool = False,
 ):
+    """Run the whole hybrid pipeline, or only its first stage with defer_game.
+
+    The flow is two independent branches joined at export: GAME transcribes
+    the notes from the audio alone, ASR + TiFA/HubertFA produce the lyric
+    timing, and the lyrics are then mapped onto the notes by time.
+
+    With defer_game the slicing stage is the last step: the chunk list (audio
+    still in memory) is returned so a batch caller can schedule the remaining
+    stages itself. With chunk_storage_dir the chunk audio is also written
+    there, so the list can be rebuilt later via read_chunk_audio.
+    """
     ctx = _prepare_context(
         audio_path, output_filename, output_dir, output_formats,
         language, chinese_asr_engine, lyric_output_mode,
@@ -409,8 +477,25 @@ def auto_lyric_hybrid_pipeline(
         slice_max_sec=slice_max_sec,
         rmvpe_result=rmvpe_result,
         cancel_checker=cancel_checker,
+        storage_dir=chunk_storage_dir,
     )
 
+    if defer_game:
+        return chunks, rmvpe_result
+
+    # Branch 1: the melody, from the audio alone.
+    chunk_notes = _run_game_stage(
+        chunks, sr, ctx,
+        ts=ts,
+        game_model_dir=game_model_dir,
+        batch_size=batch_size,
+        seg_threshold=seg_threshold,
+        seg_radius=seg_radius,
+        est_threshold=est_threshold,
+        cancel_checker=cancel_checker,
+    )
+
+    # Branch 2: the lyrics and their timing (ASR + TiFA/HubertFA).
     outcome = None
     chunk_logs = []
     if output_lyrics:
@@ -440,18 +525,9 @@ def auto_lyric_hybrid_pipeline(
         )
         chunk_logs = outcome.chunk_logs
     else:
-        logger.warning("\n--- No-Lyrics Mode: skipping ASR/HFA, extracting pitch via GAME only ---\n")
+        logger.warning("\n--- No-Lyrics Mode: skipping ASR/alignment, exporting GAME notes only ---\n")
 
-    all_notes = _run_game_stage(
-        chunks, sr, ctx, outcome,
-        ts=ts,
-        game_model_dir=game_model_dir,
-        batch_size=batch_size,
-        seg_threshold=seg_threshold,
-        seg_radius=seg_radius,
-        est_threshold=est_threshold,
-        cancel_checker=cancel_checker,
-    )
+    all_notes = _merge_lyrics(chunk_notes, chunks, ctx, outcome)
 
     _export_outputs(
         all_notes, ctx,
@@ -465,4 +541,145 @@ def auto_lyric_hybrid_pipeline(
         quant_simplicity=quant_simplicity,
         pitch_format=pitch_format,
         round_pitch=round_pitch,
+        chunks=chunks,
+        sr=sr,
+        cancel_checker=cancel_checker,
     )
+
+
+def pipeline_stage_slicing(audio_path: str | None = None, *, chunk_storage_dir=None, cancel_checker=None, **kwargs):
+    """Batch stage 1: decode, slice, persist the chunks.
+
+    Returns ``(chunks, rmvpe_result)``; the chunks share one readonly buffer
+    read back from chunk_storage_dir and carry no per-song audio tensors.
+    """
+    if audio_path is not None:
+        kwargs["audio_path"] = audio_path
+    chunks, rmvpe_result = auto_lyric_hybrid_pipeline(
+        chunk_storage_dir=chunk_storage_dir,
+        defer_game=True,
+        cancel_checker=cancel_checker,
+        **kwargs,
+    )
+    if chunk_storage_dir is not None:
+        chunks = read_chunk_audio(chunks, 44100, chunk_storage_dir)
+    return chunks, rmvpe_result
+
+
+def pipeline_stage_alignment(
+    cfg: PipelineConfig,
+    chunks,
+    *,
+    rmvpe_result=None,
+    matcher=None,
+    asr_session=None,
+    cancel_checker=None,
+):
+    """Batch stage 2: ASR + forced alignment for one already-sliced song."""
+    ctx = _prepare_context(
+        cfg.audio_path, cfg.output_filename, cfg.output_dir, cfg.output_formats,
+        cfg.language, cfg.chinese_asr_engine, cfg.lyric_output_mode,
+        cfg.tempo, cfg.batch_size, cfg.asr_batch_size,
+        cfg.slice_min_sec, cfg.slice_max_sec, cfg.device,
+    )
+    try:
+        outcome = _run_lyric_alignment(
+            chunks, 44100, ctx, matcher,
+            asr_model_path=cfg.asr_model_path,
+            hfa_model_dir=cfg.hfa_model_dir,
+            tifa_model_path=cfg.tifa_model_path,
+            alignment_engine=cfg.alignment_engine,
+            phoneme_asr_model_path=cfg.phoneme_asr_model_path,
+            pinyin_asr_model_path=cfg.pinyin_asr_model_path,
+            japanese_asr_engine=cfg.japanese_asr_engine,
+            japanese_g2p_engine=cfg.japanese_g2p_engine,
+            kashi_g2p_model_path=cfg.kashi_g2p_model_path,
+            asr_batch_size=cfg.asr_batch_size,
+            asr_session=asr_session,
+            cancel_checker=cancel_checker,
+        )
+    finally:
+        release_chunk_audio(chunks)
+    return outcome
+
+
+def prepare_lyric_matcher(cfg: PipelineConfig, *, cache=None):
+    """Matcher for one job; ``cache`` reuses the language processors' G2P."""
+    language, use_pinyin_asr = normalize_pipeline_language(cfg.language)
+    if language == "zh" and str(cfg.chinese_asr_engine or "").strip().lower() == "pinyin":
+        language = PINYIN_ASR_LANGUAGE
+    return create_lyric_matcher(
+        language,
+        cfg.original_lyrics,
+        engine=cfg.japanese_g2p_engine,
+        model_dir=cfg.kashi_g2p_model_path,
+        g2p_cache=cache,
+    )
+
+
+def _context_for(cfg: PipelineConfig) -> _PipelineContext:
+    return _prepare_context(
+        cfg.audio_path, cfg.output_filename, cfg.output_dir, cfg.output_formats,
+        cfg.language, cfg.chinese_asr_engine, cfg.lyric_output_mode,
+        cfg.tempo, cfg.batch_size, cfg.asr_batch_size,
+        cfg.slice_min_sec, cfg.slice_max_sec, cfg.device,
+    )
+
+
+def pipeline_stage_game(
+    cfg: PipelineConfig,
+    chunks,
+    *,
+    cancel_checker=None,
+):
+    """Batch stage: GAME note extraction; returns one note list per chunk."""
+    ctx = _context_for(cfg)
+    try:
+        return _run_game_stage(
+            chunks, 44100, ctx,
+            ts=cfg.ts,
+            game_model_dir=cfg.game_model_dir,
+            batch_size=cfg.batch_size,
+            seg_threshold=cfg.seg_threshold,
+            seg_radius=cfg.seg_radius,
+            est_threshold=cfg.est_threshold,
+            cancel_checker=cancel_checker,
+        )
+    finally:
+        release_chunk_audio(chunks)
+
+
+def pipeline_stage_export(
+    cfg: PipelineConfig,
+    chunks,
+    chunk_notes,
+    outcome,
+    *,
+    rmvpe_result=None,
+    cancel_checker=None,
+):
+    """Batch stage: map the lyrics onto the GAME notes and write every export.
+
+    ``chunks`` only needs the slicer offsets; its audio is read solely for the
+    chunk-WAV export of songs that ended up without an alignment.
+    """
+    ctx = _context_for(cfg)
+    aligned = outcome is not None and outcome.aligned
+    all_notes = _merge_lyrics(chunk_notes, chunks, ctx, outcome)
+    _export_outputs(
+        all_notes, ctx,
+        rmvpe_result=rmvpe_result,
+        chunk_logs=list(getattr(outcome, "chunk_logs", []) or []),
+        output_lyrics=cfg.output_lyrics,
+        aligned=aligned,
+        tempo=cfg.tempo,
+        quantization_step=cfg.quantization_step,
+        quantization_mode=cfg.quantization_mode,
+        quant_simplicity=cfg.quant_simplicity,
+        pitch_format=cfg.pitch_format,
+        round_pitch=cfg.round_pitch,
+        chunks=chunks,
+        sr=44100,
+        cancel_checker=cancel_checker,
+    )
+    return all_notes

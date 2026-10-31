@@ -1,3 +1,4 @@
+import gc
 import pathlib
 
 from inference.device_utils import resolve_onnx_providers
@@ -136,6 +137,15 @@ def load_hfa_model(model_dir, device=None, use_cache: bool = True):
     if use_cache:
         _HFA_MODEL_CACHE[key] = model
     return model
+
+
+def release_hfa_models() -> None:
+    """Drop every cached HubertFA model so its session leaves VRAM."""
+    while _HFA_MODEL_CACHE:
+        _key, model = _HFA_MODEL_CACHE.popitem()
+        model.model = None
+        del model
+    gc.collect()
 
 def run_hubert_fa(hfa_model, temp_dir, language="zh", cancel_checker=None, use_phoneme_g2p=False):
     logger.info("[Hybrid Pipeline] Running HubertFA forced alignment...")

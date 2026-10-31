@@ -29,29 +29,26 @@ The current runtime is **ONNX-first**:
 
 ## What Vocal2Midi Does
 
-At a high level, the hybrid pipeline looks like this:
+At a high level, the hybrid pipeline runs two independent branches and joins
+them at export:
 
 ```text
-audio
-  -> optional RMVPE pitch curve
-  -> slicing
-  -> ASR: Qwen3-ASR, PinyinASR, or RomajiASR
-  -> lyric matching / .lab generation
-  -> forced alignment: TiFA or HubertFA
-  -> GAME note extraction
-  -> quantization: smart rhythmic alignment or simple
-  -> export: MIDI, USTX, VSQX, TextGrid, WAV
+audio -> optional RMVPE pitch curve -> slicing --+-> GAME note extraction ---------> lyric mapping -> quantization -> export
+                                                 |
+                                                 +-> ASR: Qwen3-ASR, PinyinASR, or RomajiASR
+                                                     -> lyric matching / .lab generation
+                                                     -> forced alignment: TiFA or HubertFA ---/
 ```
 
-There is also a no-lyrics path:
+GAME transcribes the notes (pitch and timing) from the audio alone, so a bad
+alignment can no longer bend the melody. The forced aligner only decides which
+syllable starts on which note; the export stage maps the lyrics onto the
+already-extracted notes by time. Syllables that GAME merged into one legato
+note are split at the aligned boundary, and lyrics that no note can take are
+dropped with a warning instead of shifting every later word.
 
-```text
-audio
-  -> optional RMVPE pitch curve
-  -> slicing
-  -> GAME pitch-only extraction
-  -> export
-```
+Without lyrics the lyric branch is skipped and the GAME notes are exported
+directly.
 
 ## Runtime Stack
 

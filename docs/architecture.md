@@ -82,11 +82,12 @@ The GUI is the primary interactive entrypoint. It collects user settings, launch
 1. loading audio
 2. optional RMVPE pitch-curve extraction
 3. slicing
-4. ASR or romaji ASR
-5. lyric matching
-6. HubertFA forced alignment
-7. GAME note extraction
-8. export
+4. GAME note extraction (audio only, no lyric constraints)
+5. ASR or romaji ASR
+6. lyric matching
+7. TiFA or HubertFA forced alignment
+8. lyric mapping: aligned syllables are placed on the GAME notes by time
+9. export
 
 ## Key inference APIs
 
@@ -138,8 +139,8 @@ Responsibilities:
 Responsibilities:
 
 - load the GAME ONNX model set
-- run note extraction with or without lyric alignment
-- align GAME output to word durations when HFA output exists
+- run note extraction from the audio alone (one note list per chunk)
+- per-chunk helpers for the vowel-boundary rules the lyric mapping reuses
 
 ### RMVPE
 
@@ -167,27 +168,28 @@ Responsibilities:
 
 At a high level, the hybrid pipeline looks like this:
 
+Two branches run independently after slicing and meet at export:
+
 ```text
 audio
   -> optional RMVPE
-  -> slicing
-  -> ASR / romaji ASR
-  -> lyric matching and .lab generation
-  -> HubertFA alignment
-  -> GAME note extraction
+  -> slicing -+-> GAME note extraction (audio only) --------\
+              |                                             lyric mapping
+              +-> ASR / romaji ASR                          (inference/pipeline/lyric_mapping.py)
+                  -> lyric matching and .lab generation
+                  -> TiFA / HubertFA alignment -------------/
   -> quantization
   -> export
 ```
 
-There is also a no-lyrics path:
+`inference/pipeline/lyric_mapping.py` anchors every aligned syllable at its
+vowel nucleus and matches the syllables to note onsets with a monotonic DP:
+a syllable takes a note onset (or cuts a legato note that hides two
+syllables), a syllable with no plausible note is dropped and logged, and a
+note that continues the previous syllable becomes a melisma `-`. Chunks
+without a usable alignment keep their GAME notes without lyrics.
 
-```text
-audio
-  -> optional RMVPE
-  -> slicing
-  -> GAME pitch-only extraction
-  -> export
-```
+Without lyrics the whole lyric branch is skipped.
 
 ## Export layer
 

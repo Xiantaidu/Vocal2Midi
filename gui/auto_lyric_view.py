@@ -354,6 +354,12 @@ class AutoLyricInterface(ScrollArea):
     def on_progress(self, current: int, total: int, filename: str):
         self.run_status_label.setText(tr("processing", i=current, n=total, f=filename))
 
+    def on_stage_progress(self, stage: str, done: int, total: int, filename: str):
+        """Stages sweep the queue, so the header tracks stage progress."""
+        self.run_status_label.setText(
+            tr("stage_status", s=tr(f"stage_{stage}"), i=done, n=total)
+        )
+
     def apply_device_batch_defaults(self, device: str):
         # Apply conservative batch defaults only when the device actually
         # changes; never wipe a value the user persisted in global settings.
@@ -712,6 +718,7 @@ class AutoLyricInterface(ScrollArea):
         self.worker = WorkerThread(tasks)
         self.worker.log_signal.connect(self.log_msg)
         self.worker.progress_signal.connect(self.on_progress)
+        self.worker.stage_progress_signal.connect(self.on_stage_progress)
         self.worker.finished_signal.connect(self.on_finished)
         self.worker.error_signal.connect(self.on_error)
         self.worker.start()

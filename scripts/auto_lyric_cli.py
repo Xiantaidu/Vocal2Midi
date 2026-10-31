@@ -10,6 +10,10 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+# Tiny dependency-free module, so importing it eagerly keeps startup cheap
+# while the heavy pipeline modules stay lazy.
+from application.exceptions import CancellationError, Vocal2MidiError  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 INPUT_AUDIO_EXTENSIONS = {".wav", ".m4a", ".flac", ".mp3", ".ogg", ".opus", ".wma", ".webm", ".aif", ".aiff"}
@@ -325,37 +329,47 @@ def main(argv=None) -> int:
         logger.error(f"Error: {e}")
         return 2
 
-    application_pipeline = importlib.import_module("application.pipeline")
     gui_fluent_utils = importlib.import_module("gui.fluent_utils")
     ts_list = gui_fluent_utils.t0_nstep_to_ts(args.t0, args.nsteps)
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Processing {len(input_files)} file(s) -> {args.output_dir}")
-    failed = 0
-    cancelled = False
-    session = application_pipeline.open_asr_session()
-    try:
-        for index, audio_path in enumerate(input_files, start=1):
-            logger.info(f"========== [{index}/{len(input_files)}] {audio_path.name} ==========")
-            try:
-                config = build_config(args, audio_path, ts_list, asr_session=session)
-                application_pipeline.run_auto_lyric_job(config)
-            except KeyboardInterrupt:
-                logger.warning("Cancelled by user.")
-                cancelled = True
-                break
-            except Exception as e:
-                failed += 1
-                details = getattr(e, "details", "")
-                message = f"{e}" + (f" ({details})" if details and str(details) != str(e) else "")
-                logger.error(f"Failed: {audio_path.name}: {message}")
-    finally:
-        session.close()
+    application_batch = importlib.import_module("application.batch")
+    tasks = []
+    for audio_path in input_files:
+        # Model paths are validated once for the whole queue by the batch
+        # orchestrator, so building a config here only prepares a queue entry.
+        config = build_config(args, audio_path, ts_list, asr_session=None)
+        tasks.append((config, audio_path.name))
 
-    if cancelled:
+    def _log(message: str) -> None:
+        logger.info(message)
+
+    # The batch owns the shared ASR session (one subprocess for the whole
+    # queue) and releases each stage's models as soon as it finishes.
+    try:
+        items = application_batch.run_auto_lyric_batch(tasks, log=_log)
+    except KeyboardInterrupt:
+        logger.warning("Cancelled by user.")
         return 130
-    succeeded = len(input_files) - failed
-    logger.info(f"Done: {succeeded} succeeded, {failed} failed.")
+    except application_batch.BatchCancelled:
+        logger.warning("Cancelled by user.")
+        return 130
+    except CancellationError:
+        # run_auto_lyric_batch() maps cancellation to this; it is also a
+        # Vocal2MidiError, so it must be handled before the generic case.
+        logger.warning("Cancelled by user.")
+        return 130
+    except Vocal2MidiError as e:
+        # Configuration problem (e.g. a model path that does not exist):
+        # report it like an argument error rather than dumping a traceback.
+        logger.error(f"Error: {e}")
+        return 2
+
+    failed = [item for item in items if item.failed_stage]
+    logger.info(f"Done: {len(items) - len(failed)} succeeded, {len(failed)} failed.")
+    for item in failed:
+        logger.error(f"Failed: {item.name} at stage '{item.failed_stage}': {item.error}")
     return 1 if failed else 0
 
 

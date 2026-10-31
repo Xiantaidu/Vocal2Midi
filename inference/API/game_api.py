@@ -1,8 +1,8 @@
+import gc
 import pathlib
 import sys
 import traceback
 
-import librosa
 import numpy as np
 
 ROOT_DIR = pathlib.Path(__file__).parent.parent
@@ -10,7 +10,6 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from inference.io.note_io import NoteInfo, pad_1d_arrays
-from inference.game.alignment_utils import align_notes_to_words
 from inference.game.onnx_runtime import GameOnnxModel
 import logging
 
@@ -201,6 +200,17 @@ def load_game_model(model_dir: str, device=None, use_cache: bool = True):
     return model
 
 
+def release_game_models() -> None:
+    """Drop every cached GAME suite so its sessions leave VRAM."""
+    while _GAME_MODEL_CACHE:
+        _key, model = _GAME_MODEL_CACHE.popitem()
+        shutdown = getattr(model, "shutdown", None)
+        if callable(shutdown):
+            shutdown()
+        del model
+    gc.collect()
+
+
 def extract_vowel_boundaries(result_word, original_chars: list[str], language: str | None = None):
     if (language or "").lower() == "en":
         return _extract_vowel_boundaries_english(result_word, original_chars)
@@ -236,6 +246,10 @@ def extract_vowel_boundaries(result_word, original_chars: list[str], language: s
                 word_vuvs.append(0)
                 lyrics.append("")
                 last_end = word.end
+            # Display tokens pair with singable words by position: a skipped
+            # word still owns its token, else every later lyric shifts by one.
+            if not is_romaji and char_idx < len(original_chars):
+                char_idx += 1
             continue
 
         if vowel_start > last_end + 0.005:
@@ -261,9 +275,10 @@ def extract_vowel_boundaries(result_word, original_chars: list[str], language: s
         if dur < 0:
             dur = 0.0
         if dur <= 0:
-            # A zero-length voiced entry would be skipped by the note/word
-            # aligner while the caller still consumes a lyric slot, shifting
-            # every later lyric in the chunk by one. Drop it instead.
+            # A zero-length voiced entry cannot carry a note; drop it but keep
+            # consuming its display token so the later lyrics stay paired.
+            if not is_romaji and char_idx < len(original_chars):
+                char_idx += 1
             continue
 
         word_durs.append(dur)
@@ -319,11 +334,9 @@ def _run_game_inference_batch(
     )
 
 
-def extract_pitches_and_align(
+def extract_chunk_notes(
     chunks,
     sr,
-    pred_dict,
-    chars_dict,
     game_model,
     ts,
     seg_threshold,
@@ -333,165 +346,22 @@ def extract_pitches_and_align(
     cancel_checker=None,
     language=None,
 ):
-    """Extract pitches using the GAME ONNX runtime and align them to lyrics."""
-    # Melisma notes keep '-' for every language; English '+' on syllable
-    # positions comes from the per-syllable chunk lyrics instead.
-    sustain_lyric = "-"
-    logger.info("[Hybrid Pipeline] Extracting pitches with GAME ONNX...")
+    """Run GAME on every chunk without lyric constraints.
 
-    all_notes = []
+    Returns one note list per chunk (same order as ``chunks``) with absolute
+    onsets and empty lyrics; lyrics are mapped onto these notes afterwards, so
+    alignment errors can no longer bend the transcribed melody.
+    """
+    logger.info("[Hybrid Pipeline] Extracting notes with GAME ONNX...")
+
+    chunk_notes = [[] for _ in chunks]
     batch_infos = []
-    processed_chunk_indices = set()
-
     for chunk_idx, chunk in enumerate(chunks):
         if cancel_checker and cancel_checker():
             raise InterruptedError("GAME task cancelled")
-        stem = f"chunk_{chunk_idx}"
-        if stem not in pred_dict:
-            logger.warning(f"[Warning] {stem}: missing HFA prediction; skipping lyric-aligned GAME for this chunk.")
-            continue
-
-        _, _, result_word = pred_dict[stem]
-        if not result_word:
-            logger.warning(f"[Warning] {stem}: empty HFA word result; skipping lyric-aligned GAME for this chunk.")
-            continue
-
-        word_durs, word_vuvs, lyrics = extract_vowel_boundaries(
-            result_word,
-            chars_dict.get(stem, []),
-            language=language,
-        )
-        if not word_durs:
-            logger.warning(f"[Warning] {stem}: no usable word durations; skipping lyric-aligned GAME for this chunk.")
-            continue
-
         batch_infos.append(
             {
                 "chunk_idx": chunk_idx,
-                "waveform": chunk["waveform"],
-                "waveform_duration": len(chunk["waveform"]) / sr,
-                "word_durs": word_durs,
-                "known_durations": np.asarray(word_durs, dtype=np.float32),
-                "offset": chunk["offset"],
-                "word_vuvs": word_vuvs,
-                "lyrics": lyrics,
-            }
-        )
-
-    for i in range(0, len(batch_infos), batch_size):
-        if cancel_checker and cancel_checker():
-            raise InterruptedError("GAME task cancelled")
-        batch = batch_infos[i : i + batch_size]
-
-        waveforms_np = [info["waveform"] for info in batch]
-        waveform_durations_np = [info["waveform_duration"] for info in batch]
-        known_durations_np = [info["known_durations"] for info in batch]
-
-        try:
-            batch_results = _run_game_inference_batch(
-                game_model=game_model,
-                waveforms_np=waveforms_np,
-                waveform_durations_np=waveform_durations_np,
-                known_durations_np=known_durations_np,
-                seg_threshold=seg_threshold,
-                seg_radius=seg_radius,
-                est_threshold=est_threshold,
-                ts=ts,
-                language=language,
-            )
-        except Exception:
-            logger.error("Error during GAME ONNX inference batch:", exc_info=True)
-            raise
-
-        for result, info in zip(batch_results, batch):
-            durations, presence, scores = result
-
-            note_dur = durations[durations > 0].tolist()
-            valid_presence = presence[durations > 0]
-            valid_scores = scores[durations > 0]
-            if not note_dur:
-                logger.warning(f"[Warning] GAME returned no note durations for chunk at {info['offset']:.2f}s; skipping.")
-                continue
-
-            note_seq = [
-                librosa.midi_to_note(float(m), unicode=False, cents=True) if v else "rest"
-                for m, v in zip(valid_scores, valid_presence)
-            ]
-
-            a_note_seq, a_note_dur, a_note_slur = align_notes_to_words(
-                info["word_durs"],
-                info["word_vuvs"],
-                note_seq,
-                note_dur,
-                apply_word_uv=True,
-                assign_by_onset=False,
-            )
-
-            lyric_idx = 0
-            current_onset = info["offset"]
-            pending_lyric = ""
-
-            for n_seq, n_dur, n_slur in zip(a_note_seq, a_note_dur, a_note_slur):
-                if n_slur == 0:
-                    if lyric_idx < len(info["lyrics"]):
-                        word_lyric = info["lyrics"][lyric_idx]
-                        if info["word_vuvs"][lyric_idx] == 1:
-                            pending_lyric = word_lyric
-                        else:
-                            pending_lyric = ""
-                        lyric_idx += 1
-
-                if n_seq != "rest":
-                    pitch = librosa.note_to_midi(n_seq, round_midi=False)
-                    if pending_lyric:
-                        lyric_to_assign = pending_lyric
-                        pending_lyric = ""
-                    else:
-                        lyric_to_assign = sustain_lyric
-
-                    is_contiguous = len(all_notes) > 0 and abs(all_notes[-1].offset - current_onset) < 0.01
-                    can_merge = is_contiguous and abs(all_notes[-1].pitch - pitch) < 0.1 and lyric_to_assign == sustain_lyric
-
-                    if can_merge:
-                        all_notes[-1].offset += n_dur
-                    else:
-                        all_notes.append(
-                            NoteInfo(
-                                onset=current_onset,
-                                offset=current_onset + n_dur,
-                                pitch=pitch,
-                                lyric=lyric_to_assign,
-                            )
-                        )
-
-                current_onset += n_dur
-            processed_chunk_indices.add(info["chunk_idx"])
-
-    return all_notes, processed_chunk_indices
-
-
-def extract_pitches_only(
-    chunks,
-    sr,
-    game_model,
-    ts,
-    seg_threshold,
-    seg_radius,
-    est_threshold,
-    batch_size=4,
-    cancel_checker=None,
-    language=None,
-):
-    """Extract pitches using the GAME ONNX runtime without lyric alignment."""
-    logger.info("[Hybrid Pipeline] Extracting pitches with GAME ONNX (no-lyrics mode)...")
-
-    all_notes = []
-    batch_infos = []
-    for chunk in chunks:
-        if cancel_checker and cancel_checker():
-            raise InterruptedError("GAME task cancelled")
-        batch_infos.append(
-            {
                 "waveform": chunk["waveform"],
                 "waveform_duration": len(chunk["waveform"]) / sr,
                 "offset": chunk["offset"],
@@ -520,7 +390,7 @@ def extract_pitches_only(
                 language=language,
             )
         except Exception:
-            logger.error("Error during GAME ONNX inference batch (no-lyrics):", exc_info=True)
+            logger.error("Error during GAME ONNX inference batch:", exc_info=True)
             raise
 
         for result, info in zip(batch_results, batch):
@@ -533,10 +403,11 @@ def extract_pitches_only(
                 logger.warning(f"[Warning] GAME returned no note durations for chunk at {info['offset']:.2f}s; skipping.")
                 continue
 
+            notes = chunk_notes[info["chunk_idx"]]
             current_onset = info["offset"]
             for n_dur, n_presence, n_score in zip(note_dur, note_presence, note_scores):
                 if n_presence:
-                    all_notes.append(
+                    notes.append(
                         NoteInfo(
                             onset=current_onset,
                             offset=current_onset + n_dur,
@@ -546,4 +417,26 @@ def extract_pitches_only(
                     )
                 current_onset += n_dur
 
-    return all_notes
+    return chunk_notes
+
+
+def extract_pitches_only(
+    chunks,
+    sr,
+    game_model,
+    ts,
+    seg_threshold,
+    seg_radius,
+    est_threshold,
+    batch_size=4,
+    cancel_checker=None,
+    language=None,
+):
+    """Flat list of the GAME notes of every chunk, without lyrics."""
+    chunk_notes = extract_chunk_notes(
+        chunks, sr, game_model, ts,
+        seg_threshold, seg_radius, est_threshold, batch_size,
+        cancel_checker=cancel_checker,
+        language=language,
+    )
+    return [note for notes in chunk_notes for note in notes]

@@ -72,6 +72,11 @@ def _base_kwargs(tmp_path: Path) -> dict:
         "est_threshold": 0.2,
         "batch_size": 2,
         "asr_batch_size": 2,
+        # These tests are about ASR engine routing, so the aligner is only
+        # scaffolding. Pin it to HFA explicitly: relying on the pipeline
+        # default made them silently switch to TiFA when the default changed,
+        # then fail on tifa_model_path == "" instead of on what they assert.
+        "alignment_engine": "hfa",
     }
 
 
@@ -92,10 +97,20 @@ def _patch_alignment_success(monkeypatch):
         lyric_alignment, "run_hubert_fa", lambda *a, **k: {"chunk_0": (None, None, [MagicMock()])}
     )
     monkeypatch.setattr(lyric_alignment, "export_hfa_artifacts", lambda *a, **k: None)
+    # These tests pin alignment_engine to "hfa", but stub TiFA as well: if the
+    # pipeline default ever flips again, the tests fail on their own assertions
+    # instead of surfacing a bare "No such file or directory: 'config.json'"
+    # from TifaModel.__init__.
+    monkeypatch.setattr(
+        lyric_alignment, "load_tifa_model", lambda *a, **k: MagicMock()
+    )
+    monkeypatch.setattr(
+        lyric_alignment, "run_tifa_fa", lambda *a, **k: ({}, "tifa")
+    )
     monkeypatch.setattr(
         pipeline,
-        "extract_pitches_and_align",
-        lambda *a, **k: ([NoteInfo(0.0, 0.5, 60.0, "a")], {0}),
+        "extract_chunk_notes",
+        lambda *a, **k: [[NoteInfo(0.0, 0.5, 60.0, "a")]],
     )
 
 
@@ -127,6 +142,7 @@ def test_zh_pinyin_uses_pinyin_asr_and_zh_hfa(monkeypatch, tmp_path):
     assert run_pinyin.call_args.kwargs["language"] == "zh-pinyin"
     assert run_pinyin.call_args.kwargs["lyric_output_mode"] == "pinyin"
     # HFA/GAME downstream must see the base language.
+    assert run_hfa.called, "expected the HFA alignment branch to run"
     assert run_hfa.call_args.kwargs["language"] == "zh"
 
 
@@ -197,6 +213,7 @@ def test_zh_with_pinyin_engine_routes_to_pinyin_asr(monkeypatch, tmp_path):
     assert run_pinyin.call_args.kwargs["language"] == "zh-pinyin"
     assert run_pinyin.call_args.kwargs["lyric_output_mode"] == "pinyin"
     # HFA/GAME downstream must see the base language.
+    assert run_hfa.called, "expected the HFA alignment branch to run"
     assert run_hfa.call_args.kwargs["language"] == "zh"
 
 

@@ -173,39 +173,62 @@ def test_build_config_maps_fields(tmp_path, defaults):
     assert config.asr_session is not None
 
 
+def _patch_batch_run(monkeypatch, fake_run):
+    """Stand in for the batch stages and drive ``fake_run`` once per song."""
+    import application.batch as batch
+
+    def fake_stage(*args, **kwargs):
+        # S1 returns (chunks, rmvpe_result) for the next stages to consume.
+        fake_run(kwargs.get("audio_path", args[0] if args else None))
+        return ([{"offset": 0.0, "waveform": [0.0]}], None)
+
+    monkeypatch.setattr("inference.pipeline.auto_lyric_hybrid.pipeline_stage_slicing", fake_stage)
+    for name in ("pipeline_stage_game", "pipeline_stage_export", "prepare_lyric_matcher", "read_chunk_audio", "release_chunk_audio"):
+        monkeypatch.setattr(f"inference.pipeline.auto_lyric_hybrid.{name}", MagicMock())
+    monkeypatch.setattr("inference.API.game_api.release_game_models", MagicMock())
+    monkeypatch.setattr("inference.pipeline.auto_lyric_hybrid.clear_rmvpe_cache", MagicMock())
+    monkeypatch.setattr(batch, "_free_memory", lambda: None)
+    return fake_stage
+
+
 def test_main_batch_runs_shares_session_and_reports_failures(monkeypatch, tmp_path, defaults):
     (tmp_path / "good.wav").write_bytes(b"")
     (tmp_path / "bad.wav").write_bytes(b"")
 
     calls = []
 
-    def fake_run(cfg):
-        calls.append(cfg.audio_path)
-        if cfg.audio_path.endswith("bad.wav"):
+    def fake_run(audio_path):
+        calls.append(audio_path)
+        if audio_path.endswith("bad.wav"):
             raise RuntimeError("boom")
 
     session = MagicMock()
-    monkeypatch.setattr("application.pipeline.run_auto_lyric_job", fake_run)
-    monkeypatch.setattr("application.pipeline.open_asr_session", lambda: session)
+    _patch_batch_run(monkeypatch, fake_run)
+    monkeypatch.setattr(
+        "application.pipeline.open_asr_session", MagicMock(side_effect=lambda: session)
+    )
 
     exit_code = auto_lyric_cli.main(
         [str(tmp_path / "good.wav"), str(tmp_path / "bad.wav"), "-o", str(tmp_path / "out")]
     )
 
     assert exit_code == 1
-    assert len(calls) == 2
+    # The failing song does not abort the queue.
+    assert [path.replace("\\", "/").rsplit("/", 1)[-1] for path in calls] == ["good.wav", "bad.wav"]
     session.close.assert_called_once()  # one shared session for the whole batch
 
 
 def test_main_success_returns_zero(monkeypatch, tmp_path, defaults):
     (tmp_path / "ok.wav").write_bytes(b"")
     session = MagicMock()
-    monkeypatch.setattr("application.pipeline.run_auto_lyric_job", lambda cfg: None)
-    monkeypatch.setattr("application.pipeline.open_asr_session", lambda: session)
+    _patch_batch_run(monkeypatch, lambda audio_path: None)
+    opened = MagicMock(side_effect=lambda: session)
+    monkeypatch.setattr("application.pipeline.open_asr_session", opened)
 
     exit_code = auto_lyric_cli.main([str(tmp_path / "ok.wav"), "-o", str(tmp_path / "out")])
 
     assert exit_code == 0
+    assert opened.call_count == 1
     session.close.assert_called_once()
 
 
@@ -214,13 +237,13 @@ def test_main_cancelled_returns_130(monkeypatch, tmp_path, defaults):
     (tmp_path / "b.wav").write_bytes(b"")
     session = MagicMock()
 
-    def fake_run(cfg):
-        if cfg.audio_path.endswith("a.wav"):
-            raise KeyboardInterrupt
-        raise AssertionError("must stop after cancellation")
+    def fake_run(audio_path):
+        raise KeyboardInterrupt
 
-    monkeypatch.setattr("application.pipeline.run_auto_lyric_job", fake_run)
-    monkeypatch.setattr("application.pipeline.open_asr_session", lambda: session)
+    _patch_batch_run(monkeypatch, fake_run)
+    monkeypatch.setattr(
+        "application.pipeline.open_asr_session", MagicMock(side_effect=lambda: session)
+    )
 
     exit_code = auto_lyric_cli.main(
         [str(tmp_path / "a.wav"), str(tmp_path / "b.wav"), "-o", str(tmp_path / "out")]
@@ -228,3 +251,21 @@ def test_main_cancelled_returns_130(monkeypatch, tmp_path, defaults):
 
     assert exit_code == 130
     session.close.assert_called_once()
+
+
+def test_main_reports_missing_model_path_as_config_error(monkeypatch, tmp_path, defaults):
+    """A bad model path is a config error: exit 2 and no ASR session spin-up."""
+    (tmp_path / "ok.wav").write_bytes(b"")
+    _patch_batch_run(monkeypatch, lambda audio_path: None)
+
+    def fail_hard():
+        raise AssertionError("ASR session must not open before validation")
+
+    monkeypatch.setattr("application.pipeline.open_asr_session", fail_hard)
+
+    exit_code = auto_lyric_cli.main(
+        [str(tmp_path / "ok.wav"), "-o", str(tmp_path / "out"),
+         "--tifa-model", str(tmp_path / "missing-tifa")]
+    )
+
+    assert exit_code == 2

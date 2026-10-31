@@ -1,6 +1,7 @@
 """ONNX session management and model configuration for the TiFA aligner."""
 from __future__ import annotations
 
+import gc
 import json
 import logging
 import pathlib
@@ -85,3 +86,18 @@ def load_tifa_model(model_dir: str | pathlib.Path, device: str | None = None, us
     if use_cache:
         _TIFA_MODEL_CACHE[key] = model
     return model
+
+
+def release_tifa_models() -> None:
+    """Drop every cached TiFA bundle so its five sessions leave VRAM.
+
+    Batch mode loads TiFA per alignment group and releases it right after, so
+    only one aligner's sessions are resident at a time.
+    """
+    while _TIFA_MODEL_CACHE:
+        _key, model = _TIFA_MODEL_CACHE.popitem()
+        sessions = getattr(model, "sessions", None)
+        if sessions is not None:
+            sessions.clear()
+        del model
+    gc.collect()

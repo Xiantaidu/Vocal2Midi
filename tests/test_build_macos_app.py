@@ -1,3 +1,4 @@
+import os
 import plistlib
 
 from scripts.build_macos_app import build_bundle
@@ -12,7 +13,11 @@ def test_build_bundle_creates_relocatable_app_shell(tmp_path):
 
     launcher = bundle / "Contents" / "MacOS" / "Vocal2Midi"
     assert launcher.is_file()
-    assert launcher.stat().st_mode & 0o111
+    # Windows cannot represent POSIX exec bits (Path.chmod only maps the
+    # read-only flag), so only check them on POSIX. The bundle layout and
+    # metadata below are platform-neutral and are still verified everywhere.
+    if os.name == "posix":
+        assert launcher.stat().st_mode & 0o111
     assert str(project.resolve()) in (bundle / "Contents" / "Resources" / "project-path.txt").read_text()
     with (bundle / "Contents" / "Info.plist").open("rb") as handle:
         assert plistlib.load(handle)["CFBundleIdentifier"] == "com.xiantaidu.vocal2midi.mac"
