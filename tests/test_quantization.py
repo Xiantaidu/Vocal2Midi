@@ -215,6 +215,7 @@ def test_smart_mode_leaves_notes_unchanged_when_chain_is_infeasible(caplog):
     # A note fully containing a later one collapses the chain span; the
     # engine reports failure and the notes stay exactly as sung — the
     # upstream "left unchanged" semantics, intentionally not "fixed".
+    # Refining the grid cannot help here, so the fallback must give up.
     notes = _notes_from_ticks([(0, 1920), (60, 120)])
     before = [(n.onset, n.offset) for n in notes]
     with caplog.at_level(logging.WARNING):
@@ -222,6 +223,36 @@ def test_smart_mode_leaves_notes_unchanged_when_chain_is_infeasible(caplog):
 
     assert any("left notes unchanged" in r.message for r in caplog.records)
     assert [(n.onset, n.offset) for n in notes] == before
+
+
+def test_smart_mode_coarse_grid_falls_back_to_a_finer_one(caplog):
+    # A 16th-note run makes every grid coarser than 1/16 infeasible (each
+    # note would need a whole grid cell). Instead of leaving the song raw,
+    # the wrapper refines the grid until the chain fits.
+    run = [(k * 120 + 15, (k + 1) * 120 - 10) for k in range(4)]  # jittered 16ths
+    notes = _notes_from_ticks(run)
+    with caplog.at_level(logging.WARNING):
+        quantize_notes(notes, TEMPO, 480, mode="smart", simplicity=2.5)
+
+    spans = _spans(notes)
+    for start, end in spans:
+        assert start % 120 == 0 and end % 120 == 0  # landed on 1/16 columns
+        assert end > start
+    assert any("1/4 grid is coarser" in r.message for r in caplog.records)
+
+
+def test_smart_mode_requested_grid_survives_when_feasible(caplog):
+    # The fallback must not kick in when the requested grid works: notes at
+    # least one cell long fit a 1/8 chain.
+    notes = _notes_from_ticks([(100, 400), (400, 700)])
+    with caplog.at_level(logging.WARNING):
+        quantize_notes(notes, TEMPO, 240, mode="smart", simplicity=2.5)
+
+    spans = _spans(notes)
+    for start, end in spans:
+        assert start % 240 == 0 and end % 240 == 0
+        assert end > start
+    assert not any("coarser" in r.message for r in caplog.records)
 
 
 def test_smart_mode_quantizes_single_sub_grid_note():

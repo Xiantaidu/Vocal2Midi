@@ -52,25 +52,45 @@ def _quantize_notes_simple(notes: list[Any], tempo: float, quantization_step: in
         notes[i].offset = q_offsets[i] / (tempo * 8)
 
 
+_SMART_MIN_STEP = 30  # 1/64 at PPQ 480: the finest grid the GUI offers
+
+
 def _quantize_notes_smart(notes: list[Any], tempo: float, quantization_step: int, simplicity: float):
     """Smart rhythmic alignment, strictly per the reference smart_quantize.py.
 
     Notes live in PPQ-480 ticks (one quarter note = tempo*8 seconds-ticks).
-    ``quantization_step`` (1/4 = 480 … 1/64 = 30) is the correction grid;
-    overlapping notes that make the rhythmic chain infeasible report failure
-    and the notes are left unchanged, exactly like the reference's MIDI path.
+    ``quantization_step`` (1/4 = 480 … 1/64 = 30) is the correction grid.
+    The engine needs every note (and rest) to fill at least one grid column,
+    so a grid coarser than the song's shortest note makes the chain
+    infeasible; sung melodies almost always contain such notes, so instead of
+    leaving the whole song unquantized the grid is refined (1/4 → 1/8 → … →
+    1/64) until the chain fits.
     """
     if quantization_step <= 0 or not notes:
         return
 
     notes.sort(key=lambda n: n.onset)
     tick_pairs = [(_ticks_from_sec(n.onset, tempo), _ticks_from_sec(n.offset, tempo)) for n in notes]
-    result = smart_quantize_musical(
-        tick_pairs,
-        simplicity=simplicity,
-        ticks_per_quarter=480,
-        grid_ticks=quantization_step,
-    )
+    step = quantization_step
+    while True:
+        result = smart_quantize_musical(
+            tick_pairs,
+            simplicity=simplicity,
+            ticks_per_quarter=480,
+            grid_ticks=step,
+        )
+        if result.ok:
+            if step != quantization_step:
+                logger.warning(
+                    "smart quantize: the 1/%d grid is coarser than the shortest note; "
+                    "quantized on a 1/%d grid instead",
+                    1920 // quantization_step,
+                    1920 // step,
+                )
+            break
+        if step <= _SMART_MIN_STEP:
+            break
+        step = max(_SMART_MIN_STEP, step // 2)
     if not result.ok:
         logger.warning("smart quantize left notes unchanged: %s", result.message)
         return
