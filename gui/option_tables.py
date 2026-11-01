@@ -39,6 +39,8 @@ QUANT_MODE_CHOICES = [
     ("smart", "quant_smart"),
     ("simple", "quant_simple"),
 ]
+# Discrete beat-pull strengths for the smart quantizer (the simplicity slider).
+QUANT_SIMPLICITY_LEVELS = (0.0, 0.5, 1.0, 1.5, 2.0)
 LYRIC_OUTPUT_BY_LANGUAGE = {
     "zh": [("pinyin", "opt_pinyin"), ("hanzi", "opt_hanzi")],
     "ja": [("romaji", "opt_romaji"), ("kana", "opt_kana")],

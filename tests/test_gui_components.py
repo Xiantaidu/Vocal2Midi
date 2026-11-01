@@ -256,6 +256,60 @@ def test_quantization_settings_persisted(qapp):
     assert view2.quantize_combo.currentData() == 480
 
 
+def test_quant_simplicity_slider_persists_and_gates(qapp):
+    from gui.auto_lyric_view import AutoLyricInterface
+    from gui.global_settings_view import GlobalSettingsInterface
+    from gui.model_config_view import ModelConfigInterface
+    from gui.option_tables import QUANT_SIMPLICITY_LEVELS
+
+    settings_ui = GlobalSettingsInterface()
+    model_cfg = ModelConfigInterface(settings_ui.settings, settings_ui.project_root)
+
+    view1 = AutoLyricInterface(settings_ui, model_cfg)
+    assert QUANT_SIMPLICITY_LEVELS == (0.0, 0.5, 1.0, 1.5, 2.0)
+    assert view1.simplicity_slider.minimum() == 0
+    assert view1.simplicity_slider.maximum() == len(QUANT_SIMPLICITY_LEVELS) - 1
+
+    # No quantization selected yet: the beat-pull slider stays disabled.
+    assert not view1.simplicity_slider.isEnabled()
+
+    idx_16 = view1.quantize_combo.findData(120)
+    view1.quantize_combo.setCurrentIndex(idx_16)
+    assert view1.simplicity_slider.isEnabled()
+
+    # Switching to the simple algorithm disables it again.
+    idx_simple = view1.quantize_mode_combo.findData("simple")
+    view1.quantize_mode_combo.setCurrentIndex(idx_simple)
+    assert not view1.simplicity_slider.isEnabled()
+    view1.quantize_mode_combo.setCurrentIndex(view1.quantize_mode_combo.findData("smart"))
+
+    # Moving the slider persists the level and shows it on the label.
+    view1.simplicity_slider.setValue(QUANT_SIMPLICITY_LEVELS.index(1.5))
+    assert float(settings_ui.settings.value("quant_simplicity")) == 1.5
+    assert view1.simplicity_value_label.text() == "1.5"
+
+    # A fresh view restores the saved level; a corrupt one snaps back to 0.0.
+    view2 = AutoLyricInterface(settings_ui, model_cfg)
+    assert view2.simplicity_slider.value() == QUANT_SIMPLICITY_LEVELS.index(1.5)
+    assert view2._initial_quant_simplicity() == 1.5
+    settings_ui.settings.setValue("quant_simplicity", "garbage")
+    view3 = AutoLyricInterface(settings_ui, model_cfg)
+    assert view3._initial_quant_simplicity() == 0.0
+
+
+def test_quant_simplicity_flows_into_base_values(qapp):
+    from gui.auto_lyric_view import AutoLyricInterface
+    from gui.global_settings_view import GlobalSettingsInterface
+    from gui.model_config_view import ModelConfigInterface
+
+    settings_ui = GlobalSettingsInterface()
+    model_cfg = ModelConfigInterface(settings_ui.settings, settings_ui.project_root)
+    view = AutoLyricInterface(settings_ui, model_cfg)
+
+    view.simplicity_slider.setValue(3)  # 1.5
+    assert view._current_base_values()["quant_simplicity"] == 1.5
+
+
 def test_gui_version(qapp):
     from gui import __version__
     from gui.fluent_main import MainWindow

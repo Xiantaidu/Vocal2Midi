@@ -1,7 +1,7 @@
 import os
 import pathlib
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFileDialog
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFileDialog, QSlider
 from PySide6.QtCore import Qt
 
 from gui.fluent_compat import (
@@ -35,6 +35,7 @@ from gui.option_tables import (
     EXPORT_FORMAT_CHOICES,
     LYRIC_OUTPUT_BY_LANGUAGE,
     QUANT_MODE_CHOICES,
+    QUANT_SIMPLICITY_LEVELS,
     QUANT_STEP_CHOICES,
     SLICE_METHOD_CHOICES,
     TARGET_LANGUAGE_CHOICES,
@@ -210,6 +211,21 @@ class AutoLyricInterface(ScrollArea):
         self.quantize_mode_combo.setCurrentIndex(max(0, self.quantize_mode_combo.findData(initial_mode)))
         self.quantize_mode_combo.currentIndexChanged.connect(self.on_quantization_mode_changed)
         self._add_flow_pair(opts_layout, "quant_mode", self.quantize_mode_combo)
+        opts_layout.addSpacing(28)
+        self.simplicity_slider = QSlider(Qt.Horizontal, self)
+        self.simplicity_slider.setRange(0, len(QUANT_SIMPLICITY_LEVELS) - 1)
+        self.simplicity_slider.setPageStep(1)
+        self.simplicity_slider.setTickPosition(QSlider.TicksBelow)
+        self.simplicity_slider.setTickInterval(1)
+        initial_simplicity = self._initial_quant_simplicity()
+        self.simplicity_slider.setValue(QUANT_SIMPLICITY_LEVELS.index(initial_simplicity))
+        self.simplicity_value_label = BodyLabel(self)
+        self.simplicity_value_label.setText(f"{initial_simplicity:.1f}")
+        self.simplicity_slider.valueChanged.connect(self.on_quant_simplicity_changed)
+        self._bind_tr(lambda: self.simplicity_slider.setToolTip(tr("quant_simplicity_hint")))
+        self._add_flow_pair(opts_layout, "quant_simplicity", self.simplicity_slider)
+        opts_layout.addWidget(self.simplicity_value_label)
+        self._update_simplicity_enabled()
         opts_layout.addStretch(1)
         output_layout.addLayout(opts_layout)
 
@@ -481,6 +497,31 @@ class AutoLyricInterface(ScrollArea):
         if self.global_settings is not None:
             mode = self.quantize_mode_combo.currentData() or "smart"
             self.global_settings.settings.setValue("quantization_mode", mode)
+        self._update_simplicity_enabled()
+
+    def _initial_quant_simplicity(self) -> float:
+        """Saved beat-pull strength, snapped to a known slider level."""
+        if self.global_settings is None:
+            return 0.0
+        try:
+            saved = float(self.global_settings.settings.value("quant_simplicity", 0.0))
+        except (TypeError, ValueError):
+            saved = 0.0
+        return saved if saved in QUANT_SIMPLICITY_LEVELS else 0.0
+
+    def on_quant_simplicity_changed(self, index: int):
+        level = QUANT_SIMPLICITY_LEVELS[max(0, min(int(index), len(QUANT_SIMPLICITY_LEVELS) - 1))]
+        self.simplicity_value_label.setText(f"{level:.1f}")
+        if self.global_settings is not None:
+            self.global_settings.settings.setValue("quant_simplicity", float(level))
+
+    def _update_simplicity_enabled(self, *_args):
+        # The beat-pull strength only shapes the smart quantizer, which only
+        # runs when a quantization step is selected at all.
+        smart = (self.quantize_mode_combo.currentData() or "smart") == "smart"
+        enabled = smart and int(self.quantize_combo.currentData() or 0) > 0
+        self.simplicity_slider.setEnabled(enabled)
+        self.simplicity_value_label.setEnabled(enabled)
 
     def _initial_quantization_step(self) -> int:
         if self.global_settings is None:
@@ -498,6 +539,7 @@ class AutoLyricInterface(ScrollArea):
             if step is None:
                 step = 0
             self.global_settings.settings.setValue("quantization_step", int(step))
+        self._update_simplicity_enabled()
 
     def update_lyric_output_options(self, *_args):
         language = self._selected_language()
@@ -592,6 +634,7 @@ class AutoLyricInterface(ScrollArea):
             "tempo": self.tempo_spin.value(),
             "quantization_step": self.quantize_combo.currentData(),
             "quantization_mode": self.quantize_mode_combo.currentData(),
+            "quant_simplicity": self._initial_quant_simplicity(),
             "batch_size": self.global_settings.batch_size(),
             "asr_batch_size": self.global_settings.asr_batch_size(),
             "output_dir": self.save_dir_edit.text(),
@@ -662,6 +705,7 @@ class AutoLyricInterface(ScrollArea):
             tempo=float(values["tempo"]),
             quantization_step=values["quantization_step"],
             quantization_mode=values["quantization_mode"],
+            quant_simplicity=float(values["quant_simplicity"]),
             pitch_format=values["pitch_format"],
             round_pitch=values["round_pitch"],
             seg_threshold=values["seg_threshold"],

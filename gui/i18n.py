@@ -98,6 +98,11 @@ _STRINGS: dict[str, dict[str, str]] = {
     "quant_mode": {"zh": "量化算法:", "en": "Algorithm:"},
     "quant_smart": {"zh": "智能量化", "en": "Smart"},
     "quant_simple": {"zh": "简单", "en": "Simple"},
+    "quant_simplicity": {"zh": "节拍吸附:", "en": "Beat pull:"},
+    "quant_simplicity_hint": {
+        "zh": "智能量化把音头拉向节拍与强位置的力度，越高越果断、越抗抖动（仅智能量化生效）",
+        "en": "How firmly smart quantization pulls onsets onto beats and strong positions; higher is firmer (smart mode only)",
+    },
     "save_dir": {"zh": "保存目录:", "en": "Save Directory:"},
     "browse": {"zh": "浏览", "en": "Browse"},
     "choose_folder_dialog": {"zh": "选择文件夹", "en": "Select Folder"},
