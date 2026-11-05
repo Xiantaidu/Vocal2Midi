@@ -21,7 +21,7 @@ from inference.io.note_io import _save_midi, _save_text
 from inference.quant.quantization import quantize_notes, should_apply_quantization
 
 from inference.API.lfa_api import create_lyric_matcher, _normalize_lyric_output_mode
-from inference.API.game_api import load_game_model, extract_chunk_notes
+from inference.API.game_api import load_game_model, extract_chunk_notes, release_game_models
 from inference.API.rmvpe_api import RmvpeTranscriber
 from inference.API.ustx_api import save_ustx
 from inference.API.vsqx_api import save_vsqx
@@ -94,7 +94,11 @@ def _export_chunk_wavs(chunks, sr: int, output_key: str, output_dir: pathlib.Pat
     for chunk_idx, chunk in enumerate(chunks):
         if cancel_checker and cancel_checker():
             raise InterruptedError("Slicing export task was cancelled")
-        sf.write(output_dir / f"{output_key}_{chunk_idx:03d}.wav", chunk["waveform"], sr)
+        waveform = chunk.get("waveform")
+        if waveform is None:
+            logger.warning(f"[Warning] Chunk {chunk_idx} audio is not in memory; skipping its WAV export.")
+            continue
+        sf.write(output_dir / f"{output_key}_{chunk_idx:03d}.wav", waveform, sr)
 
 
 def _resolve_rmvpe_path(model_path: str) -> str:
@@ -169,6 +173,25 @@ def clear_rmvpe_cache() -> None:
         transcriber.shutdown()
         del transcriber
     free_memory()
+
+
+def release_aligner_models() -> None:
+    """Drop cached TiFA/HubertFA bundles so their sessions leave VRAM.
+
+    The single-song entrypoint keeps the aligners cached between songs; without
+    this, the next song's GAME sessions load on top of them and both model sets
+    stay resident. Best effort: freeing memory must not fail a song.
+    """
+    from inference.API.hfa_api import release_hfa_models
+    from inference.TiFA.runtime import release_tifa_models
+
+    for releaser in (release_tifa_models, release_hfa_models):
+        try:
+            releaser()
+        except Exception:  # noqa: BLE001 - freeing is an optimisation
+            logger.warning(
+                "[Warning] Could not release the aligner sessions; continuing.", exc_info=True
+            )
 
 
 def _extract_pitch_curve(
@@ -260,12 +283,39 @@ def _store_chunk_audio(chunks, sr, storage_dir: pathlib.Path, cancel_checker=Non
     sf.write(storage_dir / "chunk_000.wav", payload, sr, subtype="FLOAT", format="WAV")
 
 
+def chunk_sample_count(chunk) -> int:
+    """Sample count of one chunk, from its layout or from its waveform."""
+    stored = chunk.get("num_samples")
+    if stored is not None:
+        return int(stored)
+    waveform = chunk.get("waveform")
+    if waveform is None:
+        raise ValueError("chunk carries neither audio nor a stored sample count")
+    return int(len(waveform))
+
+
+def strip_chunk_audio(chunks) -> None:
+    """Keep the chunk layout (offset and sample count) and drop the audio.
+
+    Batch mode keeps only the layout in memory and re-reads a song through
+    :func:`read_chunk_audio` while a stage works on it.
+    """
+    for chunk in chunks or []:
+        waveform = chunk.get("waveform")
+        if waveform is None:
+            continue
+        chunk["num_samples"] = int(len(waveform))
+        chunk["waveform"] = None
+
+
 def read_chunk_audio(chunks, sr, storage_dir):
     """Rebuild the chunk list from storage_dir with read-only waveform views.
 
     Each chunk keeps the dict the slicer produced (offset, channel layout) and
     swaps in a strided view over one shared float32 buffer, so N songs on disk
-    cost one array each in memory instead of a whole decoded waveform.
+    cost one array each in memory instead of a whole decoded waveform. A layout
+    from :func:`strip_chunk_audio` carries the sample counts, so the audio does
+    not have to stay resident between stages.
     """
     import soundfile as sf
 
@@ -276,10 +326,11 @@ def read_chunk_audio(chunks, sr, storage_dir):
     rebuilt = []
     position = 0
     for chunk in chunks:
-        view = buffer[position:position + len(chunk["waveform"])]
+        count = chunk_sample_count(chunk)
+        view = buffer[position:position + count]
         restored = dict(chunk)
         restored["waveform"] = view
-        position += len(chunk["waveform"])
+        position += count
         rebuilt.append(restored)
     return rebuilt
 
@@ -323,8 +374,9 @@ def _run_game_stage(
         if cancel_checker and cancel_checker():
             raise InterruptedError("Task was cancelled")
     finally:
-        # Model stays cached in load_game_model across runs; tearing the
-        # DirectML session down per song access-violates onnxruntime next song.
+        # The model stays cached in load_game_model so the next song reuses
+        # the same DirectML sessions. When lyrics follow, the caller drops the
+        # suite before the aligner loads (see auto_lyric_hybrid_pipeline).
         free_memory()
     return chunk_notes
 
@@ -380,7 +432,9 @@ def _export_outputs(
     logger.info(f"Extracted {len(all_notes)} notes {lyric_status}.")
 
     if "mid" in ctx.output_format_set:
-        _save_midi(all_notes, ctx.output_dir / f"{ctx.output_key}.mid", int(tempo))
+        # float tempo: the notes were quantized (and USTX/VSQX are written) in
+        # fractional BPM, so an int here would push every note off the grid.
+        _save_midi(all_notes, ctx.output_dir / f"{ctx.output_key}.mid", float(tempo))
     if "txt" in ctx.output_format_set:
         _save_text(all_notes, ctx.output_dir / f"{ctx.output_key}.txt", "txt", pitch_format, round_pitch)
     if "csv" in ctx.output_format_set:
@@ -483,6 +537,12 @@ def auto_lyric_hybrid_pipeline(
     if defer_game:
         return chunks, rmvpe_result
 
+    # Only this entrypoint owns the whole song in one call, so it also owns the
+    # model handover: drop the previous song's aligner before GAME loads, and
+    # GAME before the aligner loads again. Batch mode schedules the same
+    # handover per stage and must not unload the model mid-group.
+    release_aligner_models()
+
     # Branch 1: the melody, from the audio alone.
     chunk_notes = _run_game_stage(
         chunks, sr, ctx,
@@ -499,6 +559,14 @@ def auto_lyric_hybrid_pipeline(
     outcome = None
     chunk_logs = []
     if output_lyrics:
+        # The melody is already transcribed, so GAME's sessions can leave VRAM
+        # before the ASR worker and the aligner load theirs; otherwise both
+        # model sets stay resident at once. Best effort: a release that fails
+        # must not cost an otherwise good song.
+        try:
+            release_game_models()
+        except Exception:  # noqa: BLE001 - freeing is an optimisation
+            logger.warning("[Warning] Could not release the GAME sessions; continuing.", exc_info=True)
         matcher = create_lyric_matcher(
             ctx.language,
             original_lyrics,
@@ -550,8 +618,10 @@ def auto_lyric_hybrid_pipeline(
 def pipeline_stage_slicing(audio_path: str | None = None, *, chunk_storage_dir=None, cancel_checker=None, **kwargs):
     """Batch stage 1: decode, slice, persist the chunks.
 
-    Returns ``(chunks, rmvpe_result)``; the chunks share one readonly buffer
-    read back from chunk_storage_dir and carry no per-song audio tensors.
+    Returns ``(chunks, rmvpe_result)``. With chunk_storage_dir the returned
+    chunks are a layout only (offset + sample count): the audio stays on disk,
+    so a queue of songs does not pin every decoded waveform in memory, and each
+    later stage reads back the one song it is working on.
     """
     if audio_path is not None:
         kwargs["audio_path"] = audio_path
@@ -562,7 +632,7 @@ def pipeline_stage_slicing(audio_path: str | None = None, *, chunk_storage_dir=N
         **kwargs,
     )
     if chunk_storage_dir is not None:
-        chunks = read_chunk_audio(chunks, 44100, chunk_storage_dir)
+        strip_chunk_audio(chunks)
     return chunks, rmvpe_result
 
 
@@ -656,16 +726,26 @@ def pipeline_stage_export(
     outcome,
     *,
     rmvpe_result=None,
+    storage_dir=None,
     cancel_checker=None,
 ):
     """Batch stage: map the lyrics onto the GAME notes and write every export.
 
-    ``chunks`` only needs the slicer offsets; its audio is read solely for the
-    chunk-WAV export of songs that ended up without an alignment.
+    ``chunks`` is normally the slicer layout only; its audio lives in
+    ``storage_dir`` and is read back solely for the chunk-WAV export of songs
+    that ended up without an alignment.
     """
     ctx = _context_for(cfg)
     aligned = outcome is not None and outcome.aligned
     all_notes = _merge_lyrics(chunk_notes, chunks, ctx, outcome)
+    export_chunks = chunks
+    if (
+        "chunks" in ctx.output_format_set
+        and not aligned
+        and storage_dir is not None
+        and any(chunk.get("waveform") is None for chunk in chunks)
+    ):
+        export_chunks = read_chunk_audio(chunks, 44100, storage_dir)
     _export_outputs(
         all_notes, ctx,
         rmvpe_result=rmvpe_result,
@@ -678,7 +758,7 @@ def pipeline_stage_export(
         quant_simplicity=cfg.quant_simplicity,
         pitch_format=cfg.pitch_format,
         round_pitch=cfg.round_pitch,
-        chunks=chunks,
+        chunks=export_chunks,
         sr=44100,
         cancel_checker=cancel_checker,
     )

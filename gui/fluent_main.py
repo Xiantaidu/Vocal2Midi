@@ -31,7 +31,7 @@ class _FluentMainWindow(FluentWindow):
         if not app_icon.isNull():
             self.setWindowIcon(app_icon)
         self.resize(1000, 800)
-        self._apply_fixed_physical_size(1260, 1000)
+            #self._apply_fixed_physical_size(1260, 1000)
 
         # Apply the saved language before building any widget so every page
         # constructs in the right language.

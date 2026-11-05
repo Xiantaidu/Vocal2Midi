@@ -58,7 +58,7 @@ def pad_1d_arrays(arrays: list[np.ndarray], pad_value=0.0) -> np.ndarray:
     return np.stack(padded)
 
 
-def _save_midi(notes: list[NoteInfo], filepath: pathlib.Path, tempo: int = 120):
+def _save_midi(notes: list[NoteInfo], filepath: pathlib.Path, tempo: float = 120.0):
     track = mido.MidiTrack()
     track.append(mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(tempo), time=0))
 

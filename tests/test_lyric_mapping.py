@@ -230,3 +230,23 @@ def test_assign_chunk_lyrics_output_is_onset_sorted_across_chunks():
     out = assign_chunk_lyrics([[_note(2.0, 2.5)], [_note(1.0, 1.5)]], [0.0, 0.0], _Outcome(), "zh")
 
     assert [n.onset for n in out] == [1.0, 2.0]
+
+
+def test_assign_chunk_lyrics_keeps_notes_when_an_offset_is_missing(caplog):
+    """Regression: zip(chunk_notes, chunk_offsets) silently dropped the tail.
+
+    A note list without a slicer offset must stay in the output (unlabelled),
+    never vanish from the export.
+    """
+    import logging
+
+    class _Outcome:
+        aligned = False
+        pred_dict = {}
+        chars_dict = {}
+
+    with caplog.at_level(logging.WARNING):
+        out = assign_chunk_lyrics([[_note(0.0, 0.5)], [_note(1.0, 1.5)]], [0.0], _Outcome(), "zh")
+
+    assert [(n.onset, n.lyric) for n in out] == [(0.0, ""), (1.0, "")]
+    assert any("slicer offset" in record.message for record in caplog.records)

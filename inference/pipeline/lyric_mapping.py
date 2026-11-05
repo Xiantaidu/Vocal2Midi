@@ -324,7 +324,19 @@ def assign_chunk_lyrics(chunk_notes, chunk_offsets, outcome, language) -> list[N
     all_notes: list[NoteInfo] = []
     total = MappingStats()
     unaligned_chunks = []
-    for chunk_idx, (notes, offset) in enumerate(zip(chunk_notes, chunk_offsets)):
+    offsets = list(chunk_offsets or [])
+    if len(offsets) < len(chunk_notes):
+        # Zipping would silently drop the tail of the song; a chunk without a
+        # slicer offset keeps its notes unlabelled instead.
+        logger.warning(
+            f"[Warning] {len(chunk_notes)} chunk note list(s) but only {len(offsets)} slicer offset(s); "
+            "the unoffset chunks keep pitch-only notes."
+        )
+    for chunk_idx, notes in enumerate(chunk_notes):
+        if chunk_idx >= len(offsets):
+            all_notes.extend(_unlabeled(notes))
+            continue
+        offset = offsets[chunk_idx]
         stem = f"chunk_{chunk_idx}"
         entry = pred_dict.get(stem)
         words = entry[2] if isinstance(entry, (tuple, list)) and len(entry) >= 3 else None

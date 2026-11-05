@@ -409,3 +409,90 @@ def test_run_auto_lyric_batch_rejects_missing_model_paths(monkeypatch, tmp_path)
     message = str(excinfo.value)
     assert "TiFA model dir" in message
     assert "no-such-tifa" in message
+
+
+def test_asr_failure_releases_the_song_audio(monkeypatch, tmp_path):
+    """Regression: a failed ASR left item.chunks holding the decoded song.
+
+    The other stages release their chunk audio in a finally block; ASR must
+    too, or every failed song stays in memory for the rest of the batch.
+    """
+    from inference.pipeline import lyric_alignment
+
+    released = []
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("asr blew up")
+
+    monkeypatch.setattr(
+        "inference.pipeline.auto_lyric_hybrid.read_chunk_audio",
+        lambda *a, **k: [{"offset": 0.0, "waveform": [0.0]}],
+    )
+    monkeypatch.setattr(
+        "inference.pipeline.auto_lyric_hybrid.release_chunk_audio",
+        lambda chunks: released.append(chunks),
+    )
+    monkeypatch.setattr(
+        "inference.pipeline.auto_lyric_hybrid._prepare_context",
+        lambda *a, **k: SimpleNamespace(
+            language="zh", lyric_output_mode="hanzi", use_pinyin_asr=False,
+            device="cpu", fa_language="zh", output_key="a",
+            output_dir=tmp_path, output_format_set=set(),
+        ),
+    )
+    monkeypatch.setattr(
+        "inference.pipeline.auto_lyric_hybrid.prepare_lyric_matcher",
+        lambda cfg, cache=None: None,
+    )
+    monkeypatch.setattr(lyric_alignment, "run_qwen_asr_and_fa", boom)
+
+    runner = batch.BatchRunner(_queue("a.wav"))
+    runner._root_dir = tmp_path
+    item = runner.items[0]
+    item.base_chunks = [{"offset": 0.0, "num_samples": 1, "waveform": None}]
+    item.storage_dir = tmp_path / "job_001"
+
+    with pytest.raises(RuntimeError):
+        runner._run_asr_for(item)
+
+    assert len(released) == 1
+    assert released[0][0]["offset"] == 0.0
+    assert item.chunks is None
+    assert item.asr is None
+
+
+def test_batch_does_not_release_the_aligner_between_game_songs(monkeypatch, tmp_path):
+    """Regression guard for the model handover.
+
+    Only the single-song entrypoint swaps model families; the batch schedules
+    that per stage, so a per-song release would reload the GAME sessions for
+    every song in a group.
+    """
+    from inference.io.note_io import NoteInfo
+    from inference.pipeline import auto_lyric_hybrid as pipeline
+
+    calls = []
+    monkeypatch.setattr(pipeline, "release_aligner_models", lambda: calls.append("aligner"))
+    # The pipeline binds load_game_model by name, so patch it there.
+    monkeypatch.setattr(pipeline, "load_game_model", lambda *a, **k: MagicMock())
+    monkeypatch.setattr(pipeline, "extract_chunk_notes", lambda *a, **k: [[NoteInfo(0.0, 0.5, 60.0, "")]])
+    monkeypatch.setattr(pipeline, "free_memory", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "release_chunk_audio", lambda chunks: None
+    )
+
+    runner = batch.BatchRunner(_queue("a.wav"))
+    runner._root_dir = tmp_path
+    item = runner.items[0]
+    item.base_chunks = [{"offset": 0.0, "num_samples": 1, "waveform": None}]
+    item.storage_dir = tmp_path / "job_001"
+    item.config.ts = [0.0]
+    item.config.seg_threshold = 0.2
+    item.config.seg_radius = 0.02
+    item.config.est_threshold = 0.2
+    monkeypatch.setattr(pipeline, "read_chunk_audio", lambda *a, **k: [{"offset": 0.0, "waveform": [0.0]}])
+
+    runner._run_game_for(item, pipeline.pipeline_stage_game)
+
+    assert calls == []
+    assert len(item.chunk_notes) == 1

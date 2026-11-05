@@ -612,3 +612,117 @@ def test_cantonese_automatically_routes_to_tifa(monkeypatch, tmp_path):
     run_tifa.assert_called_once()
     assert run_tifa.call_args.kwargs["language"] == "yue"
     assert run_qwen.call_args.kwargs["language"] == "yue"
+
+
+def test_slicing_layout_drops_audio_and_read_chunk_audio_restores_it(tmp_path):
+    """Regression: the batch pinned every song's decoded PCM in memory.
+
+    The slicing stage now returns the slicer layout only (offset + sample
+    count); a stage reads back the one song it works on.
+    """
+    sr = 44100
+    chunks = [
+        {"offset": 0.0, "waveform": np.zeros(1000, dtype=np.float32)},
+        {"offset": 1.5, "waveform": np.zeros(500, dtype=np.float32)},
+    ]
+    storage = tmp_path / "job"
+    pipeline._store_chunk_audio(chunks, sr, storage)
+
+    pipeline.strip_chunk_audio(chunks)
+
+    assert [chunk["num_samples"] for chunk in chunks] == [1000, 500]
+    assert all(chunk["waveform"] is None for chunk in chunks)
+
+    rebuilt = pipeline.read_chunk_audio(chunks, sr, storage)
+
+    assert [len(chunk["waveform"]) for chunk in rebuilt] == [1000, 500]
+    assert [chunk["offset"] for chunk in rebuilt] == [0.0, 1.5]
+    assert chunks[0]["waveform"] is None  # the layout itself stays audio-free
+
+
+def test_export_reads_chunk_audio_back_for_the_chunks_switch(tmp_path):
+    """Without an alignment the chunk WAVs come from the spilled audio."""
+    from application.config import PipelineConfig
+
+    sr = 44100
+    storage = tmp_path / "job"
+    pipeline._store_chunk_audio(
+        [
+            {"offset": 0.0, "waveform": np.zeros(1000, dtype=np.float32)},
+            {"offset": 1.5, "waveform": np.zeros(500, dtype=np.float32)},
+        ],
+        sr,
+        storage,
+    )
+    layout = [
+        {"offset": 0.0, "num_samples": 1000, "waveform": None},
+        {"offset": 1.5, "num_samples": 500, "waveform": None},
+    ]
+    cfg = PipelineConfig(
+        audio_path="a.wav", output_filename="a.wav", output_dir=tmp_path / "out",
+        game_model_dir="g", hfa_model_dir="h", asr_model_path="a",
+        device="cpu", language="zh", ts=[0.0],
+        output_formats=["chunks"], output_lyrics=True,
+        tempo=120.0, quantization_step=0,
+    )
+    notes = [[NoteInfo(0.0, 0.5, 60.0, "")], [NoteInfo(1.5, 2.0, 64.0, "")]]
+
+    exported = pipeline.pipeline_stage_export(cfg, layout, notes, None, storage_dir=storage)
+
+    assert [n.onset for n in exported] == [0.0, 1.5]
+    assert sorted(path.name for path in (tmp_path / "out").glob("*.wav")) == ["a_000.wav", "a_001.wav"]
+
+
+def test_single_song_hands_models_over_instead_of_keeping_both(monkeypatch, tmp_path):
+    """Regression: GAME and the aligner stayed resident at the same time.
+
+    The single-song entrypoint must free the previous song's aligner before
+    GAME loads and GAME before the aligner loads again, so the two model
+    families never share VRAM.
+    """
+    _patch_common(monkeypatch)
+    released = []
+    monkeypatch.setattr(pipeline, "release_aligner_models", lambda: released.append("aligner"))
+    monkeypatch.setattr(pipeline, "release_game_models", lambda: released.append("game"))
+    monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        pipeline,
+        "extract_chunk_notes",
+        lambda *args, **kwargs: (released.append("game_used"), [[NoteInfo(0.0, 0.5, 60.0, "")]])[1],
+    )
+    monkeypatch.setattr(lyric_alignment, "load_hfa_model", lambda *args, **kwargs: MagicMock())
+    monkeypatch.setattr(
+        lyric_alignment,
+        "run_hubert_fa",
+        lambda *args, **kwargs: (released.append("aligner_used"), {})[1],
+    )
+    monkeypatch.setattr(lyric_alignment, "run_qwen_asr_and_fa", lambda *args, **kwargs: ({"chunk_0": ["a"]}, ["log"]))
+
+    kwargs = _base_kwargs(tmp_path)
+    kwargs["language"] = "zh"
+    kwargs["lyric_output_mode"] = "hanzi"
+
+    pipeline.auto_lyric_hybrid_pipeline(**kwargs)
+
+    assert released == [
+        "aligner",       # previous song's aligner leaves before GAME loads
+        "game_used",
+        "game",          # GAME leaves before the aligner loads
+        "aligner_used",
+    ]
+
+
+def test_no_lyrics_mode_keeps_game_loaded(monkeypatch, tmp_path):
+    """Without a lyric branch there is nothing to make room for."""
+    _patch_common(monkeypatch)
+    released = []
+    monkeypatch.setattr(pipeline, "release_aligner_models", lambda: released.append("aligner"))
+    monkeypatch.setattr(pipeline, "release_game_models", lambda: released.append("game"))
+    monkeypatch.setattr(pipeline, "extract_chunk_notes", lambda *args, **kwargs: [[NoteInfo(0.0, 0.5, 60.0, "")]])
+
+    kwargs = _base_kwargs(tmp_path)
+    kwargs["output_lyrics"] = False
+
+    pipeline.auto_lyric_hybrid_pipeline(**kwargs)
+
+    assert released == ["aligner"]

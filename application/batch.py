@@ -58,6 +58,7 @@ class BatchItem:
     index: int
     config: PipelineConfig
     filename: str
+    # Slicer layout only (offset + sample count); the audio stays on disk.
     base_chunks: Optional[list] = None
     chunks: Optional[list] = None
     rmvpe_result: object = None
@@ -294,64 +295,69 @@ class BatchRunner:
 
         cfg = item.config
         item.chunks = pipeline.read_chunk_audio(item.base_chunks, 44100, item.storage_dir)
-        temp_dir = self._text_dir(item)
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        ctx = pipeline._prepare_context(
-            cfg.audio_path, cfg.output_filename, cfg.output_dir, cfg.output_formats,
-            cfg.language, cfg.chinese_asr_engine, cfg.lyric_output_mode,
-            cfg.tempo, cfg.batch_size, cfg.asr_batch_size,
-            cfg.slice_min_sec, cfg.slice_max_sec, cfg.device,
-        )
-        matcher = pipeline.prepare_lyric_matcher(cfg, cache=self._matcher_cache)
-        self._log(f"[{item.name}] {STAGE_LABELS[STAGE_ASR]}")
+        try:
+            temp_dir = self._text_dir(item)
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            ctx = pipeline._prepare_context(
+                cfg.audio_path, cfg.output_filename, cfg.output_dir, cfg.output_formats,
+                cfg.language, cfg.chinese_asr_engine, cfg.lyric_output_mode,
+                cfg.tempo, cfg.batch_size, cfg.asr_batch_size,
+                cfg.slice_min_sec, cfg.slice_max_sec, cfg.device,
+            )
+            matcher = pipeline.prepare_lyric_matcher(cfg, cache=self._matcher_cache)
+            self._log(f"[{item.name}] {STAGE_LABELS[STAGE_ASR]}")
 
-        engine, ja_wants_romaji, phoneme_asr_path = lyric_alignment._select_phoneme_engine(
-            ctx.language, ctx.lyric_output_mode, ctx.use_pinyin_asr,
-            cfg.japanese_asr_engine, cfg.phoneme_asr_model_path, cfg.pinyin_asr_model_path,
-        )
-        if engine == "romaji":
-            chars_dict, chunk_logs = lyric_alignment.run_romaji_asr(
-                item.chunks, 44100, temp_dir, matcher,
-                asr_model_path=phoneme_asr_path or cfg.phoneme_asr_model_path,
-                device=ctx.device,
-                language=ctx.language,
-                lyric_output_mode=ctx.lyric_output_mode,
-                asr_batch_size=cfg.asr_batch_size,
-                cancel_checker=self._cancel_checker,
+            engine, ja_wants_romaji, phoneme_asr_path = lyric_alignment._select_phoneme_engine(
+                ctx.language, ctx.lyric_output_mode, ctx.use_pinyin_asr,
+                cfg.japanese_asr_engine, cfg.phoneme_asr_model_path, cfg.pinyin_asr_model_path,
             )
-        elif engine == "pinyin":
-            chars_dict, chunk_logs = lyric_alignment.run_pinyin_asr(
-                item.chunks, 44100, temp_dir, matcher,
-                asr_model_path=phoneme_asr_path or cfg.pinyin_asr_model_path,
-                device=ctx.device,
-                language=ctx.language,
-                lyric_output_mode=ctx.lyric_output_mode,
-                asr_batch_size=cfg.asr_batch_size,
-                cancel_checker=self._cancel_checker,
-            )
-        else:
-            if ctx.language == "ja" and ctx.lyric_output_mode in {"romaji", "kana"} and ja_wants_romaji:
-                self._log(
-                    f"[{item.name}] mora ASR model missing; falling back to text ASR + Japanese G2P."
+            if engine == "romaji":
+                chars_dict, chunk_logs = lyric_alignment.run_romaji_asr(
+                    item.chunks, 44100, temp_dir, matcher,
+                    asr_model_path=phoneme_asr_path or cfg.phoneme_asr_model_path,
+                    device=ctx.device,
+                    language=ctx.language,
+                    lyric_output_mode=ctx.lyric_output_mode,
+                    asr_batch_size=cfg.asr_batch_size,
+                    cancel_checker=self._cancel_checker,
                 )
-            chars_dict, chunk_logs = lyric_alignment.run_qwen_asr_and_fa(
-                item.chunks, 44100, temp_dir, matcher,
-                asr_model_path=cfg.asr_model_path,
-                device=ctx.device,
-                asr_batch_size=cfg.asr_batch_size,
-                language=ctx.language,
-                lyric_output_mode=ctx.lyric_output_mode,
-                cancel_checker=self._cancel_checker,
-                asr_session=self._asr_session,
-                japanese_g2p_engine=cfg.japanese_g2p_engine,
-                kashi_g2p_model_path=cfg.kashi_g2p_model_path,
+            elif engine == "pinyin":
+                chars_dict, chunk_logs = lyric_alignment.run_pinyin_asr(
+                    item.chunks, 44100, temp_dir, matcher,
+                    asr_model_path=phoneme_asr_path or cfg.pinyin_asr_model_path,
+                    device=ctx.device,
+                    language=ctx.language,
+                    lyric_output_mode=ctx.lyric_output_mode,
+                    asr_batch_size=cfg.asr_batch_size,
+                    cancel_checker=self._cancel_checker,
+                )
+            else:
+                if ctx.language == "ja" and ctx.lyric_output_mode in {"romaji", "kana"} and ja_wants_romaji:
+                    self._log(
+                        f"[{item.name}] mora ASR model missing; falling back to text ASR + Japanese G2P."
+                    )
+                chars_dict, chunk_logs = lyric_alignment.run_qwen_asr_and_fa(
+                    item.chunks, 44100, temp_dir, matcher,
+                    asr_model_path=cfg.asr_model_path,
+                    device=ctx.device,
+                    asr_batch_size=cfg.asr_batch_size,
+                    language=ctx.language,
+                    lyric_output_mode=ctx.lyric_output_mode,
+                    cancel_checker=self._cancel_checker,
+                    asr_session=self._asr_session,
+                    japanese_g2p_engine=cfg.japanese_g2p_engine,
+                    kashi_g2p_model_path=cfg.kashi_g2p_model_path,
+                )
+            if not chars_dict:
+                self._log(f"[{item.name}] no usable ASR text; falling back to pitch-only notes.")
+            item.asr = lyric_alignment._AlignmentOutcome(
+                chars_dict=chars_dict, pred_dict={}, chunk_logs=chunk_logs, aligned=False
             )
-        if not chars_dict:
-            self._log(f"[{item.name}] no usable ASR text; falling back to pitch-only notes.")
-        item.asr = lyric_alignment._AlignmentOutcome(
-            chars_dict=chars_dict, pred_dict={}, chunk_logs=chunk_logs, aligned=False
-        )
-        item.chunks = None
+        finally:
+            # A failed song must not pin its decoded audio for the rest of the
+            # batch (the same reason the other stages release here).
+            pipeline.release_chunk_audio(item.chunks)
+            item.chunks = None
 
     # -- alignment --------------------------------------------------------
     def _run_alignment(self) -> None:
@@ -474,6 +480,7 @@ class BatchRunner:
             item.chunk_notes or [],
             outcome,
             rmvpe_result=item.rmvpe_result,
+            storage_dir=item.storage_dir,
             cancel_checker=self._cancel_checker,
         )
 
