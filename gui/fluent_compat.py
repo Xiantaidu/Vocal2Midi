@@ -7,6 +7,7 @@ from PySide6 import __version__ as _pyside_version
 from PySide6.QtCore import (
     Property,
     QEasingCurve,
+    QEvent,
     QObject,
     QPropertyAnimation,
     QRectF,
@@ -37,6 +38,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -142,6 +144,14 @@ def _tokens() -> dict:
                 "error": (68, 39, 38),
             },
             "infobar_border": "rgb(29, 29, 29)",
+            # Popup menus are their own windows and cannot inherit the window
+            # colour: an unstyled QMenu picks up the transparent palette of the
+            # scroll area it is opened from and paints an empty (black) panel.
+            "menu_bg": "#2b2b2b",
+            "menu_border": _rgba(255, 255, 255, 0.08),
+            "menu_separator": _rgba(255, 255, 255, 0.08),
+            "menu_hover": _rgba(255, 255, 255, 0.0605),
+            "menu_text_disabled": _rgba(255, 255, 255, 0.3628),
         }
     return {
         "window": "#efefef",
@@ -169,6 +179,11 @@ def _tokens() -> dict:
             "error": (253, 231, 233),
         },
         "infobar_border": "rgb(229, 229, 229)",
+        "menu_bg": "#f9f9f9",
+        "menu_border": _rgba(0, 0, 0, 0.08),
+        "menu_separator": _rgba(0, 0, 0, 0.08),
+        "menu_hover": _rgba(0, 0, 0, 0.0392),
+        "menu_text_disabled": _rgba(0, 0, 0, 0.3612),
     }
 
 
@@ -177,6 +192,54 @@ class Theme(enum.Enum):
     LIGHT = "Light"
     DARK = "Dark"
     AUTO = "Auto"
+
+
+def _menu_qss() -> str:
+    """Colours for popup context menus.
+
+    QMenu is created by Qt internals (text edits, line edits) as a child of the
+    widget it belongs to.  Every page is a ``ScrollArea`` styled with
+    ``background: transparent``, and that resolves to an opaque black window
+    colour the menu then inherits, so an unstyled menu paints a black panel and
+    keeps the light-theme black text.  Styling the menu explicitly keeps it
+    readable in both themes.
+    """
+    t = _tokens()
+    return (
+        f"QMenu {{ background-color: {t['menu_bg']}; color: {t['text']};"
+        f" border: 1px solid {t['menu_border']}; border-radius: 6px; padding: 4px; }}"
+        "QMenu::item { padding: 6px 26px 6px 30px; border-radius: 4px; }"
+        f"QMenu::item:selected {{ background-color: {t['menu_hover']}; color: {t['text']}; }}"
+        f"QMenu::item:disabled {{ color: {t['menu_text_disabled']}; }}"
+        f"QMenu::separator {{ height: 1px; background: {t['menu_separator']}; margin: 4px 10px; }}"
+    )
+
+
+class _PopupMenuStyler(QObject):
+    """Applies the menu stylesheet to menus Qt creates on the fly."""
+
+    def eventFilter(self, obj, event):
+        if isinstance(obj, QMenu) and event.type() == QEvent.Show:
+            _style_menu(obj)
+        return False
+
+
+_popup_menu_styler: _PopupMenuStyler | None = None
+
+
+def _style_menu(menu: QMenu) -> None:
+    # A menu that carries its own sheet was styled by its owner; leave it alone
+    # (and do not re-enter when our own setStyleSheet triggers another polish).
+    if not menu.styleSheet():
+        menu.setStyleSheet(_menu_qss())
+
+
+def _install_popup_menu_styler(app: QApplication) -> None:
+    global _popup_menu_styler
+    if _popup_menu_styler is not None:
+        return
+    _popup_menu_styler = _PopupMenuStyler(app)
+    app.installEventFilter(_popup_menu_styler)
 
 
 class _Config(QObject):
@@ -271,6 +334,7 @@ def setTheme(theme: Theme) -> None:
         if not _system_theme_signal_connected:
             app.styleHints().colorSchemeChanged.connect(_on_system_color_scheme_changed)
             _system_theme_signal_connected = True
+        _install_popup_menu_styler(app)
         app.setPalette(_dark_palette() if _resolve_dark() else _light_palette())
         app.setFont(_base_font())
 
