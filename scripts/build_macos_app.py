@@ -90,7 +90,10 @@ def _remove_existing_bundle(path: Path) -> None:
 
 def build_bundle(project_root: Path, output: Path, *, sign: bool = True) -> Path:
     project_root = project_root.resolve()
-    output = output.expanduser().resolve()
+    # Resolve only the parent so a symlinked bundle path stays visible to the
+    # deletion guard instead of being replaced by its target.
+    output = output.expanduser()
+    output = output.parent.resolve() / output.name
     if output.suffix != ".app":
         raise ValueError(f"Output must end with .app: {output}")
     if not (project_root / "app_fluent.py").is_file():

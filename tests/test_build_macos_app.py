@@ -33,3 +33,21 @@ def test_build_bundle_refuses_to_delete_non_bundle(tmp_path):
     with pytest.raises(ValueError):
         build_bundle(project, not_a_bundle, sign=False)
     assert (not_a_bundle / "keep.txt").is_file()
+
+
+def test_build_bundle_refuses_symlinked_output_bundle(tmp_path):
+    import pytest
+
+    project = tmp_path / "checkout"
+    project.mkdir()
+    (project / "app_fluent.py").write_text("# test\n", encoding="utf-8")
+    other_app = tmp_path / "Other.app"
+    (other_app / "Contents").mkdir(parents=True)
+    (other_app / "Contents" / "keep.txt").write_text("x", encoding="utf-8")
+    link = tmp_path / "Link.app"
+    link.symlink_to(other_app, target_is_directory=True)
+
+    with pytest.raises(ValueError):
+        build_bundle(project, link, sign=False)
+    assert link.is_symlink()
+    assert (other_app / "Contents" / "keep.txt").is_file()
