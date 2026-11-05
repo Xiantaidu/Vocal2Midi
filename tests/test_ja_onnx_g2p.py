@@ -16,6 +16,10 @@ pytestmark = pytest.mark.skipif(
     not (MODEL_DIR / "model.onnx").is_file(),
     reason="kashi-g2p-onnx model bundle not present",
 )
+requires_tifa = pytest.mark.skipif(
+    not (TIFA_MODEL_DIR / "vocabulary.json").is_file(),
+    reason="tifa-1.0-onnx model bundle not present",
+)
 
 
 @pytest.fixture(scope="module")
@@ -95,6 +99,7 @@ def test_ja_reference_lyric_lists_stay_aligned():
     assert "wa n se n" not in " ".join(data.phonetic_list)
 
 
+@requires_tifa
 def test_tifa_converter_claims_kanji_runs():
     from inference.TiFA.japanese_onnx import JapaneseOnnxConverter
 
@@ -107,6 +112,7 @@ def test_tifa_converter_claims_kanji_runs():
     assert conv.find("hello") is None
 
 
+@requires_tifa
 def test_tifa_converter_emits_word_per_edge_with_kana_scripts():
     from inference.TiFA.g2p.encoding import encode_paths
     from inference.TiFA.japanese_onnx import JapaneseOnnxConverter
@@ -140,6 +146,7 @@ def test_tifa_converter_emits_word_per_edge_with_kana_scripts():
     assert texts == ["普通", "の", "世界"]
 
 
+@requires_tifa
 def test_tifa_converter_beams_reading_candidates():
     """Beam N-best over the scored candidate graph feeds TiFA's polling DP:
     polyphone words carry multiple ranked readings, model-best first."""
@@ -158,6 +165,7 @@ def test_tifa_converter_beams_reading_candidates():
     assert [group.script for group in by_text["へ"].readings[0].paths[0]] == ["え"]
 
 
+@requires_tifa
 def test_tifa_converter_expands_katakana_long_vowels():
     from inference.TiFA.japanese_onnx import JapaneseOnnxConverter
 
@@ -177,6 +185,7 @@ def test_tifa_converter_expands_katakana_long_vowels():
     assert tower_moras == ["タ", "ワ", "あ"]
 
 
+@requires_tifa
 def test_factory_prefers_onnx_converter_for_kanji():
     from inference.TiFA.g2p_pipeline import build_g2p_pipeline
 
@@ -228,6 +237,7 @@ def test_jag2p_explicit_pyopenjtalk_engine():
     assert moras[:1] == ["kyo"]
 
 
+@requires_tifa
 def test_tifa_g2p_pipeline_with_pyopenjtalk():
     import importlib.util
     from inference.TiFA.g2p_pipeline import build_g2p_pipeline

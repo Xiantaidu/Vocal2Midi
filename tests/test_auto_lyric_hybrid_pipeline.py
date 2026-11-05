@@ -423,6 +423,7 @@ def test_pinyin_asr_mode_passes_base_language_to_tifa(monkeypatch, tmp_path):
     converter is filtered out and each chunk falls to pitch-only)."""
     _patch_common(monkeypatch)
     monkeypatch.setattr(pipeline, "create_lyric_matcher", lambda *args, **kwargs: None)
+    monkeypatch.setattr(lyric_alignment, "_select_pinyin_asr_path", lambda path: "pinyin")
     monkeypatch.setattr(
         lyric_alignment, "run_pinyin_asr", lambda *a, **k: ({"chunk_0": ["a"]}, ["log"]))
     run_tifa = MagicMock(return_value=({"chunk_0": (None, 1.0, [MagicMock()])}, {}))
