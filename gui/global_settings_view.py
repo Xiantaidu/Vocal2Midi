@@ -25,12 +25,12 @@ from gui.fluent_compat import (
     Theme,
 )
 from gui import __version__
-from gui.i18n import tr, set_language
+from gui.i18n import normalize_language, tr, set_language
 from gui.option_tables import fill_combo
 from gui.settings_utils import create_app_settings
 
 THEME_CHOICES = [("light", "theme_light"), ("dark", "theme_dark"), ("auto", "theme_auto")]
-LANGUAGE_CHOICES = [("zh", "language_zh"), ("en", "language_en")]
+LANGUAGE_CHOICES = [("zh", "language_zh"), ("en", "language_en"), ("ja", "language_ja")]
 
 
 class GlobalSettingsInterface(ScrollArea):
@@ -307,7 +307,7 @@ class GlobalSettingsInterface(ScrollArea):
         return str(self.settings.value("theme", "light")).strip().lower()
 
     def _saved_language(self) -> str:
-        return "en" if str(self.settings.value("language", "zh")).strip().lower() in {"en", "english"} else "zh"
+        return normalize_language(self.settings.value("language", "zh"))
 
     def _add_debug_switch(self, layout, label_key, settings_key, default):
         switch = SwitchButton("On", self)
