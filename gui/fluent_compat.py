@@ -895,7 +895,7 @@ class PushButton(QPushButton):
         if text:
             self.setText(text)
         if icon is not None:
-            self.setIcon(toQIcon(icon))
+            self.setIcon(icon)
         self._primary = False
         _apply_button_style(self, primary=False)
         qconfig.themeChangedFinished.connect(self._restyle)
@@ -928,7 +928,7 @@ class TransparentToolButton(QToolButton):
         self.setIconSize(QSize(16, 16))
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         if icon is not None:
-            self.setIcon(toQIcon(icon))
+            self.setIcon(icon)
         self._restyle()
         qconfig.themeChangedFinished.connect(self._restyle)
 
