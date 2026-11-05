@@ -20,11 +20,9 @@ CLI (mirrors scripts/transcribe_txt.py):
 from __future__ import annotations
 
 import argparse
-import gzip
 import json
 import lzma
 import math
-import pickle
 import re
 import sys
 import time
@@ -865,20 +863,19 @@ def _deserialize_bundle(raw: bytes):
 
 
 def _load_resources(resources_dir: Path | None = None):
-    """Prefer the single-file bundle; fall back to the legacy pkl.gz trio."""
+    """Load the single-file TSV bundle.
+
+    The legacy pkl.gz resources are intentionally not supported: unpickling
+    files from a model folder can execute arbitrary code.
+    """
     res_dir = Path(resources_dir) if resources_dir else RESOURCES
     bundle = res_dir / BUNDLE_NAME
-    if bundle.exists():
-        with lzma.open(bundle, "rb") as fh:
-            table, prior, components, vocab = _deserialize_bundle(fh.read())
-        return table, prior, components, vocab
-    with gzip.open(res_dir / "unified_lexicon_variants_v2.pkl.gz", "rb") as fh:
-        table = pickle.load(fh)
-    with gzip.open(res_dir / "prior_index.pkl.gz", "rb") as fh:
-        prior = pickle.load(fh)
-    with gzip.open(res_dir / "components.pkl", "rb") as fh:
-        components = pickle.load(fh)
-    vocab = (res_dir / "vocab.txt").read_text(encoding="utf-8").splitlines()
+    if not bundle.is_file():
+        raise FileNotFoundError(
+            f"{BUNDLE_NAME} not found in {res_dir}; legacy pickle resources are not supported"
+        )
+    with lzma.open(bundle, "rb") as fh:
+        table, prior, components, vocab = _deserialize_bundle(fh.read())
     return table, prior, components, vocab
 
 
