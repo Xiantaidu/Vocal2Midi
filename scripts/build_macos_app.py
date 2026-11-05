@@ -34,7 +34,7 @@ if [[ -z "$PROJECT" || ! -d "$PROJECT" ]]; then
   exit 1
 fi
 if [[ ! -x "$PROJECT/.venv/bin/python" ]]; then
-  /usr/bin/osascript -e 'display dialog "Vocal2Midi 的 .venv 不存在，请先安装 requirements.txt。" with title "Vocal2Midi" buttons {"好"} default button "好"'
+  /usr/bin/osascript -e 'display dialog "Vocal2Midi 的 .venv 不存在，请先安装 requirements_mac.txt。" with title "Vocal2Midi" buttons {"好"} default button "好"'
   exit 1
 fi
 cd "$PROJECT"
