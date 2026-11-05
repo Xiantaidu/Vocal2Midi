@@ -1,10 +1,8 @@
 """Japanese G2P via ja_g2p_onnx (LAKE-G2P v5): kanji -> kana -> romaji ->
-DiffSinger phonemes. The model folder's runtime resolves resources relative to
-its own file, so it is loaded in place via importlib, not vendored.
+DiffSinger phonemes, using the in-tree ``inference.kashi_g2p_ja`` runtime.
 """
 from __future__ import annotations
 
-import importlib.util
 import logging
 import threading
 from pathlib import Path
@@ -22,20 +20,11 @@ _runtime_module: ModuleType | None = None
 _runtime_dir: Path | None = None
 
 
-def _load_runtime_module(model_dir: Path | None = None) -> ModuleType:
-    try:
-        import inference.kashi_g2p_ja.g2p_onnx_runtime as module
-        return module
-    except ImportError:
-        if model_dir:
-            script = model_dir / "g2p_onnx_runtime.py"
-            if script.is_file():
-                spec = importlib.util.spec_from_file_location("ja_g2p_onnx_runtime", script)
-                if spec is not None and spec.loader is not None:
-                    module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(module)
-                    return module
-        raise ImportError("Cannot load g2p_onnx_runtime from inference.kashi_g2p_ja")
+def _load_runtime_module() -> ModuleType:
+    # Only the in-tree runtime is used; Python files shipped inside a model
+    # folder are never executed.
+    import inference.kashi_g2p_ja.g2p_onnx_runtime as module
+    return module
 
 
 def get_ja_onnx_runtime_module(model_dir: str | Path | None = None) -> ModuleType | None:
@@ -72,7 +61,7 @@ def get_ja_onnx_runtime(model_dir: str | Path | None = None):
         if not (resolved / "model.onnx").is_file():
             return None
         try:
-            module = _load_runtime_module(resolved)
+            module = _load_runtime_module()
             runtime = module.G2POnnxRuntime(model_dir=resolved, prefer_dml=True)
         except Exception as e:
             logger.warning(f"kashi-g2p-onnx runtime unavailable ({e}); using legacy Japanese G2P")

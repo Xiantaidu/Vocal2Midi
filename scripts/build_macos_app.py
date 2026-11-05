@@ -34,7 +34,7 @@ if [[ -z "$PROJECT" || ! -d "$PROJECT" ]]; then
   exit 1
 fi
 if [[ ! -x "$PROJECT/.venv/bin/python" ]]; then
-  /usr/bin/osascript -e 'display dialog "Vocal2Midi 的 .venv 不存在，请先安装 requirements.txt。" with title "Vocal2Midi" buttons {"好"} default button "好"'
+  /usr/bin/osascript -e 'display dialog "Vocal2Midi 的 .venv 不存在，请先安装 requirements_mac.txt。" with title "Vocal2Midi" buttons {"好"} default button "好"'
   exit 1
 fi
 cd "$PROJECT"
@@ -79,13 +79,26 @@ def _write_icns(project_root: Path, resources: Path) -> str | None:
         shutil.rmtree(iconset, ignore_errors=True)
 
 
+def _remove_existing_bundle(path: Path) -> None:
+    """Delete ``path`` only if it is an app bundle; refuse anything else."""
+    if not path.exists() and not path.is_symlink():
+        return
+    if path.is_symlink() or path.suffix != ".app" or not (path / "Contents").is_dir():
+        raise ValueError(f"Refusing to delete {path}: not an existing .app bundle")
+    shutil.rmtree(path)
+
+
 def build_bundle(project_root: Path, output: Path, *, sign: bool = True) -> Path:
     project_root = project_root.resolve()
-    output = output.expanduser().resolve()
+    # Resolve only the parent so a symlinked bundle path stays visible to the
+    # deletion guard instead of being replaced by its target.
+    output = output.expanduser()
+    output = output.parent.resolve() / output.name
+    if output.suffix != ".app":
+        raise ValueError(f"Output must end with .app: {output}")
     if not (project_root / "app_fluent.py").is_file():
         raise FileNotFoundError(f"Vocal2Midi checkout not found: {project_root}")
-    if output.exists():
-        shutil.rmtree(output)
+    _remove_existing_bundle(output)
 
     macos = output / "Contents" / "MacOS"
     resources = output / "Contents" / "Resources"
@@ -142,8 +155,7 @@ def main() -> int:
     output = build_bundle(args.project_root, args.output, sign=not args.no_sign)
     if args.install:
         installed = Path("/Applications") / output.name
-        if installed.exists():
-            shutil.rmtree(installed)
+        _remove_existing_bundle(installed)
         shutil.copytree(output, installed, symlinks=True)
         print(f"Installed {installed}")
     else:
