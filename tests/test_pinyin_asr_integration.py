@@ -52,6 +52,7 @@ def _base_kwargs(tmp_path: Path) -> dict:
         "game_model_dir": "game",
         "device": "cpu",
         "hfa_model_dir": "hfa",
+        "alignment_engine": "hfa",
         "asr_model_path": "asr",
         "ts": [0.0],
         "language": "zh",

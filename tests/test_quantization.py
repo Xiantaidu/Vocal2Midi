@@ -69,7 +69,7 @@ def test_zero_step_disables_every_mode():
     for mode in ("simple", "smart", "repair"):
         current = _notes_from_ticks([(113, 291), (350, 407)])
         quantize_notes(current, TEMPO, 0, mode=mode)
-        assert [(n.onset, n.offset) for n in current] == pytest.approx(before)
+        assert [(n.onset, n.offset) for n in current] == [pytest.approx(span) for span in before]
 
 
 def test_should_apply_quantization_gate():
