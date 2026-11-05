@@ -976,6 +976,8 @@ class G2POnnxRuntime:
         feeds = self._edge_tensors(edges)
         feeds.update(input_ids=input_ids, attention_mask=attention,
                      component_ids=components, char_type_ids=char_types)
+        # kashi-g2p v1.1.0+ models dropped the component_ids input.
+        feeds = {name: value for name, value in feeds.items() if name in self.input_names}
         scores = self.session.run(["edge_scores"], feeds)[0]
         return scores[0][:len(edges)]
 
