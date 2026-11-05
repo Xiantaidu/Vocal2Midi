@@ -28,9 +28,9 @@ class LogTerminal(TextEdit):
     }
 
     _COLOR_RULES = [
-        ("error", re.compile(r"错误|error|traceback|failed|exception|失败", re.I)),
-        ("warn", re.compile(r"警告|warning|取消|停止|跳过|重试|retry", re.I)),
-        ("success", re.compile(r"成功|完成|finished|done", re.I)),
+        ("error", re.compile(r"错误|error|traceback|failed|exception|失败|エラー|失敗", re.I)),
+        ("warn", re.compile(r"警告|warning|取消|停止|跳过|重试|retry|キャンセル|中断|スキップ", re.I)),
+        ("success", re.compile(r"成功|完成|finished|done|完了", re.I)),
     ]
 
     def __init__(self, parent=None):

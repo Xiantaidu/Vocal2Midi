@@ -72,6 +72,8 @@ class MacMainWindow(QMainWindow):
             self.globalSettingsInterface,
         ]
         self._nav_keys = ["nav_auto", "nav_model", "nav_settings"]
+        # (setter, i18n key) pairs for texts that must follow language changes.
+        self._translated_texts = []
         self._build_layout()
         self._build_macos_menus()
         qconfig.themeChangedFinished.connect(self._restyle_theme)
@@ -124,7 +126,8 @@ class MacMainWindow(QMainWindow):
         sidebar_layout.setSpacing(10)
         brand = QLabel("Vocal2Midi")
         brand.setStyleSheet("font-size: 20px; font-weight: 700; padding: 2px 7px;")
-        subtitle = QLabel(tr("mac_subtitle"))
+        subtitle = QLabel()
+        self._bind_text(subtitle.setText, "mac_subtitle")
         self._mac_subtitle = subtitle
         self._mac_subtitle_stylesheet = "color: palette(mid); font-size: 11px; padding: 0 7px 8px;"
         subtitle.setStyleSheet(self._mac_subtitle_stylesheet)
@@ -162,33 +165,45 @@ class MacMainWindow(QMainWindow):
 
     def _build_macos_menus(self):
         """Expose the common actions through macOS' native menu bar and shortcuts."""
-        file_menu = self.menuBar().addMenu(tr("menu_file"))
-        open_action = QAction(tr("menu_open_audio"), self)
+        file_menu = self.menuBar().addMenu("")
+        self._bind_text(file_menu.setTitle, "menu_file")
+        open_action = self._translated_action("menu_open_audio")
         open_action.setShortcut(QKeySequence("Meta+O"))
         open_action.triggered.connect(self._open_audio)
         file_menu.addAction(open_action)
-        convert_action = QAction(tr("menu_start"), self)
+        convert_action = self._translated_action("menu_start")
         convert_action.setShortcut(QKeySequence("Meta+Return"))
         convert_action.triggered.connect(self._start_conversion)
         file_menu.addAction(convert_action)
-        stop_action = QAction(tr("menu_stop"), self)
+        stop_action = self._translated_action("menu_stop")
         stop_action.triggered.connect(self.autoLyricInterface.request_stop)
         file_menu.addAction(stop_action)
         file_menu.addSeparator()
-        quit_action = QAction(tr("menu_quit"), self)
+        quit_action = self._translated_action("menu_quit")
         quit_action.setShortcut(QKeySequence("Meta+Q"))
         quit_action.triggered.connect(self.close)
         file_menu.addAction(quit_action)
 
-        view_menu = self.menuBar().addMenu(tr("menu_view"))
+        view_menu = self.menuBar().addMenu("")
+        self._bind_text(view_menu.setTitle, "menu_view")
         for index, key in enumerate(self._nav_keys):
-            action = QAction(tr(key), self)
+            action = self._translated_action(key)
             action.triggered.connect(lambda _checked=False, i=index: self.navigationList.setCurrentRow(i))
             view_menu.addAction(action)
-        help_menu = self.menuBar().addMenu(tr("menu_help"))
-        about_action = QAction(tr("menu_about"), self)
+        help_menu = self.menuBar().addMenu("")
+        self._bind_text(help_menu.setTitle, "menu_help")
+        about_action = self._translated_action("menu_about")
         about_action.triggered.connect(self._show_about)
         help_menu.addAction(about_action)
+
+    def _bind_text(self, setter, key: str) -> None:
+        setter(tr(key))
+        self._translated_texts.append((setter, key))
+
+    def _translated_action(self, key: str) -> QAction:
+        action = QAction(self)
+        self._bind_text(action.setText, key)
+        return action
 
     def _open_audio(self):
         self.navigationList.setCurrentRow(0)
@@ -236,6 +251,8 @@ class MacMainWindow(QMainWindow):
         self.modelConfigInterface.retranslate_ui()
         self.autoLyricInterface.retranslate_ui()
         self.globalSettingsInterface.retranslate_ui()
+        for setter, key in self._translated_texts:
+            setter(tr(key))
         self._refresh_model_status()
 
     def _finish_close(self, event):
