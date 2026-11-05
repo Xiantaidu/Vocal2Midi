@@ -187,6 +187,21 @@ class _Config(QObject):
 qconfig = _Config()
 
 _current_theme = Theme.LIGHT
+_fallback_system_dark: bool | None = None
+_system_theme_signal_connected = False
+
+
+def _system_color_scheme():
+    """Return Qt's current OS colour scheme when the platform exposes it."""
+    app = QApplication.instance()
+    if app is None:
+        return None
+    scheme = app.styleHints().colorScheme()
+    if scheme == Qt.ColorScheme.Dark:
+        return True
+    if scheme == Qt.ColorScheme.Light:
+        return False
+    return None
 
 
 def _resolve_dark() -> bool:
@@ -197,6 +212,11 @@ def _resolve_dark() -> bool:
     app = QApplication.instance()
     if app is None:
         return False
+    system_dark = _system_color_scheme()
+    if system_dark is not None:
+        return system_dark
+    if _fallback_system_dark is not None:
+        return _fallback_system_dark
     return app.palette().color(QPalette.ColorRole.Window).lightness() < 128
 
 
@@ -241,14 +261,30 @@ def _dark_palette() -> QPalette:
 
 
 def setTheme(theme: Theme) -> None:
-    global _current_theme
+    global _current_theme, _fallback_system_dark, _system_theme_signal_connected
     _current_theme = theme if isinstance(theme, Theme) else Theme.LIGHT
 
     app = QApplication.instance()
     if app is not None:
+        if _fallback_system_dark is None:
+            _fallback_system_dark = app.palette().color(QPalette.ColorRole.Window).lightness() < 128
+        if not _system_theme_signal_connected:
+            app.styleHints().colorSchemeChanged.connect(_on_system_color_scheme_changed)
+            _system_theme_signal_connected = True
         app.setPalette(_dark_palette() if _resolve_dark() else _light_palette())
         app.setFont(_base_font())
 
+    qconfig.themeChangedFinished.emit()
+
+
+def _on_system_color_scheme_changed(*_args) -> None:
+    """Apply OS appearance changes only while the user chose Follow System."""
+    if _current_theme is not Theme.AUTO:
+        return
+    app = QApplication.instance()
+    if app is None:
+        return
+    app.setPalette(_dark_palette() if _resolve_dark() else _light_palette())
     qconfig.themeChangedFinished.emit()
 
 
@@ -852,20 +888,25 @@ class PushButton(QPushButton):
             parent, text = text, ""
         super().__init__(parent)
         self.setIconSize(QSize(16, 16))
+        self._fluent_icon = icon if isinstance(icon, FluentIcon) else None
         if isinstance(text, FluentIcon):
             icon, text = text, ""
+            self._fluent_icon = icon
         if text:
             self.setText(text)
         if icon is not None:
-            self.setIcon(toQIcon(icon))
+            self.setIcon(icon)
         self._primary = False
         _apply_button_style(self, primary=False)
         qconfig.themeChangedFinished.connect(self._restyle)
 
     def _restyle(self):
+        if self._fluent_icon is not None:
+            super().setIcon(self._fluent_icon.icon())
         _apply_button_style(self, primary=self._primary)
 
     def setIcon(self, icon):
+        self._fluent_icon = icon if isinstance(icon, FluentIcon) else None
         super().setIcon(toQIcon(icon))
 
 
@@ -883,14 +924,17 @@ class TransparentToolButton(QToolButton):
         if isinstance(icon, QWidget) and parent is None:
             parent, icon = icon, None
         super().__init__(parent)
+        self._fluent_icon = icon if isinstance(icon, FluentIcon) else None
         self.setIconSize(QSize(16, 16))
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         if icon is not None:
-            self.setIcon(toQIcon(icon))
+            self.setIcon(icon)
         self._restyle()
         qconfig.themeChangedFinished.connect(self._restyle)
 
     def _restyle(self):
+        if self._fluent_icon is not None:
+            super().setIcon(self._fluent_icon.icon())
         t = _tokens()
         self.setStyleSheet(
             "QToolButton { border: none; background: transparent; border-radius: 5px; }"
@@ -899,6 +943,7 @@ class TransparentToolButton(QToolButton):
         )
 
     def setIcon(self, icon):
+        self._fluent_icon = icon if isinstance(icon, FluentIcon) else None
         super().setIcon(toQIcon(icon))
 
 
@@ -908,11 +953,18 @@ class IconWidget(QWidget):
         if isinstance(icon, QWidget) and parent is None:
             parent, icon = icon, None
         super().__init__(parent)
+        self._fluent_icon = icon if isinstance(icon, FluentIcon) else None
         self._icon = toQIcon(icon)
-        qconfig.themeChangedFinished.connect(self.update)
+        qconfig.themeChangedFinished.connect(self._on_theme_changed)
 
     def setIcon(self, icon):
+        self._fluent_icon = icon if isinstance(icon, FluentIcon) else None
         self._icon = toQIcon(icon)
+        self.update()
+
+    def _on_theme_changed(self):
+        if self._fluent_icon is not None:
+            self._icon = self._fluent_icon.icon()
         self.update()
 
     def paintEvent(self, event):
@@ -1205,6 +1257,7 @@ class NavigationInterface(QWidget):
         super().__init__(parent)
         self._items: dict[str, QListWidgetItem] = {}
         self._labels: dict[str, str] = {}
+        self._icons: dict[str, FluentIcon] = {}
         self._icon_only = False
         self._menu_button_visible = True
 
@@ -1222,6 +1275,10 @@ class NavigationInterface(QWidget):
         layout.addWidget(self._list)
 
     def _restyle(self):
+        for name, icon in self._icons.items():
+            item = self._items.get(name)
+            if item is not None:
+                item.setIcon(icon.icon())
         t = _tokens()
         self.setStyleSheet(
             "QListWidget#compatNavigation {"
@@ -1245,6 +1302,8 @@ class NavigationInterface(QWidget):
         self._list.addItem(item)
         self._items[name] = item
         self._labels[name] = text
+        if isinstance(icon, FluentIcon):
+            self._icons[name] = icon
         item.setToolTip(text)
         if self._list.count() == 1:
             self._list.setCurrentRow(0)
