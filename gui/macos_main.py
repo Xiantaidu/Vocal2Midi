@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui.fluent_compat import FluentIcon, setTheme, Theme
+from gui.fluent_compat import FluentIcon, setTheme, Theme, qconfig, isDarkTheme
 
 from gui import __version__
 from gui.auto_lyric_view import AutoLyricInterface
@@ -74,6 +74,7 @@ class MacMainWindow(QMainWindow):
         self._nav_keys = ["nav_auto", "nav_model", "nav_settings"]
         self._build_layout()
         self._build_macos_menus()
+        qconfig.themeChangedFinished.connect(self._restyle_theme)
         self.globalSettingsInterface.languageChanged.connect(self._on_language_changed)
         self._refresh_model_status()
         # Finder can launch the app with one or more audio files when the
@@ -86,8 +87,9 @@ class MacMainWindow(QMainWindow):
 
     def _build_layout(self):
         root = QWidget(self)
+        self._mac_root = root
         root.setObjectName("macRoot")
-        root.setStyleSheet(
+        self._mac_root_stylesheet = (
             "QWidget#macRoot { background: palette(window); }"
             "QListWidget#macNavigation { border: 0; padding: 10px 6px; "
             "background: rgba(127,127,127,0.08); font-size: 13px; }"
@@ -95,6 +97,7 @@ class MacMainWindow(QMainWindow):
             "QListWidget#macNavigation::item:selected { background: palette(highlight); "
             "color: palette(highlighted-text); }"
         )
+        root.setStyleSheet(self._mac_root_stylesheet)
         layout = QHBoxLayout(root)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -122,14 +125,17 @@ class MacMainWindow(QMainWindow):
         brand = QLabel("Vocal2Midi")
         brand.setStyleSheet("font-size: 20px; font-weight: 700; padding: 2px 7px;")
         subtitle = QLabel(tr("mac_subtitle"))
-        subtitle.setStyleSheet("color: palette(mid); font-size: 11px; padding: 0 7px 8px;")
+        self._mac_subtitle = subtitle
+        self._mac_subtitle_stylesheet = "color: palette(mid); font-size: 11px; padding: 0 7px 8px;"
+        subtitle.setStyleSheet(self._mac_subtitle_stylesheet)
         subtitle.setWordWrap(True)
         sidebar_layout.addWidget(brand)
         sidebar_layout.addWidget(subtitle)
         sidebar_layout.addWidget(self.navigationList, 1)
         self.modelStatusLabel = QLabel()
         self.modelStatusLabel.setWordWrap(True)
-        self.modelStatusLabel.setStyleSheet("color: palette(mid); font-size: 11px; padding: 8px 7px;")
+        self._model_status_stylesheet = "color: palette(mid); font-size: 11px; padding: 8px 7px;"
+        self.modelStatusLabel.setStyleSheet(self._model_status_stylesheet)
         sidebar_layout.addWidget(self.modelStatusLabel)
         layout.addWidget(sidebar)
 
@@ -140,6 +146,19 @@ class MacMainWindow(QMainWindow):
 
         self.setCentralWidget(root)
         self.navigationList.setCurrentRow(0)
+
+    def _restyle_theme(self):
+        """Reapply palette based QSS and icons after the application theme changes."""
+        self._mac_root.setStyleSheet(self._mac_root_stylesheet)
+        self._mac_subtitle.setStyleSheet(self._mac_subtitle_stylesheet)
+        self.modelStatusLabel.setStyleSheet(self._model_status_stylesheet)
+        dark = isDarkTheme()
+        for row, icon in enumerate(
+            (FluentIcon.MUSIC, FluentIcon.DEVELOPER_TOOLS, FluentIcon.SETTING)
+        ):
+            item = self.navigationList.item(row)
+            if item is not None:
+                item.setIcon(icon.icon(Theme.DARK if dark else Theme.LIGHT))
 
     def _build_macos_menus(self):
         """Expose the common actions through macOS' native menu bar and shortcuts."""
