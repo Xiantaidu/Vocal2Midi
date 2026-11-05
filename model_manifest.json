@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "models": [
+    {
+      "id": "game",
+      "name": "GAME",
+      "url": "https://github.com/openvpi/GAME/releases/download/v1.0.3/GAME-1.0.3-medium-onnx.zip",
+      "sha256": "5b7a21e64c6310efac399f5d12838fffa70565be162436b5a4a65f290721e7d8",
+      "target": "models/GAME-1.0.3-medium-onnx",
+      "type": "zip",
+      "strip_prefix": "GAME-1.0.3-medium-onnx",
+      "files": {
+        "bd2dur.onnx": "6672d56b00f27a20e9bfaa92801c15e394bb520e49031d3ed2515b0a6cf27402",
+        "config.json": "4d62b6d058a820e981184ea6f04605d37659c4331ee01979eb14a14be08af890",
+        "dur2bd.onnx": "49d10d1ea186e43c51fd2c51cedb01a3852d363f1c7056ae77df50f7e8dd0996",
+        "encoder.onnx": "fb00295abf8156806a3bf2477ccadc9dd6a8f464fa4ee1a65c85100ce17e36fe",
+        "estimator.onnx": "2662a01e24548dc3b9f8ebc081b26947873c01eeaa573c9d0a87e7bf2a43642b",
+        "segmenter.onnx": "49c20f890d02f8877be4b092fae3913ec969e9236cf0a91e661e8bf52465ffda"
+      }
+    },
+    {
+      "id": "hubertfa",
+      "name": "HubertFA",
+      "url": "https://github.com/wolfgitpr/HubertFA/releases/download/v0.0.7/1218_hfa_model_new_dict.zip",
+      "sha256": "48bd6dbcc293e47cc6cbcc556baf575e3d91d61d0ac88ddeccd6098f8f346fa2",
+      "target": "models/1218_hfa_model_new_dict",
+      "type": "zip",
+      "strip_prefix": "1218_hfa_model_new_dict",
+      "files": {
+        "config.json": "bcbe054d9f94916a0513e81df197e6144a75f48e624a07f39d21c52df4cb654e",
+        "ds_cmudict-07b.txt": "8c9301c6981039e23fbfaa3c8e09e83b2eca2bd969f2acc475ec491cbaac3de6",
+        "ds-zh-pinyin-lite.txt": "1d52f8c9c7821edf46bac484229c0695e93a37a9644c6ff6cfc5bc3b09a245ae",
+        "japanese_dict_full.txt": "7a5651752a33e0cefc92c16828417f2940357556c409598661fca807f2ff7678",
+        "model.onnx": "4722c13e1d5c1d740ec69c9121f5ec37a88d534aba7637bafb480208be170183",
+        "VERSION": "ef2d127de37b942baad06145e54b0c619a1f22327b2ebbcfbec78f5564afe39d",
+        "vocab.json": "0c581e79b2feaea6c5615e1c2620cabfc7a5f07cea74df5c331e5c81210f8115"
+      }
+    },
+    {
+      "id": "romajiasr",
+      "name": "RomajiASR",
+      "url": "https://github.com/Xiantaidu/RomajiASR/releases/download/v1.0.0/model_onnx.zip",
+      "sha256": "8aa7e5c6f66cbe00018a33717531bd7f14e096fb6a7f0fcaf4e7c21623e62166",
+      "target": "models/romajiASR",
+      "type": "zip",
+      "strip_prefix": "",
+      "files": {
+        "model.meta.json": "105e493e8ff4196024def3d1c9943fde13b72fcc7e2802fbfe0f527aeb37b823",
+        "model.onnx": "7006ab5216c7ac0c68446c0c062e7e21358f942d7e6acb67ddaef132ef1d9d7f",
+        "phoneme_vocab.json": "4e96b35f058685aa1ac63b1c9e1cc386fa75d85ede5d55997fbbac6e7ec932bb",
+        "README.md": "01f506068d0937030ab7dcc1112cbffa60f8c1781f63a466414b87ac35f007b6"
+      }
+    },
+    {
+      "id": "pinyinasr",
+      "name": "PinyinASR",
+      "url": "https://github.com/Xiantaidu/PinyinASR/releases/download/v1.0.0/model_onnx.zip",
+      "sha256": "8d9dafe94c4a50593a93130698e28a6330740d1b67f09740841acf1964b73739",
+      "target": "models/pinyinASR",
+      "type": "zip",
+      "strip_prefix": "",
+      "files": {
+        "config.json": "7915718f73712b28676c213c726a0ed01a6f80e8155f9e8e670b30c7e3c30b9a",
+        "LICENSE": "1e1fec1377f2bd9a23cb86aef898ea405a1f20d97c6db7b7740b890ca9db286f",
+        "model_fp16_dynb.meta.json": "682d8a7c47aea41348055bca77c907f27ede176161c872dae357f1a40a14cbef",
+        "model_fp16_dynb.onnx": "fd96632d8bbd8a65791356f78bef9dc3f27d4024f5ecfd2a9b222fb290cf9472",
+        "NOTICE": "8f26fd0ec6031a02995ca0563c176402b91469b08c28bd83e6be7b5d12854c95",
+        "phoneme_vocab.json": "c48a2622c148d2cf1cc10c13cf7200901635d2090bfa1ddaffeaa6a2d4e8df65",
+        "pinyin_to_phone.txt": "82c44b004d4b710495c3b5a14727e7709310d34c8575b934949051d26d2373fd",
+        "pinyin_vocab.json": "c48a2622c148d2cf1cc10c13cf7200901635d2090bfa1ddaffeaa6a2d4e8df65",
+        "README.md": "957642abe6e0573154d2138aefc2b141c0a4638557bd2bee00c16c61d191e2a9"
+      }
+    },
+    {
+      "id": "kashi_model",
+      "name": "kashi-g2p model",
+      "url": "https://github.com/Xiantaidu/kashi-g2p/releases/download/v1.1.0/model.onnx",
+      "sha256": "ba29430093a884ab1cc734839730c496d61e97e41f11e03884005aafcb4a9525",
+      "target": "models/kashi-g2p-onnx/model.onnx",
+      "type": "file"
+    },
+    {
+      "id": "kashi_lexicon",
+      "name": "kashi-g2p lexicon",
+      "url": "https://github.com/Xiantaidu/kashi-g2p/releases/download/v1.1.0/lexicon.txz",
+      "sha256": "dc2f0c9985cefc1e1bf06ce8720afb08d14f2b1c478c57f91b026adfe0eb591b",
+      "target": "models/kashi-g2p-onnx/lexicon.txz",
+      "type": "file"
+    },
+    {
+      "id": "rmvpe",
+      "name": "RMVPE",
+      "url": "https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main/rmvpe.onnx",
+      "sha256": "5370e71ac80af8b4b7c793d27efd51fd8bf962de3a7ede0766dac0befa3660fd",
+      "target": "models/RMVPE/rmvpe.onnx",
+      "type": "file"
+    }
+  ]
+}

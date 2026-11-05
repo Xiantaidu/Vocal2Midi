@@ -83,6 +83,28 @@ See [ffmpeg](#ffmpeg) for the alternatives when Homebrew is unavailable.
 
 ### 5. Prepare model folders
 
+Download and verify the models distributed for this project from the repository
+root:
+
+```bash
+.venv/bin/python scripts/model_assets.py
+.venv/bin/python scripts/model_assets.py --check
+```
+
+The downloader reads HTTPS URLs and archive hashes from
+[`model_manifest.json`](model_manifest.json), checks each downloaded archive
+before extraction, and checks the SHA256 of every installed file. `--check`
+works offline. To fetch only selected assets, add IDs such as
+`--models game rmvpe`; existing destinations are not replaced unless `--force`
+is specified. The manifest includes GAME, HubertFA, RomajiASR, PinyinASR,
+kashi-g2p, and RMVPE, with their source URLs, hashes, and install paths.
+The complete source and checksum table is in the [main README](README.md#download-and-verify-the-distributed-models).
+
+TiFA's official release provides only a PyTorch `model.pt`, while this project
+requires ONNX. No official Qwen3-ASR model distribution is available for this
+project. Obtain compatible TiFA and Qwen3-ASR models manually and configure
+their paths in the GUI; these unmanaged files do not affect manifest checks.
+
 | Component | Default path |
 | --- | --- |
 | GAME | `models/GAME-1.0.3-medium-onnx` |

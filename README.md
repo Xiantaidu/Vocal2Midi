@@ -118,6 +118,41 @@ By default, the GUI expects models in these locations:
 
 You can change these paths in the GUI settings panel.
 
+#### Download and verify the distributed models
+
+The repository keeps download URLs, archive SHA256 values, install paths, and
+the SHA256 of every installed file in [`model_manifest.json`](model_manifest.json).
+The manager uses only the HTTPS URLs in that manifest and does not read or send
+access tokens. Run it from the repository root with Python:
+
+```bash
+python scripts/model_assets.py
+python scripts/model_assets.py --check
+```
+
+The first command downloads each archive, verifies its SHA256 before opening it,
+then verifies every manifest-listed file before placing it under `models/`.
+The second command checks the installed files offline. To download selected
+assets, pass manifest IDs such as `--models game rmvpe`. Existing destinations
+are preserved; use `--force` only when you intend to replace them. The portable
+build also verifies each selected managed model before copying it.
+
+| Component | Download | Archive SHA256 | Install path |
+| --- | --- | --- | --- |
+| GAME | [Release archive](https://github.com/openvpi/GAME/releases/download/v1.0.3/GAME-1.0.3-medium-onnx.zip) | `5b7a21e64c6310efac399f5d12838fffa70565be162436b5a4a65f290721e7d8` | `models/GAME-1.0.3-medium-onnx` |
+| HubertFA | [Release archive](https://github.com/wolfgitpr/HubertFA/releases/download/v0.0.7/1218_hfa_model_new_dict.zip) | `48bd6dbcc293e47cc6cbcc556baf575e3d91d61d0ac88ddeccd6098f8f346fa2` | `models/1218_hfa_model_new_dict` |
+| RomajiASR | [Release archive](https://github.com/Xiantaidu/RomajiASR/releases/download/v1.0.0/model_onnx.zip) | `8aa7e5c6f66cbe00018a33717531bd7f14e096fb6a7f0fcaf4e7c21623e62166` | `models/romajiASR` |
+| PinyinASR | [Release archive](https://github.com/Xiantaidu/PinyinASR/releases/download/v1.0.0/model_onnx.zip) | `8d9dafe94c4a50593a93130698e28a6330740d1b67f09740841acf1964b73739` | `models/pinyinASR` |
+| kashi-g2p model | [ONNX file](https://github.com/Xiantaidu/kashi-g2p/releases/download/v1.1.0/model.onnx) | `ba29430093a884ab1cc734839730c496d61e97e41f11e03884005aafcb4a9525` | `models/kashi-g2p-onnx/model.onnx` |
+| kashi-g2p lexicon | [TXZ file](https://github.com/Xiantaidu/kashi-g2p/releases/download/v1.1.0/lexicon.txz) | `dc2f0c9985cefc1e1bf06ce8720afb08d14f2b1c478c57f91b026adfe0eb591b` | `models/kashi-g2p-onnx/lexicon.txz` |
+| RMVPE | [ONNX file](https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main/rmvpe.onnx) | `5370e71ac80af8b4b7c793d27efd51fd8bf962de3a7ede0766dac0befa3660fd` | `models/RMVPE/rmvpe.onnx` |
+
+TiFA and Qwen3-ASR are not in the manifest. TiFA's official release provides a
+PyTorch `model.pt`, but the application requires ONNX. No official Qwen3-ASR
+model distribution is available for this project. Obtain compatible models
+manually and configure their paths in the GUI; these unmanaged files do not
+affect manifest checks or the portable build's checks for managed models.
+
 ### 3. Launch the GUI
 
 For a normal developer environment:

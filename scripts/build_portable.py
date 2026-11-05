@@ -10,6 +10,11 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
+try:
+    from scripts.model_assets import load_manifest, verify_entries
+except ModuleNotFoundError:  # Direct execution as ``python scripts/build_portable.py``.
+    from model_assets import load_manifest, verify_entries
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "dist" / "Vocal2Midi-portable"
@@ -36,6 +41,13 @@ MODEL_SPECS: dict[str, tuple[str, str]] = {
     "qwen": ("models/Qwen3-ASR-1.7B-dml", "dir"),
     "romaji": ("models/romajiASR", "dir"),
     "rmvpe": ("models/RMVPE/rmvpe.onnx", "file"),
+}
+
+MANAGED_MODEL_IDS = {
+    "game": {"game"},
+    "hfa": {"hubertfa"},
+    "romaji": {"romajiasr"},
+    "rmvpe": {"rmvpe"},
 }
 
 RUNTIME_EXCLUDE_NAMES = {
@@ -235,6 +247,13 @@ def copy_models(output_dir: Path, selected_models: list[str]) -> None:
             shutil.copy2(item.source, final_target)
 
 
+def verify_selected_models(selected_models: list[str]) -> list[str]:
+    """Check only manifest-managed models selected for the portable package."""
+    selected_ids = set().union(*(MANAGED_MODEL_IDS.get(name, set()) for name in selected_models))
+    entries = [entry for entry in load_manifest() if entry["id"] in selected_ids]
+    return verify_entries(entries, project_root=PROJECT_ROOT)
+
+
 def write_launcher(output_dir: Path, *, runtime_mode_used: str) -> None:
     run_gui = output_dir / "Run Vocal2Midi.bat"
     run_cli = output_dir / "Run Slice ASR CLI.bat"
@@ -328,6 +347,12 @@ def write_portable_notes(output_dir: Path, *, runtime_mode_used: str, selected_m
 
 def main() -> None:
     args = parse_args()
+    model_problems = verify_selected_models(args.models)
+    if model_problems:
+        print("Model verification failed; portable build stopped:", file=sys.stderr)
+        for problem in model_problems:
+            print(f"- {problem}", file=sys.stderr)
+        raise SystemExit(1)
     output_dir = args.output_dir.resolve()
     runtime_src = args.python_dir.resolve()
 
