@@ -223,7 +223,8 @@ class MacMainWindow(QMainWindow):
             self,
             tr("menu_about"),
             f"<b>Vocal2Midi v{__version__}</b><br>{tr('about_body')}<br><br>"
-            f"{tr('about_models')} {self._model_status_text()}",
+            f"{tr('about_models')} {self._model_status_text()}<br>"
+            f"{tr('about_ffmpeg')}",
         )
 
     def _model_status_text(self):

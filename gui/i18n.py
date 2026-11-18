@@ -23,6 +23,7 @@ _STRINGS: dict[str, dict[str, str]] = {
     "menu_about": {"zh": "关于 Vocal2Midi", "en": "About Vocal2Midi", "ja": "Vocal2Midi について"},
     "about_body": {"zh": "在 Mac 上运行的歌词对齐与 USTX 导出工具。", "en": "Lyric alignment and USTX export on Mac.", "ja": "Mac で動作する歌詞アライメントと USTX 書き出しのツールです。"},
     "about_models": {"zh": "模型状态：", "en": "Model status: ", "ja": "モデルの状態: "},
+    "about_ffmpeg": {"zh": "音频解码：FFmpeg（https://ffmpeg.org/）；许可信息见 NOTICE。", "en": "Audio decoding: FFmpeg (https://ffmpeg.org/); see NOTICE for license information.", "ja": "音声デコード: FFmpeg（https://ffmpeg.org/）。ライセンス情報は NOTICE を参照してください。"},
     "close_running_title": {"zh": "任务仍在运行", "en": "Task Still Running", "ja": "タスクを実行中です"},
     "close_running_body": {
         "zh": "提取任务尚未结束，关闭窗口将强制停止任务。确定关闭吗？",

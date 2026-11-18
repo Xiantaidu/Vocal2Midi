@@ -21,6 +21,7 @@ Third-party components, vendored code, bundled data, dictionaries, and other emb
 | LyricFA | lyric matching and G2P-based lyric alignment helpers | https://github.com/wolfgitpr/LyricFA |
 | FunASR | broader ASR foundation referenced by the Qwen3-ASR integration path | https://github.com/modelscope/FunASR |
 | llama.cpp | Platform-aware decoder runtime used by the Qwen3-ASR path | https://github.com/ggml-org/llama.cpp |
+| FFmpeg | Audio decoding via a bundled command-line binary | https://ffmpeg.org/ |
 | ONNX Runtime | DirectML and CPU inference execution | https://github.com/microsoft/onnxruntime |
 | Fluent UI System Icons | Icon artwork for the desktop UI | https://github.com/microsoft/fluentui-system-icons |
 
@@ -44,6 +45,14 @@ The repository currently includes local copies or adapted subsets of some upstre
 - `inference/qwen3asr_dml/gguf/`
 
 These copies may contain project-specific edits for integration, runtime changes, or interface compatibility.
+
+## FFmpeg
+
+The repository bundles `ffmpeg.exe` (FFmpeg 7.1.1) for audio decoding. It is
+invoked as a separate process and is licensed under the **LGPL-2.1-or-later**;
+no GPL or non-free components are enabled. The license text, exact build
+recipe, and written offer for the corresponding source code live in
+[`third_party/ffmpeg/`](third_party/ffmpeg/).
 
 ## Additional libraries
 

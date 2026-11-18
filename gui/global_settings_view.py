@@ -280,6 +280,11 @@ class GlobalSettingsInterface(ScrollArea):
         version_label = BodyLabel(self)
         self._bind_tr(lambda: version_label.setText(tr("version_info", version=__version__)))
         about_layout.addWidget(version_label)
+
+        ffmpeg_label = BodyLabel(self)
+        self._bind_tr(lambda: ffmpeg_label.setText(tr("about_ffmpeg")))
+        about_layout.addWidget(ffmpeg_label)
+
         self.vBoxLayout.addWidget(about_card)
 
         self.vBoxLayout.addStretch(1)

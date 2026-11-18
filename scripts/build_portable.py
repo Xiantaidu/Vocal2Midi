@@ -21,13 +21,21 @@ APP_DIRS = [
     "gui",
     "inference",
     "scripts",
+    "third_party",
 ]
 
 APP_FILES = [
     "ACKNOWLEDGEMENTS.md",
     "LICENSE",
+    "NOTICE",
     "README.md",
     "app_fluent.py",
+]
+
+# The Windows ffmpeg binary is optional so the script still works when the
+# portable package is assembled on a platform that uses a system ffmpeg.
+OPTIONAL_APP_FILES = [
+    "ffmpeg.exe",
 ]
 
 MODEL_SPECS: dict[str, tuple[str, str]] = {
@@ -216,6 +224,10 @@ def copy_app_files(output_dir: Path) -> None:
         source = PROJECT_ROOT / rel_file
         ensure_exists(source, f"Application file '{rel_file}'")
         shutil.copy2(source, output_dir / rel_file)
+    for rel_file in OPTIONAL_APP_FILES:
+        source = PROJECT_ROOT / rel_file
+        if source.is_file():
+            shutil.copy2(source, output_dir / rel_file)
 
 
 def copy_models(output_dir: Path, selected_models: list[str]) -> None:

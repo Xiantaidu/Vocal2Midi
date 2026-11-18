@@ -337,6 +337,8 @@ The overall Vocal2Midi repository is distributed under the **Apache License 2.0*
 
 Third-party components, vendored code, model assets, dictionaries, and other embedded materials may also carry their own original licenses, notices, or attribution requirements. Those original notices remain applicable to the corresponding materials. See [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) and any embedded license files for details.
 
+The bundled `ffmpeg.exe` is a separate work licensed under the **LGPL-2.1-or-later**; it is invoked as a subprocess and is not linked into Vocal2Midi. Its license text, exact build recipe, and source-code offer are in [third_party/ffmpeg/](third_party/ffmpeg/).
+
 ## Development and Testing
 
 The repo includes a focused automated test suite under `tests/`.
