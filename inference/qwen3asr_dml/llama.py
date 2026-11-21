@@ -126,6 +126,14 @@ llama = None
 ggml = None
 ggml_base = None
 
+# ggml device enumeration (optional, used to map DXGI adapters to llama.cpp devices)
+ggml_backend_dev_count = None
+ggml_backend_dev_get = None
+ggml_backend_dev_name = None
+ggml_backend_dev_description = None
+ggml_backend_dev_backend_reg = None
+ggml_backend_reg_name = None
+
 # Global function pointers
 llama_log_set = None
 llama_backend_init = None
@@ -246,36 +254,161 @@ def _resolve_backend_and_adapter(
     return LLAMA_BACKEND_VULKAN, adapter
 
 
+def _decode_c_string(value: bytes | None) -> str:
+    if not value:
+        return ""
+    return value.decode("utf-8", errors="replace").strip()
+
+
+def _normalize_device_name(name: str) -> str:
+    return " ".join(name.split()).casefold()
+
+
+def _is_vulkan_device(device) -> bool:
+    if ggml_backend_dev_backend_reg is not None and ggml_backend_reg_name is not None:
+        registry = ggml_backend_dev_backend_reg(device)
+        if registry:
+            return _decode_c_string(ggml_backend_reg_name(registry)).casefold() == "vulkan"
+    # Fall back to the device name convention used by the Vulkan backend.
+    return _decode_c_string(ggml_backend_dev_name(device)).casefold().startswith("vulkan")
+
+
+def _find_ggml_vulkan_device_for_adapter(adapter: DxgiAdapterInfo):
+    """Map the selected DXGI adapter to the matching ggml Vulkan device.
+
+    llama.cpp enumerates devices in its own order and, by default, only keeps
+    discrete GPUs in the candidate list. The DXGI adapter index is therefore
+    not a valid main_gpu value. Both DXGI and Vulkan take the description from
+    the same driver, so match on that name instead.
+    """
+    if not all(
+        (
+            ggml_backend_dev_count,
+            ggml_backend_dev_get,
+            ggml_backend_dev_name,
+            ggml_backend_dev_description,
+        )
+    ):
+        logger.debug("ggml device enumeration API unavailable; using llama.cpp's default device order.")
+        return None
+
+    target = _normalize_device_name(adapter.name)
+    exact_matches = []
+    prefix_matches = []
+    vulkan_devices = []
+    for index in range(int(ggml_backend_dev_count())):
+        device = ggml_backend_dev_get(index)
+        if not device:
+            continue
+        if not _is_vulkan_device(device):
+            continue
+        vulkan_devices.append(device)
+        description = _normalize_device_name(
+            _decode_c_string(ggml_backend_dev_description(device))
+        )
+        if description == target:
+            exact_matches.append(device)
+        elif target and (
+            description.startswith(f"{target} (")
+            or target.startswith(f"{description} (")
+        ):
+            # Allow vendor suffixes such as "GPU (NVIDIA)" without matching
+            # a different model whose name merely shares a prefix.
+            prefix_matches.append(device)
+
+    if exact_matches:
+        # Identically named devices are interchangeable.
+        return exact_matches[0]
+    if len(prefix_matches) == 1:
+        return prefix_matches[0]
+    if len(vulkan_devices) == 1:
+        logger.warning(
+            f"Could not match DXGI adapter '{adapter.name}' to a ggml Vulkan device by name; "
+            "using the only available Vulkan device."
+        )
+        return vulkan_devices[0]
+
+    logger.warning(
+        f"Could not match DXGI adapter '{adapter.name}' to one of the "
+        f"{len(vulkan_devices)} ggml Vulkan devices; using llama.cpp's default device order."
+    )
+    return None
+
+
 def _configure_model_params_for_backend(
     model_params,
     active_backend: str,
     *,
     n_gpu_layers: int | None = None,
     adapter: DxgiAdapterInfo | None = None,
-) -> None:
+) -> ctypes.Array | None:
+    """Configure model params for the active backend.
+
+    Returns the explicit device list when one is pinned. The caller must keep
+    that object alive until llama_model_load_from_file returns, because
+    llama_model_params only stores a pointer to it.
+    """
     if active_backend in {LLAMA_BACKEND_METAL, LLAMA_BACKEND_VULKAN}:
         model_params.n_gpu_layers = -1 if n_gpu_layers is None else int(n_gpu_layers)
         model_params.split_mode = LLAMA_SPLIT_MODE_NONE
         if adapter is not None:
-            model_params.main_gpu = int(adapter.index)
-            logger.info(
-                "llama.cpp decoder is running with Vulkan offload on "
-                f"{describe_gpu_adapter(adapter)} (n_gpu_layers={model_params.n_gpu_layers})."
-            )
-        else:
-            logger.info(
-                f"llama.cpp decoder is running with {active_backend.capitalize()} offload "
-                f"(n_gpu_layers={model_params.n_gpu_layers})."
-            )
-        return
+            # main_gpu indexes llama.cpp's device list, not the DXGI adapter
+            # order. Pin the mapped device explicitly instead of passing the
+            # DXGI index through.
+            device = _find_ggml_vulkan_device_for_adapter(adapter)
+            device_list = None
+            if device is not None:
+                # NULL-terminated list expected by llama_model_params.devices.
+                device_list = (ctypes.c_void_p * 2)(device, None)
+                model_params.devices = ctypes.cast(
+                    device_list, ctypes.POINTER(ctypes.c_void_p)
+                )
+            model_params.main_gpu = 0
+            if device is not None:
+                logger.info(
+                    "llama.cpp decoder is running with Vulkan offload on "
+                    f"{describe_gpu_adapter(adapter)} "
+                    f"(ggml device: {_decode_c_string(ggml_backend_dev_description(device))}, "
+                    f"main_gpu={model_params.main_gpu}, "
+                    f"n_gpu_layers={model_params.n_gpu_layers})."
+                )
+            else:
+                logger.warning(
+                    "llama.cpp decoder is running with Vulkan offload on "
+                    f"{describe_gpu_adapter(adapter)}, but the adapter could not be "
+                    "matched to a ggml device; relying on llama.cpp's default device order "
+                    f"(main_gpu={model_params.main_gpu})."
+                )
+            return device_list
+
+        logger.info(
+            f"llama.cpp decoder is running with {active_backend.capitalize()} offload "
+            f"(n_gpu_layers={model_params.n_gpu_layers})."
+        )
+        return None
 
     model_params.n_gpu_layers = 0
     logger.info("llama.cpp decoder is running in CPU-only mode.")
+    return None
+
+def _bind_optional_function(libraries, name, argtypes, restype):
+    """Bind an exported symbol from the first library that provides it."""
+    for library in libraries:
+        function = getattr(library, name, None)
+        if function is not None:
+            function.argtypes = argtypes
+            function.restype = restype
+            return function
+    return None
+
 
 def init_llama_lib():
     """Initialize the llama.cpp library with cross-platform loading support."""
     global llama, ggml, ggml_base
     global llama_log_set, llama_backend_init, llama_backend_free
+    global ggml_backend_dev_count, ggml_backend_dev_get
+    global ggml_backend_dev_name, ggml_backend_dev_description
+    global ggml_backend_dev_backend_reg, ggml_backend_reg_name
     global llama_model_default_params, llama_model_load_from_file, llama_model_free, llama_model_get_vocab
     global llama_context_default_params, llama_init_from_model, llama_free
     global llama_batch_init, llama_batch_free, llama_batch_get_one
@@ -326,6 +459,35 @@ def init_llama_lib():
     ggml_backend_load_all.argtypes = []
     ggml_backend_load_all.restype = None
     ggml_backend_load_all()
+
+    # Device enumeration lets us map a DXGI adapter to llama.cpp's own device
+    # list. Bind tolerantly so older ggml builds without these symbols still
+    # initialize; such builds fall back to llama.cpp's default device order.
+    # Symbol placement differs between platforms, so try both ggml libraries.
+    ggml_backend_dev_count = _bind_optional_function(
+        (ggml, ggml_base), "ggml_backend_dev_count", [], ctypes.c_size_t
+    )
+    ggml_backend_dev_get = _bind_optional_function(
+        (ggml, ggml_base), "ggml_backend_dev_get", [ctypes.c_size_t], ctypes.c_void_p
+    )
+    ggml_backend_dev_name = _bind_optional_function(
+        (ggml_base, ggml), "ggml_backend_dev_name", [ctypes.c_void_p], ctypes.c_char_p
+    )
+    ggml_backend_dev_description = _bind_optional_function(
+        (ggml_base, ggml),
+        "ggml_backend_dev_description",
+        [ctypes.c_void_p],
+        ctypes.c_char_p,
+    )
+    ggml_backend_dev_backend_reg = _bind_optional_function(
+        (ggml_base, ggml),
+        "ggml_backend_dev_backend_reg",
+        [ctypes.c_void_p],
+        ctypes.c_void_p,
+    )
+    ggml_backend_reg_name = _bind_optional_function(
+        (ggml_base, ggml), "ggml_backend_reg_name", [ctypes.c_void_p], ctypes.c_char_p
+    )
 
     llama_backend_init = llama.llama_backend_init
     llama_backend_init.argtypes = []
@@ -543,16 +705,20 @@ def load_model_with_backend(
 
     def _try_load(active_backend: str, adapter: DxgiAdapterInfo | None):
         model_params = llama_model_default_params()
-        _configure_model_params_for_backend(
+        # Keep the device list referenced until loading finishes; model_params
+        # only stores a bare pointer to it.
+        device_list = _configure_model_params_for_backend(
             model_params,
             active_backend,
             n_gpu_layers=n_gpu_layers,
             adapter=adapter,
         )
-        return llama_model_load_from_file(
+        model = llama_model_load_from_file(
             model_rel.as_posix().encode("utf-8"),
             model_params,
         )
+        del device_list  # the array only has to outlive the load call
+        return model
 
     model = _try_load(selected_backend, selected_adapter)
     active_backend = selected_backend
@@ -914,27 +1080,29 @@ class ASRStreamDecoder:
 def python_log_callback(level, message, user_data):
     """
     llama.cpp log callback.
-    level: 
-        2 = ERROR
+    level follows the ggml enum:
+        0 = NONE
+        1 = DEBUG
+        2 = INFO
         3 = WARN
-        4 = INFO
-        5 = DEBUG
+        4 = ERROR
+        5 = CONT
     """
     if not message: return
     try:
         msg_str = message.decode('utf-8', errors='replace').strip()
         if not msg_str or msg_str in ['.', '\n']: return
         
-        if level == 1:
-            logger.info(f"[llama.cpp] {msg_str}")
-        elif level == 2:
-            logger.warning(f"[llama.cpp] {msg_str}")
-        elif level == 3:
-            logger.error(f"[llama.cpp] {msg_str}")
-        elif level >= 4:
+        if level == 1:  # DEBUG
             logger.debug(f"[llama.cpp] {msg_str}")
-        else:
+        elif level == 2:  # INFO
             logger.info(f"[llama.cpp] {msg_str}")
+        elif level == 3:  # WARN
+            logger.warning(f"[llama.cpp] {msg_str}")
+        elif level == 4:  # ERROR
+            logger.error(f"[llama.cpp] {msg_str}")
+        else:  # NONE, CONT and any future levels
+            logger.debug(f"[llama.cpp] {msg_str}")
     except Exception as e:
         # Prevent callback failures from crashing the process.
         logger.info(f"Log callback error: {e}")

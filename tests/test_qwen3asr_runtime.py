@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -236,8 +237,42 @@ def test_resolve_backend_and_adapter_falls_back_to_cpu_without_eligible_gpu(monk
     assert adapter is None
 
 
-def test_configure_model_params_for_backend_pins_selected_vulkan_gpu():
-    model_params = SimpleNamespace(n_gpu_layers=None, split_mode=None, main_gpu=None)
+def _install_fake_ggml_devices(monkeypatch, devices):
+    """Install a fake ggml device table: [(device_name, description), ...]."""
+    pointers = [0x1000 + index for index in range(len(devices))]
+    entries = dict(zip(pointers, devices))
+
+    monkeypatch.setattr(llama_module, "ggml_backend_dev_count", lambda: len(devices))
+    monkeypatch.setattr(llama_module, "ggml_backend_dev_get", lambda index: pointers[index])
+    monkeypatch.setattr(
+        llama_module,
+        "ggml_backend_dev_name",
+        lambda device: entries[device][0].encode("utf-8"),
+    )
+    monkeypatch.setattr(
+        llama_module,
+        "ggml_backend_dev_description",
+        lambda device: entries[device][1].encode("utf-8"),
+    )
+    monkeypatch.setattr(llama_module, "ggml_backend_dev_backend_reg", None)
+    monkeypatch.setattr(llama_module, "ggml_backend_reg_name", None)
+    return pointers
+
+
+def test_configure_model_params_for_backend_falls_back_without_device_mapping(monkeypatch):
+    for name in (
+        "ggml_backend_dev_count",
+        "ggml_backend_dev_get",
+        "ggml_backend_dev_name",
+        "ggml_backend_dev_description",
+        "ggml_backend_dev_backend_reg",
+        "ggml_backend_reg_name",
+    ):
+        monkeypatch.setattr(llama_module, name, None)
+
+    model_params = SimpleNamespace(
+        n_gpu_layers=None, split_mode=None, main_gpu=None, devices=None
+    )
     adapter = device_utils.DxgiAdapterInfo(
         index=2,
         name="Discrete GPU",
@@ -253,4 +288,242 @@ def test_configure_model_params_for_backend_pins_selected_vulkan_gpu():
 
     assert model_params.n_gpu_layers == -1
     assert model_params.split_mode == LLAMA_SPLIT_MODE_NONE
-    assert model_params.main_gpu == 2
+    # main_gpu indexes llama.cpp's device list, not the DXGI adapter order.
+    assert model_params.main_gpu == 0
+    assert model_params.devices is None
+
+
+def test_configure_model_params_pins_matching_ggml_vulkan_device(monkeypatch):
+    pointers = _install_fake_ggml_devices(
+        monkeypatch,
+        [
+            ("Vulkan0", "AMD Radeon(TM) 610M"),
+            ("Vulkan1", "NVIDIA GeForce RTX 5060 Laptop GPU"),
+            ("CPU", "AMD Ryzen 9 8945HX"),
+        ],
+    )
+    model_params = SimpleNamespace(
+        n_gpu_layers=None, split_mode=None, main_gpu=None, devices=None
+    )
+    adapter = device_utils.DxgiAdapterInfo(
+        index=1,
+        name="NVIDIA GeForce RTX 5060 Laptop GPU",
+        dedicated_vram_bytes=8 * (1 << 30),
+        is_software=False,
+    )
+
+    llama_module._configure_model_params_for_backend(
+        model_params,
+        LLAMA_BACKEND_VULKAN,
+        adapter=adapter,
+    )
+
+    assert model_params.main_gpu == 0
+    # The DXGI adapter (index 1) maps to the matching Vulkan device, not to
+    # the same numeric index in llama.cpp's list.
+    assert model_params.devices is not None
+    assert model_params.devices[0] == pointers[1]
+    assert model_params.devices[1] is None
+
+
+def test_configure_model_params_uses_ggml_backend_registry_to_identify_vulkan(monkeypatch):
+    pointers = _install_fake_ggml_devices(
+        monkeypatch,
+        [
+            ("Custom0", "NVIDIA GeForce RTX 5060 Laptop GPU"),
+            ("CPU", "AMD Ryzen 9 8945HX"),
+        ],
+    )
+    registries = {pointers[0]: 0x9000, pointers[1]: 0x9001}
+    monkeypatch.setattr(
+        llama_module, "ggml_backend_dev_backend_reg", lambda device: registries[device]
+    )
+    monkeypatch.setattr(
+        llama_module,
+        "ggml_backend_reg_name",
+        lambda registry: b"Vulkan" if registry == 0x9000 else b"CPU",
+    )
+    model_params = SimpleNamespace(
+        n_gpu_layers=None, split_mode=None, main_gpu=None, devices=None
+    )
+    adapter = device_utils.DxgiAdapterInfo(
+        index=1,
+        name="NVIDIA GeForce RTX 5060 Laptop GPU",
+        dedicated_vram_bytes=8 * (1 << 30),
+        is_software=False,
+    )
+
+    llama_module._configure_model_params_for_backend(
+        model_params,
+        LLAMA_BACKEND_VULKAN,
+        adapter=adapter,
+    )
+
+    # Device names are backend-defined; the registry name is authoritative.
+    assert model_params.devices[0] == pointers[0]
+
+
+def test_configure_model_params_matches_device_name_ignoring_formatting(monkeypatch):
+    pointers = _install_fake_ggml_devices(
+        monkeypatch,
+        [
+            ("Vulkan0", "  NVIDIA   GeForce RTX 5060 Laptop GPU "),
+            ("Vulkan1", "AMD Radeon(TM) 610M"),
+        ],
+    )
+    model_params = SimpleNamespace(
+        n_gpu_layers=None, split_mode=None, main_gpu=None, devices=None
+    )
+    adapter = device_utils.DxgiAdapterInfo(
+        index=3,
+        name="NVIDIA GeForce RTX 5060 Laptop GPU",
+        dedicated_vram_bytes=8 * (1 << 30),
+        is_software=False,
+    )
+
+    llama_module._configure_model_params_for_backend(
+        model_params,
+        LLAMA_BACKEND_VULKAN,
+        adapter=adapter,
+    )
+
+    assert model_params.devices[0] == pointers[0]
+
+
+def test_configure_model_params_pins_only_vulkan_device_when_name_differs(monkeypatch):
+    pointers = _install_fake_ggml_devices(
+        monkeypatch,
+        [
+            ("Vulkan0", "Renamed GPU"),
+            ("CPU", "Some CPU"),
+        ],
+    )
+    model_params = SimpleNamespace(
+        n_gpu_layers=None, split_mode=None, main_gpu=None, devices=None
+    )
+    adapter = device_utils.DxgiAdapterInfo(
+        index=1,
+        name="Discrete GPU",
+        dedicated_vram_bytes=4 * (1 << 30),
+        is_software=False,
+    )
+
+    llama_module._configure_model_params_for_backend(
+        model_params,
+        LLAMA_BACKEND_VULKAN,
+        adapter=adapter,
+    )
+
+    assert model_params.devices[0] == pointers[0]
+
+
+def test_configure_model_params_accepts_vendor_suffix_in_ggml_name(monkeypatch):
+    pointers = _install_fake_ggml_devices(
+        monkeypatch,
+        [
+            ("Vulkan0", "NVIDIA GeForce RTX 5060 Laptop GPU (NVIDIA)"),
+            ("Vulkan1", "AMD Radeon(TM) 610M"),
+        ],
+    )
+    model_params = SimpleNamespace(
+        n_gpu_layers=None, split_mode=None, main_gpu=None, devices=None
+    )
+    adapter = device_utils.DxgiAdapterInfo(
+        index=1,
+        name="NVIDIA GeForce RTX 5060 Laptop GPU",
+        dedicated_vram_bytes=8 * (1 << 30),
+        is_software=False,
+    )
+
+    llama_module._configure_model_params_for_backend(
+        model_params,
+        LLAMA_BACKEND_VULKAN,
+        adapter=adapter,
+    )
+
+    assert model_params.devices[0] == pointers[0]
+
+
+def test_configure_model_params_does_not_match_similar_model_names(monkeypatch):
+    _install_fake_ggml_devices(
+        monkeypatch,
+        [
+            ("Vulkan0", "NVIDIA GeForce RTX 5060 Ti"),
+            ("Vulkan1", "AMD Radeon(TM) 610M"),
+        ],
+    )
+    model_params = SimpleNamespace(
+        n_gpu_layers=None, split_mode=None, main_gpu=None, devices=None
+    )
+    adapter = device_utils.DxgiAdapterInfo(
+        index=1,
+        name="NVIDIA GeForce RTX 5060",
+        dedicated_vram_bytes=8 * (1 << 30),
+        is_software=False,
+    )
+
+    llama_module._configure_model_params_for_backend(
+        model_params,
+        LLAMA_BACKEND_VULKAN,
+        adapter=adapter,
+    )
+
+    assert model_params.devices is None
+
+
+def test_configure_model_params_falls_back_when_multiple_devices_do_not_match(monkeypatch):
+    _install_fake_ggml_devices(
+        monkeypatch,
+        [
+            ("Vulkan0", "GPU A"),
+            ("Vulkan1", "GPU B"),
+        ],
+    )
+    model_params = SimpleNamespace(
+        n_gpu_layers=None, split_mode=None, main_gpu=None, devices=None
+    )
+    adapter = device_utils.DxgiAdapterInfo(
+        index=1,
+        name="GPU C",
+        dedicated_vram_bytes=4 * (1 << 30),
+        is_software=False,
+    )
+
+    llama_module._configure_model_params_for_backend(
+        model_params,
+        LLAMA_BACKEND_VULKAN,
+        adapter=adapter,
+    )
+
+    assert model_params.main_gpu == 0
+    assert model_params.devices is None
+
+
+def test_python_log_callback_maps_ggml_log_levels(caplog):
+    caplog.set_level(logging.DEBUG, logger=llama_module.logger.name)
+
+    llama_module.python_log_callback(1, b"debug message", None)
+    llama_module.python_log_callback(2, b"info message", None)
+    llama_module.python_log_callback(3, b"warn message", None)
+    llama_module.python_log_callback(4, b"error message", None)
+    llama_module.python_log_callback(5, b"continuation", None)
+
+    records = [(record.levelno, record.getMessage()) for record in caplog.records]
+
+    assert (logging.DEBUG, "[llama.cpp] debug message") in records
+    assert (logging.INFO, "[llama.cpp] info message") in records
+    assert (logging.WARNING, "[llama.cpp] warn message") in records
+    assert (logging.ERROR, "[llama.cpp] error message") in records
+    assert (logging.DEBUG, "[llama.cpp] continuation") in records
+
+
+def test_python_log_callback_keeps_errors_visible_at_warning_level(caplog):
+    caplog.set_level(logging.WARNING, logger=llama_module.logger.name)
+
+    llama_module.python_log_callback(4, b"invalid value for main_gpu", None)
+
+    assert any(
+        record.levelno == logging.ERROR
+        and "invalid value for main_gpu" in record.getMessage()
+        for record in caplog.records
+    )
